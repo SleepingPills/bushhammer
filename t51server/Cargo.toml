@@ -1,0 +1,8 @@
+[package]
+name = "t51server"
+version = "0.1.0"
+authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
+
+[dependencies]
+t51core = { path = "../t51core" }
+indexmap = "1.0.1"

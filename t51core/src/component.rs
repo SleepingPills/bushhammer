@@ -1,3 +1,6 @@
+use alloc::VecPool;
+
+
 pub struct ComponentStore<T> {
-    pub components: Vec<T>
+    pub pool: VecPool<T>
 }

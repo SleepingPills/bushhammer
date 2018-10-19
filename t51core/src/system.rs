@@ -1,13 +1,16 @@
 use indexmap::IndexMap;
 use indexmap::map::Iter;
 use std::marker::PhantomData;
-use std::cell::RefCell;
+
+use alloc::VecPool;
 
 
 pub mod indexing {
     use super::*;
+    use sync::ReadGuard;
+    use sync::RwGuard;
 
-    pub trait Indexer: Copy {
+    pub trait Indexer {
         type Item;
 
         fn get(&self, index: usize) -> Self::Item;
@@ -15,6 +18,7 @@ pub mod indexing {
 
     pub struct ReadIndexer<'a, T> where T: 'a {
         pub(crate) ptr: *const T,
+        pub(crate) _borrow: ReadGuard<VecPool<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
@@ -29,16 +33,9 @@ pub mod indexing {
         }
     }
 
-    impl<'a, T> Copy for ReadIndexer<'a, T> where T: 'a {}
-
-    impl<'a, T> Clone for ReadIndexer<'a, T> where T: 'a {
-        fn clone(&self) -> Self {
-            ReadIndexer { ptr: self.ptr, _x: PhantomData }
-        }
-    }
-
     pub struct WriteIndexer<'a, T> where T: 'a {
         pub(crate) ptr: *mut T,
+        pub(crate) _borrow: RwGuard<VecPool<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
@@ -52,22 +49,14 @@ pub mod indexing {
             }
         }
     }
-
-    impl<'a, T> Copy for WriteIndexer<'a, T> where T: 'a {}
-
-    impl<'a, T> Clone for WriteIndexer<'a, T> where T: 'a {
-        fn clone(&self) -> Self {
-            WriteIndexer { ptr: self.ptr, _x: PhantomData }
-        }
-    }
 }
 
 
 pub mod storage {
     use super::*;
     use super::indexing::*;
-    use std::rc::Rc;
-    use alloc::VecPool;
+    use std::sync::Arc;
+    use sync::RwCell;
 
     pub trait Store {
         type Indexer;
@@ -76,13 +65,13 @@ pub mod storage {
     }
 
     pub struct ReadStore<'a, T> where T: 'a {
-        pub(crate) data: Rc<RefCell<VecPool<T>>>,
+        pub(crate) data: Arc<RwCell<VecPool<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> ReadStore<'a, T> {
         #[inline(always)]
-        pub fn new(data: Rc<RefCell<VecPool<T>>>) -> Self {
+        pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
             ReadStore { data, _x: PhantomData }
         }
     }
@@ -94,19 +83,24 @@ pub mod storage {
         #[inline(always)]
         fn as_indexer(&self) -> ReadIndexer<'a, T> {
             unsafe {
-                ReadIndexer::<T> { ptr: self.data.borrow().get_store_ptr(), _x: PhantomData }
+                let guard = self.data.read();
+                ReadIndexer::<T> {
+                    ptr: guard.get_store_ptr(),
+                    _borrow: guard,
+                    _x: PhantomData
+                }
             }
         }
     }
 
     pub struct WriteStore<'a, T> where T: 'a {
-        pub(crate) data: Rc<RefCell<VecPool<T>>>,
+        pub(crate) data: Arc<RwCell<VecPool<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> WriteStore<'a, T> {
         #[inline(always)]
-        pub fn new(data: Rc<RefCell<VecPool<T>>>) -> Self {
+        pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
             WriteStore { data, _x: PhantomData }
         }
     }
@@ -118,7 +112,12 @@ pub mod storage {
         #[inline(always)]
         fn as_indexer(&self) -> WriteIndexer<'a, T> {
             unsafe {
-                WriteIndexer::<T> { ptr: self.data.borrow_mut().get_store_mut_ptr(), _x: PhantomData }
+                let mut guard = self.data.write();
+                WriteIndexer::<T> {
+                    ptr: guard.get_store_mut_ptr(),
+                    _borrow: guard,
+                    _x: PhantomData
+                }
             }
         }
     }
@@ -179,15 +178,6 @@ pub mod join {
                 pub fn get(&self, id: usize) -> ($($field_type::Item),*) {
                     let &($($field_name),*,) = self.mapping.get(&id).unwrap();
                     ($(self.$field_name.get($field_name)),*)
-                }
-            }
-
-            impl<'a, $($field_type),*> Copy for $iname<'a, $($field_type),*> where $($field_type: Indexer),* {}
-
-            impl<'a, $($field_type),*> Clone for $iname<'a, $($field_type),*> where $($field_type: Indexer),* {
-                #[inline(always)]
-                fn clone(&self) -> Self {
-                    $iname{mapping: self.mapping, $($field_name: self.$field_name),*}
                 }
             }
 

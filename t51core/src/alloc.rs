@@ -34,7 +34,6 @@ impl<T> VecPool<T> {
     }
 
     /// Reclaim the value at supplied index.
-    /// NOTE: The item won't be erased from the storage.
     pub fn reclaim(&mut self, index: usize) {
         self.queue.push(index);
     }

@@ -28,7 +28,7 @@ pub mod indexing {
         #[inline]
         fn get(&self, index: usize) -> &'a T {
             unsafe {
-                &*self.ptr.offset(index as isize)
+                &*self.ptr.add(index )
             }
         }
     }
@@ -45,7 +45,7 @@ pub mod indexing {
         #[inline]
         fn get(&self, index: usize) -> &'a mut T {
             unsafe {
-                &mut *self.ptr.offset(index as isize)
+                &mut *self.ptr.add(index)
             }
         }
     }

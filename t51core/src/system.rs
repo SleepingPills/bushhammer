@@ -25,7 +25,7 @@ pub mod indexing {
     impl<'a, T> Indexer for ReadIndexer<'a, T> where T: 'a {
         type Item = &'a T;
 
-        #[inline(always)]
+        #[inline]
         fn get(&self, index: usize) -> &'a T {
             unsafe {
                 &*self.ptr.offset(index as isize)
@@ -42,7 +42,7 @@ pub mod indexing {
     impl<'a, T> Indexer for WriteIndexer<'a, T> where T: 'a {
         type Item = &'a mut T;
 
-        #[inline(always)]
+        #[inline]
         fn get(&self, index: usize) -> &'a mut T {
             unsafe {
                 &mut *self.ptr.offset(index as isize)
@@ -70,7 +70,7 @@ pub mod storage {
     }
 
     impl<'a, T> ReadStore<'a, T> {
-        #[inline(always)]
+        #[inline]
         pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
             ReadStore { data, _x: PhantomData }
         }
@@ -80,7 +80,7 @@ pub mod storage {
         where T: 'a {
         type Indexer = ReadIndexer<'a, T>;
 
-        #[inline(always)]
+        #[inline]
         fn as_indexer(&self) -> ReadIndexer<'a, T> {
             unsafe {
                 let guard = self.data.read();
@@ -99,7 +99,7 @@ pub mod storage {
     }
 
     impl<'a, T> WriteStore<'a, T> {
-        #[inline(always)]
+        #[inline]
         pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
             WriteStore { data, _x: PhantomData }
         }
@@ -109,7 +109,7 @@ pub mod storage {
         where T: 'a {
         type Indexer = WriteIndexer<'a, T>;
 
-        #[inline(always)]
+        #[inline]
         fn as_indexer(&self) -> WriteIndexer<'a, T> {
             unsafe {
                 let mut guard = self.data.write();
@@ -144,7 +144,7 @@ pub mod join {
                 where $($field_type: Indexer),* {
                 type Item = (usize, $($field_type::Item),*);
 
-                #[inline(always)]
+                #[inline]
                 fn next(&mut self) -> Option<(usize, $($field_type::Item),*)> {
                     match self.mapiter.next() {
                         Some((&id, &($($field_name),*,))) => Some((id, $(self.$field_name.get($field_name)),*)),
@@ -152,7 +152,7 @@ pub mod join {
                     }
                 }
 
-                #[inline(always)]
+                #[inline]
                 fn size_hint(&self) -> (usize, Option<usize>) {
                     self.mapiter.size_hint()
                 }
@@ -174,7 +174,7 @@ pub mod join {
             }
 
             impl<'a, $($field_type),*> $iname<'a, $($field_type),*> where $($field_type: Indexer),* {
-                #[inline(always)]
+                #[inline]
                 pub fn get(&self, id: usize) -> ($($field_type::Item),*) {
                     let &($($field_name),*,) = self.mapping.get(&id).unwrap();
                     ($(self.$field_name.get($field_name)),*)
@@ -185,7 +185,7 @@ pub mod join {
                 type Item = (usize, $($field_type::Item),*);
                 type IntoIter = $itertype<'a, $($field_type),*>;
 
-                #[inline(always)]
+                #[inline]
                 fn into_iter(self) -> $itertype<'a, $($field_type),*> {
                     $itertype { mapiter: self.mapping.iter(), $($field_name: self.$field_name),*}
                 }
@@ -210,7 +210,7 @@ pub mod join {
                 for (IndexMap<usize, ($(_decl_system_replace_expr!($field_name usize)),*,)>, $($field_type),*)
                 where $($field_type: Store),*,$($field_type::Indexer: Indexer),* {
 
-                #[inline(always)]
+                #[inline]
                 fn join(&self) -> $jointype<$($field_type::Indexer),*> {
                     $jointype { mapping: &self.0, $($field_name: self.$field_seq.as_indexer()),* }
                 }

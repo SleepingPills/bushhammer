@@ -14,6 +14,10 @@ pub struct RwCell<T> {
 }
 
 impl<T> RwCell<T> {
+    pub fn new(item: T, guard: Arc<AtomicI64>) -> RwCell<T> {
+        RwCell { item: UnsafeCell::new(item), guard }
+    }
+
     /// Get read-only access to the cell. There can be multiple readers, but no concurrent writer.
     pub fn read(&self) -> ReadGuard<T> {
         loop {
@@ -28,7 +32,7 @@ impl<T> RwCell<T> {
             if new == -1 {
                 panic!("Attempted to acquire read lock when a write lock is already in effect.")
             } else if new == value {
-                return ReadGuard { ptr: self.item.get(), guard: self.guard.clone() };
+                break ReadGuard { ptr: self.item.get(), guard: self.guard.clone() };
             }
         }
     }
@@ -49,6 +53,11 @@ impl<T> RwCell<T> {
         } else {
             panic!("Attempted to acquire a write lock while another lock is already in effect.")
         }
+    }
+
+    #[inline]
+    pub(crate) unsafe fn get_ptr(&self) -> *mut T {
+        self.item.get()
     }
 }
 
@@ -126,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_rwcell() {
-        let lock = RwCell{item: UnsafeCell::new(5), guard: Arc::new(AtomicI64::new(0))};
+        let lock = RwCell { item: UnsafeCell::new(5), guard: Arc::new(AtomicI64::new(0)) };
 
         {
             let a = lock.read();

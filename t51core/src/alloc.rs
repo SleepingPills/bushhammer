@@ -34,6 +34,7 @@ impl<T> VecPool<T> {
     }
 
     /// Reclaim the value at supplied index.
+    #[inline]
     pub fn reclaim(&mut self, index: usize) {
         self.queue.push(index);
     }
@@ -50,12 +51,12 @@ impl<T> VecPool<T> {
         }
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) unsafe fn get_store_ptr(&self) -> *const T {
         self.store.as_ptr()
     }
 
-    #[inline(always)]
+    #[inline]
     pub(crate) unsafe fn get_store_mut_ptr(&mut self) -> *mut T {
         self.store.as_mut_ptr()
     }

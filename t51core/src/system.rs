@@ -1,8 +1,7 @@
-use indexmap::IndexMap;
-use indexmap::map::Iter;
-use std::marker::PhantomData;
 use component::ComponentStore;
-
+use indexmap::map::Iter;
+use indexmap::IndexMap;
+use std::marker::PhantomData;
 
 pub mod indexing {
     use super::*;
@@ -15,45 +14,52 @@ pub mod indexing {
         fn get(&self, index: usize) -> Self::Item;
     }
 
-    pub struct ReadIndexer<'a, T> where T: 'a {
+    pub struct ReadIndexer<'a, T>
+    where
+        T: 'a,
+    {
         pub(crate) ptr: *const T,
         pub(crate) _borrow: ReadGuard<ComponentStore<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Indexer for ReadIndexer<'a, T> where T: 'a {
+    impl<'a, T> Indexer for ReadIndexer<'a, T>
+    where
+        T: 'a,
+    {
         type Item = &'a T;
 
         #[inline(always)]
         fn get(&self, index: usize) -> &'a T {
-            unsafe {
-                &*self.ptr.add(index )
-            }
+            unsafe { &*self.ptr.add(index) }
         }
     }
 
-    pub struct WriteIndexer<'a, T> where T: 'a {
+    pub struct WriteIndexer<'a, T>
+    where
+        T: 'a,
+    {
         pub(crate) ptr: *mut T,
         pub(crate) _borrow: RwGuard<ComponentStore<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Indexer for WriteIndexer<'a, T> where T: 'a {
+    impl<'a, T> Indexer for WriteIndexer<'a, T>
+    where
+        T: 'a,
+    {
         type Item = &'a mut T;
 
         #[inline(always)]
         fn get(&self, index: usize) -> &'a mut T {
-            unsafe {
-                &mut *self.ptr.add(index)
-            }
+            unsafe { &mut *self.ptr.add(index) }
         }
     }
 }
 
-
 pub mod storage {
-    use super::*;
     use super::indexing::*;
+    use super::*;
     use std::sync::Arc;
     use sync::RwCell;
 
@@ -63,7 +69,10 @@ pub mod storage {
         fn as_indexer(&self) -> Self::Indexer;
     }
 
-    pub struct ReadStore<'a, T> where T: 'a {
+    pub struct ReadStore<'a, T>
+    where
+        T: 'a,
+    {
         pub(crate) data: Arc<RwCell<ComponentStore<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
@@ -71,12 +80,17 @@ pub mod storage {
     impl<'a, T> ReadStore<'a, T> {
         #[inline(always)]
         pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
-            ReadStore { data, _x: PhantomData }
+            ReadStore {
+                data,
+                _x: PhantomData,
+            }
         }
     }
 
     impl<'a, T> Store for ReadStore<'a, T>
-        where T: 'a {
+    where
+        T: 'a,
+    {
         type Indexer = ReadIndexer<'a, T>;
 
         #[inline(always)]
@@ -86,13 +100,16 @@ pub mod storage {
                 ReadIndexer::<T> {
                     ptr: guard.pool.get_store_ptr(),
                     _borrow: guard,
-                    _x: PhantomData
+                    _x: PhantomData,
                 }
             }
         }
     }
 
-    pub struct WriteStore<'a, T> where T: 'a {
+    pub struct WriteStore<'a, T>
+    where
+        T: 'a,
+    {
         pub(crate) data: Arc<RwCell<ComponentStore<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
@@ -100,12 +117,17 @@ pub mod storage {
     impl<'a, T> WriteStore<'a, T> {
         #[inline(always)]
         pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
-            WriteStore { data, _x: PhantomData }
+            WriteStore {
+                data,
+                _x: PhantomData,
+            }
         }
     }
 
     impl<'a, T> Store for WriteStore<'a, T>
-        where T: 'a {
+    where
+        T: 'a,
+    {
         type Indexer = WriteIndexer<'a, T>;
 
         #[inline(always)]
@@ -115,21 +137,22 @@ pub mod storage {
                 WriteIndexer::<T> {
                     ptr: guard.pool.get_store_mut_ptr(),
                     _borrow: guard,
-                    _x: PhantomData
+                    _x: PhantomData,
                 }
             }
         }
     }
 }
 
-
 pub mod join {
-    use super::*;
     use super::indexing::*;
     use super::storage::*;
+    use super::*;
 
     macro_rules! _decl_system_replace_expr {
-        ($_t:tt $sub:ty) => {$sub};
+        ($_t:tt $sub:ty) => {
+            $sub
+        };
     }
 
     macro_rules! joiniter {

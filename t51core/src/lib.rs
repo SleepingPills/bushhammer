@@ -1,6 +1,5 @@
 #![feature(unsize)]
 #![feature(integer_atomics)]
-#![feature(cfg_target_has_atomic)]
 
 extern crate anymap;
 extern crate indexmap;

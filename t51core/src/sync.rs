@@ -24,13 +24,13 @@ impl<T> RwCell<T> {
             let value = self.guard.load(Ordering::Acquire);
 
             if value == -1 {
-                panic!("Attempted to acquire read lock when a write lock is already in effect.")
+                panic!("Attempted to acquire read lock when a write lock is already in effect")
             }
 
             let new = self.guard.compare_and_swap(value, value + 1, Ordering::Release);
 
             if new == -1 {
-                panic!("Attempted to acquire read lock when a write lock is already in effect.")
+                panic!("Attempted to acquire read lock when a write lock is already in effect")
             } else if new == value {
                 break ReadGuard { ptr: self.item.get(), guard: self.guard.clone() };
             }
@@ -43,7 +43,7 @@ impl<T> RwCell<T> {
         let value = self.guard.load(Ordering::Acquire);
 
         if value != 0 {
-            panic!("Attempted to acquire a write lock while another lock is already in effect.")
+            panic!("Attempted to acquire a write lock while another lock is already in effect")
         }
 
         let new = self.guard.compare_and_swap(value, -1, Ordering::Release);
@@ -51,7 +51,7 @@ impl<T> RwCell<T> {
         if new == 0 {
             return RwGuard { ptr: self.item.get(), guard: self.guard.clone() };
         } else {
-            panic!("Attempted to acquire a write lock while another lock is already in effect.")
+            panic!("Attempted to acquire a write lock while another lock is already in effect")
         }
     }
 

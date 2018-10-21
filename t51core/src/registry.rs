@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use std::marker::Unsize;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use sync::RwCell;
+use sync::{ReadGuard, RwCell, RwGuard};
 
 /// Dynamically typed registry for shared ownership access to objects and traits they implement.
 /// Vanilla trait objects in rust take full ownership of the underlying instance, making it
@@ -97,6 +97,32 @@ where
         // Use the shared guard of the bundle and stash away the entry
         let guard = bundle.guard.clone();
         bundle.insert(Arc::new(RwCell::new(trait_obj, guard)));
+    }
+
+    /// Iterate over all registered instances with the supplied trait
+    pub fn iter<T>(&self) -> impl Iterator<Item = (&K, ReadGuard<WeakBox<T>>)>
+    where
+        T: 'static + ?Sized,
+    {
+        self.data.iter().filter_map(
+            |(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+                Some(item) => Some((key, item.read())),
+                _ => None,
+            },
+        )
+    }
+
+    /// Mutably iterate over all registered instances with the supplied trait
+    pub fn iter_mut<T>(&self) -> impl Iterator<Item = (&K, RwGuard<WeakBox<T>>)>
+    where
+        T: 'static + ?Sized,
+    {
+        self.data.iter().filter_map(
+            |(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+                Some(item) => Some((key, item.write())),
+                _ => None,
+            },
+        )
     }
 }
 
@@ -257,7 +283,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
+    #[should_panic(
+        expected = "Attempted to acquire a write lock while another lock is already in effect"
+    )]
     fn fail_read_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
@@ -267,7 +295,9 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Attempted to acquire read lock when a write lock is already in effect")]
+    #[should_panic(
+        expected = "Attempted to acquire read lock when a write lock is already in effect"
+    )]
     fn fail_write_read_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
@@ -277,12 +307,56 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
+    #[should_panic(
+        expected = "Attempted to acquire a write lock while another lock is already in effect"
+    )]
     fn fail_write_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
 
         let _foo1 = registry.get::<Foo>(&123).unwrap().write();
         let _foo2 = registry.get::<Foo>(&123).unwrap().write();
+    }
+
+    #[test]
+    fn iter_contents() {
+        let mut registry = Registry::<i32>::new();
+
+        // Populate the registry with instances and traits
+        let ids = vec![1, 2, 3];
+        for &id in ids.iter() {
+            registry.register(id, Foo { x: id });
+            registry.register_trait::<Foo, FooTrait>(&id);
+        }
+
+        // Add another instance without the trait
+        registry.register(4, Foo { x: 4 });
+
+        for (i, (&id, inst)) in registry.iter::<FooTrait>().enumerate() {
+            assert_eq!(inst.get_x_times_two(), ids[i] * 2);
+            assert_eq!(id, ids[i]);
+        }
+    }
+
+    #[test]
+    fn iter_mut_contents() {
+        let mut registry = Registry::<i32>::new();
+
+        // Populate the registry with instances and traits
+        let ids = vec![1, 2, 3];
+        for &id in ids.iter() {
+            registry.register(id, Foo { x: id });
+            registry.register_trait::<Foo, FooTrait>(&id);
+        }
+
+        // Add another instance without the trait
+        registry.register(4, Foo { x: 4 });
+
+        for (i, (&id, mut inst)) in registry.iter_mut::<FooTrait>().enumerate() {
+            assert_eq!(inst.get_x_times_two(), ids[i] * 2);
+            inst.add_one();
+            assert_eq!(inst.get_x_times_two(), (ids[i] + 1) * 2);
+            assert_eq!(id, ids[i]);
+        }
     }
 }

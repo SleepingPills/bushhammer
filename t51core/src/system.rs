@@ -1,8 +1,7 @@
 use indexmap::IndexMap;
 use indexmap::map::Iter;
 use std::marker::PhantomData;
-
-use alloc::VecPool;
+use component::ComponentStore;
 
 
 pub mod indexing {
@@ -18,7 +17,7 @@ pub mod indexing {
 
     pub struct ReadIndexer<'a, T> where T: 'a {
         pub(crate) ptr: *const T,
-        pub(crate) _borrow: ReadGuard<VecPool<T>>,
+        pub(crate) _borrow: ReadGuard<ComponentStore<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
@@ -35,7 +34,7 @@ pub mod indexing {
 
     pub struct WriteIndexer<'a, T> where T: 'a {
         pub(crate) ptr: *mut T,
-        pub(crate) _borrow: RwGuard<VecPool<T>>,
+        pub(crate) _borrow: RwGuard<ComponentStore<T>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
@@ -65,13 +64,13 @@ pub mod storage {
     }
 
     pub struct ReadStore<'a, T> where T: 'a {
-        pub(crate) data: Arc<RwCell<VecPool<T>>>,
+        pub(crate) data: Arc<RwCell<ComponentStore<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> ReadStore<'a, T> {
         #[inline(always)]
-        pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
+        pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
             ReadStore { data, _x: PhantomData }
         }
     }
@@ -85,7 +84,7 @@ pub mod storage {
             unsafe {
                 let guard = self.data.read();
                 ReadIndexer::<T> {
-                    ptr: guard.get_store_ptr(),
+                    ptr: guard.pool.get_store_ptr(),
                     _borrow: guard,
                     _x: PhantomData
                 }
@@ -94,13 +93,13 @@ pub mod storage {
     }
 
     pub struct WriteStore<'a, T> where T: 'a {
-        pub(crate) data: Arc<RwCell<VecPool<T>>>,
+        pub(crate) data: Arc<RwCell<ComponentStore<T>>>,
         pub(crate) _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> WriteStore<'a, T> {
         #[inline(always)]
-        pub fn new(data: Arc<RwCell<VecPool<T>>>) -> Self {
+        pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
             WriteStore { data, _x: PhantomData }
         }
     }
@@ -114,7 +113,7 @@ pub mod storage {
             unsafe {
                 let mut guard = self.data.write();
                 WriteIndexer::<T> {
-                    ptr: guard.get_store_mut_ptr(),
+                    ptr: guard.pool.get_store_mut_ptr(),
                     _borrow: guard,
                     _x: PhantomData
                 }

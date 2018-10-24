@@ -6,12 +6,6 @@ extern crate indexmap;
 use indexmap::IndexMap;
 use t51core::prelude::*;
 
-#[derive(Copy, Clone, Debug)]
-enum Poof {
-    A = 1,
-    B = 2,
-    C = 3
-}
 
 #[allow(dead_code, unused_variables)]
 fn test3(
@@ -27,5 +21,4 @@ fn test3(
 }
 
 fn main() {
-    println!("{:?}", Poof::A);
 }

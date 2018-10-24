@@ -1,9 +1,8 @@
-use std::sync::atomic::{AtomicI64, Ordering};
-use std::sync::Arc;
+use std::cell::UnsafeCell;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::cell::UnsafeCell;
-
+use std::sync::atomic::{AtomicI64, Ordering};
+use std::sync::Arc;
 
 /// A fail-fast threadsafe read-write cell with similar semantics to a RefCell. There can be any
 /// number of readers, or a single writer. Any combination of readers and writers will cause
@@ -15,7 +14,10 @@ pub struct RwCell<T> {
 
 impl<T> RwCell<T> {
     pub fn new(item: T, guard: Arc<AtomicI64>) -> RwCell<T> {
-        RwCell { item: UnsafeCell::new(item), guard }
+        RwCell {
+            item: UnsafeCell::new(item),
+            guard,
+        }
     }
 
     /// Get read-only access to the cell. There can be multiple readers, but no concurrent writer.
@@ -32,7 +34,10 @@ impl<T> RwCell<T> {
             if new == -1 {
                 panic!("Attempted to acquire read lock when a write lock is already in effect")
             } else if new == value {
-                break ReadGuard { ptr: self.item.get(), guard: self.guard.clone() };
+                break ReadGuard {
+                    ptr: self.item.get(),
+                    guard: self.guard.clone(),
+                };
             }
         }
     }
@@ -49,7 +54,10 @@ impl<T> RwCell<T> {
         let new = self.guard.compare_and_swap(value, -1, Ordering::Release);
 
         if new == 0 {
-            return RwGuard { ptr: self.item.get(), guard: self.guard.clone() };
+            return RwGuard {
+                ptr: self.item.get(),
+                guard: self.guard.clone(),
+            };
         } else {
             panic!("Attempted to acquire a write lock while another lock is already in effect")
         }
@@ -86,9 +94,7 @@ impl<T> Deref for ReadGuard<T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe {
-            &*self.ptr
-        }
+        unsafe { &*self.ptr }
     }
 }
 
@@ -113,21 +119,16 @@ impl<T> Deref for RwGuard<T> {
 
     #[inline]
     fn deref(&self) -> &T {
-        unsafe {
-            &*self.ptr
-        }
+        unsafe { &*self.ptr }
     }
 }
 
 impl<T> DerefMut for RwGuard<T> {
     #[inline]
     fn deref_mut(&mut self) -> &mut T {
-        unsafe {
-            &mut *self.ptr
-        }
+        unsafe { &mut *self.ptr }
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -135,7 +136,10 @@ mod tests {
 
     #[test]
     fn test_rwcell() {
-        let lock = RwCell { item: UnsafeCell::new(5), guard: Arc::new(AtomicI64::new(0)) };
+        let lock = RwCell {
+            item: UnsafeCell::new(5),
+            guard: Arc::new(AtomicI64::new(0)),
+        };
 
         {
             let a = lock.read();

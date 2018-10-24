@@ -1,7 +1,14 @@
 use component::ComponentStore;
+use entity::Entity;
 use indexmap::map::Iter;
 use indexmap::IndexMap;
 use std::marker::PhantomData;
+use entity::EntityError;
+
+pub trait System {
+    fn register_entity(&mut self, entity: &Entity) -> Result<(), EntityError>;
+    fn remove_entity(&mut self, id: usize) -> Result<(), EntityError>;
+}
 
 pub mod indexing {
     use super::*;
@@ -80,10 +87,7 @@ pub mod storage {
     impl<'a, T> ReadStore<'a, T> {
         #[inline(always)]
         pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
-            ReadStore {
-                data,
-                _x: PhantomData,
-            }
+            ReadStore { data, _x: PhantomData }
         }
     }
 
@@ -117,10 +121,7 @@ pub mod storage {
     impl<'a, T> WriteStore<'a, T> {
         #[inline(always)]
         pub fn new(data: Arc<RwCell<ComponentStore<T>>>) -> Self {
-            WriteStore {
-                data,
-                _x: PhantomData,
-            }
+            WriteStore { data, _x: PhantomData }
         }
     }
 

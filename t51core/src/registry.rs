@@ -30,9 +30,7 @@ where
     K: Eq + Hash,
 {
     pub fn new() -> Registry<K> {
-        Registry::<K> {
-            data: IndexMap::new(),
-        }
+        Registry::<K> { data: IndexMap::new() }
     }
 
     /// Get the root object associated with the given key.
@@ -104,12 +102,12 @@ where
     where
         T: 'static + ?Sized,
     {
-        self.data.iter().filter_map(
-            |(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+        self.data
+            .iter()
+            .filter_map(|(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
                 Some(item) => Some((key, item.read())),
                 _ => None,
-            },
-        )
+            })
     }
 
     /// Mutably iterate over all registered instances with the supplied trait
@@ -117,12 +115,12 @@ where
     where
         T: 'static + ?Sized,
     {
-        self.data.iter().filter_map(
-            |(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+        self.data
+            .iter()
+            .filter_map(|(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
                 Some(item) => Some((key, item.write())),
                 _ => None,
-            },
-        )
+            })
     }
 }
 
@@ -283,9 +281,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Attempted to acquire a write lock while another lock is already in effect"
-    )]
+    #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
     fn fail_read_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
@@ -295,9 +291,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Attempted to acquire read lock when a write lock is already in effect"
-    )]
+    #[should_panic(expected = "Attempted to acquire read lock when a write lock is already in effect")]
     fn fail_write_read_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
@@ -307,9 +301,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(
-        expected = "Attempted to acquire a write lock while another lock is already in effect"
-    )]
+    #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
     fn fail_write_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });

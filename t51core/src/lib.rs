@@ -1,3 +1,4 @@
+#![feature(nll)]
 #![feature(unsize)]
 #![feature(integer_atomics)]
 #![feature(core_intrinsics)]

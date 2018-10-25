@@ -45,12 +45,26 @@ impl World {
                 self.apply_transaction(tx);
             }
         }
+        for _ in 0..self.main_queue.len() {
+            match self.main_queue.pop() {
+                Some(tx) => self.apply_transaction(tx),
+                _ => break
+            }
+        }
     }
 
     fn apply_transaction(&mut self, tx: entity::Transaction) {}
 
     fn add_entity(&mut self) -> entity::Builder {
         entity::Builder::new(&self.entities, &self.sys_comp, &self.comp_sys, &mut self.main_queue)
+    }
+
+    fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
+        entity::Editor::new(id, &self.entities, &self.sys_comp, &self.comp_sys, &mut self.main_queue)
+    }
+
+    fn remove_entity(&mut self, id: usize) {
+        self.main_queue.push(entity::Transaction::RemoveEnt(id));
     }
 }
 

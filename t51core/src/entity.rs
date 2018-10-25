@@ -2,6 +2,7 @@ use indexmap::IndexMap;
 use object::{ComponentId, SystemId};
 use std::any::Any;
 use std::collections::{HashMap, HashSet};
+use std::mem;
 use sync::ReadGuard;
 use sync::RwGuard;
 
@@ -24,37 +25,44 @@ impl Entity {
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TransactionError {
-    ComponentMissing(String),
-    EntityMissing(String),
-    ComponentRequired(String),
+    ComponentMissing(ComponentId),
+    EntityNotFound(usize),
+    ComponentRequired(SystemId, ComponentId),
+    SystemNotFound(SystemId),
 }
 
+#[derive(Debug)]
 pub enum Step {
     AddSys(SystemId),
     RemoveSys(SystemId),
     AddComp((ComponentId, *const ())),
+    AddCompJson((ComponentId, String)),
     RemoveComp(ComponentId),
 }
 
+#[derive(Debug)]
 pub struct Composite {
     pub(crate) steps: Vec<Step>,
 }
 
+#[derive(Debug)]
 pub enum Transaction {
     AddEnt(Composite),
     EditEnt(Composite),
     RemoveEnt(usize),
 }
 
+#[derive(Debug)]
 pub struct Builder<'a> {
-    components: HashMap<ComponentId, *const ()>,
+    tx: Composite,
+    components: HashSet<ComponentId>,
     systems: HashSet<SystemId>,
     entities: &'a IndexMap<usize, Entity>,
     sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
     comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
-    tx: &'a mut Vec<Transaction>,
+    queue: &'a mut Vec<Transaction>,
 }
 
 impl<'a> Builder<'a> {
@@ -62,16 +70,116 @@ impl<'a> Builder<'a> {
         entities: &'a IndexMap<usize, Entity>,
         sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
         comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
-        tx: &'a mut Vec<Transaction>,
+        queue: &'a mut Vec<Transaction>,
     ) -> Self {
         Builder {
-            components: HashMap::new(),
+            tx: Composite { steps: Vec::new() },
+            components: HashSet::new(),
             systems: HashSet::new(),
             entities,
             sys_comp,
             comp_sys,
-            tx,
+            queue,
         }
+    }
+
+    pub fn add_system<T: 'static>(mut self) -> Result<Builder<'a>, TransactionError> {
+        self.add_system_type(SystemId::new::<T>())
+    }
+
+    pub fn add_system_type(mut self, sys_id: SystemId) -> Result<Builder<'a>, TransactionError> {
+        let requirements = self.comp_sys.get(&sys_id).expect("System not found");
+        for cid in requirements {
+            if !self.components.contains(&cid) {
+                return Err(TransactionError::ComponentMissing(cid.clone()))
+            }
+        }
+        self.tx.steps.push(Step::AddSys(sys_id));
+        Ok(self)
+    }
+
+    pub fn add_component<T: 'static>(mut self, instance: T) -> Builder<'a> {
+        let step = Builder::build_add_comp_step(instance);
+        self.tx.steps.push(step);
+        self
+    }
+
+    pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Builder<'a> {
+        self.tx.steps.push(Step::AddCompJson((comp_id, json)));
+        self
+    }
+
+    fn build_add_comp_step<T: 'static>(instance: T) -> Step {
+        // Stash away the pointer as a void type and leak the original box.
+        // The type will be reinstated later by the component store.
+        let ptr = Box::into_raw(Box::new(instance)) as *const ();
+        Step::AddComp((ComponentId::new::<T>(), ptr))
+    }
+}
+
+#[derive(Debug)]
+pub struct Editor<'a> {
+    entity: &'a Entity,
+    builder: Builder<'a>,
+}
+
+impl<'a> Editor<'a> {
+    #[inline]
+    pub fn new(
+        id: usize,
+        entities: &'a IndexMap<usize, Entity>,
+        sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
+        comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+        queue: &'a mut Vec<Transaction>,
+    ) -> Result<Self, TransactionError> {
+        if let Some(entity) = entities.get(&id) {
+            let builder = Builder::new(entities, sys_comp, comp_sys, queue);
+            Ok(Editor { entity, builder })
+        } else {
+            Err(TransactionError::EntityNotFound(id))
+        }
+    }
+
+    pub fn add_system<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+        self.add_system_type(SystemId::new::<T>())
+    }
+
+    pub fn add_system_type(mut self, sys_id: SystemId) -> Result<Editor<'a>, TransactionError> {
+        unimplemented!()
+    }
+
+    pub fn remove_system<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+        self.remove_system_type(SystemId::new::<T>())
+    }
+
+    pub fn remove_system_type(mut self, sys_id: SystemId) -> Result<Editor<'a>, TransactionError> {
+        if self.entity.systems.contains(&sys_id) {
+            self.builder.tx.steps.push(Step::RemoveSys(sys_id));
+            Ok(self)
+        } else {
+            Err(TransactionError::SystemNotFound(sys_id))
+        }
+    }
+
+    pub fn add_component<T: 'static>(mut self, instance: T) -> Editor<'a> {
+        let step = Builder::build_add_comp_step(instance);
+        self.builder.tx.steps.push(step);
+        self
+    }
+
+    pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Editor<'a> {
+        self.builder.tx.steps.push(Step::AddCompJson((comp_id, json)));
+        self
+    }
+
+    pub fn remove_component<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+        self.remove_component_type(ComponentId::new::<T>())
+    }
+
+    pub fn remove_component_type(mut self, comp_id: ComponentId) -> Result<Editor<'a>, TransactionError> {
+        // Check all systems that require this component, and ensure none of them are registered
+        // for this entity.
+        unimplemented!()
     }
 }
 
@@ -79,7 +187,7 @@ pub struct EntityStore<'a> {
     entities: &'a IndexMap<usize, Entity>,
     sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
     comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
-    tx: &'a mut RwGuard<Vec<Transaction>>,
+    queue: &'a mut RwGuard<Vec<Transaction>>,
 }
 
 impl<'a> EntityStore<'a> {
@@ -87,109 +195,27 @@ impl<'a> EntityStore<'a> {
         entities: &'a IndexMap<usize, Entity>,
         sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
         comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
-        tx: &'a mut RwGuard<Vec<Transaction>>,
+        queue: &'a mut RwGuard<Vec<Transaction>>,
     ) -> Self {
         EntityStore {
             entities,
             sys_comp,
             comp_sys,
-            tx,
+            queue,
         }
     }
 }
 
 impl<'a> EntityStore<'a> {
     pub fn add(&mut self) -> Builder {
-        Builder::new(self.entities, self.sys_comp, self.comp_sys, self.tx)
+        Builder::new(self.entities, self.sys_comp, self.comp_sys, self.queue)
     }
 
-    pub fn edit(&mut self, id: usize) -> Builder {
-        Builder::new(self.entities, self.sys_comp, self.comp_sys, self.tx)
+    pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
+        Editor::new(id, self.entities, self.sys_comp, self.comp_sys, self.queue)
     }
 
     pub fn remove(&mut self, id: usize) {
-        self.tx.push(Transaction::RemoveEnt(id));
+        self.queue.push(Transaction::RemoveEnt(id));
     }
 }
-
-/*
-pub struct EntityBuilder<'a> {
-    entity: Rc<RefCell<Entity>>,
-    world: &'a mut World,
-}
-
-impl<'a> EntityBuilder<'a> {
-    pub fn add_component<T: 'static>(self, component: T) -> EntityBuilder<'a> {
-        let comp_id = self.world.store_component(component);
-        self.entity.borrow_mut().components.insert(self.world.get_comp_id::<T>(), comp_id);
-        self
-    }
-
-    pub fn add_component_type(self, comp_id: ComponentId, component: Box<Any>) -> EntityBuilder<'a> {
-        let comp_idx = self.world.store_component_type(comp_id, component);
-        self.entity.borrow_mut().components.insert(comp_id, comp_idx);
-        self
-    }
-
-    pub fn add_component_json(self, comp_id: ComponentId, json: String) -> EntityBuilder<'a> {
-        let comp_idx = self.world.store_component_json(comp_id, json);
-        self.entity.borrow_mut().components.insert(comp_id, comp_idx);
-        self
-    }
-
-    pub fn remove_component<T: 'static>(self) -> Result<EntityBuilder<'a>, SystemError> {
-        {
-            let component_id = self.world.get_comp_id::<T>();
-            self.world.remove_component_from_entity(component_id, &self.entity.borrow())?;
-        }
-        Ok(self)
-    }
-
-    pub fn remove_component_type(self, comp_id: ComponentId) -> Result<EntityBuilder<'a>, SystemError> {
-        {
-            self.world.remove_component_from_entity(comp_id, &self.entity.borrow())?;
-        }
-        Ok(self)
-    }
-}
-
-impl<'a> EntityBuilder<'a> {
-    pub fn add_system<T: 'static>(self) -> Result<EntityBuilder<'a>, SystemError> {
-        let sys_id = self.world.get_sys_id::<T>();
-        {
-            let mut entity = self.entity.borrow_mut();
-            self.world.add_entity_to_system(sys_id, &entity)?;
-            entity.systems.insert(sys_id);
-        }
-        Ok(self)
-    }
-
-    pub fn add_system_type(self, sys_id: SystemId) -> Result<EntityBuilder<'a>, SystemError> {
-        {
-            let mut entity = self.entity.borrow_mut();
-            self.world.add_entity_to_system(sys_id, &entity)?;
-            entity.systems.insert(sys_id);
-        }
-        Ok(self)
-    }
-
-    pub fn remove_system<T: 'static>(self) -> Result<EntityBuilder<'a>, SystemError> {
-        let sys_id = self.world.get_sys_id::<T>();
-        {
-            let mut entity = self.entity.borrow_mut();
-            self.world.remove_entity_from_system(sys_id, entity.id)?;
-            entity.systems.remove(&sys_id);
-        }
-        Ok(self)
-    }
-
-    pub fn remove_system_type(self, sys_id: SystemId) -> Result<EntityBuilder<'a>, SystemError> {
-        {
-            let mut entity = self.entity.borrow_mut();
-            self.world.remove_entity_from_system(sys_id, entity.id)?;
-            entity.systems.remove(&sys_id);
-        }
-        Ok(self)
-    }
-}
-*/

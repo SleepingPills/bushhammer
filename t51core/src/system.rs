@@ -3,11 +3,10 @@ use entity::Entity;
 use indexmap::map::Iter;
 use indexmap::IndexMap;
 use std::marker::PhantomData;
-use entity::EntityError;
+use entity::EntityStore;
 
 pub trait System {
-    fn register_entity(&mut self, entity: &Entity) -> Result<(), EntityError>;
-    fn remove_entity(&mut self, id: usize) -> Result<(), EntityError>;
+    fn run(&mut self, entities: EntityStore);
 }
 
 pub mod indexing {

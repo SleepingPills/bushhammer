@@ -33,12 +33,12 @@ impl<T> VecPool<T> {
     }
 
     #[inline]
-    pub(crate) unsafe fn get_store_ptr(&self) -> *const T {
+    pub unsafe fn get_store_ptr(&self) -> *const T {
         self.store.as_ptr()
     }
 
     #[inline]
-    pub(crate) unsafe fn get_store_mut_ptr(&mut self) -> *mut T {
+    pub unsafe fn get_store_mut_ptr(&mut self) -> *mut T {
         self.store.as_mut_ptr()
     }
 }

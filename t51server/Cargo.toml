@@ -5,4 +5,5 @@ authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 
 [dependencies]
 t51core = { path = "../t51core" }
+t51core_proc = { path="../t51core_proc" }
 indexmap = "1.0.1"

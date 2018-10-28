@@ -25,11 +25,14 @@ impl Entity {
     }
 }
 
+pub type EntityId = usize;
+
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TransactionError {
-    ComponentMissing(ComponentId),
+    ComponentMissing(Vec<ComponentId>),
     EntityNotFound(usize),
     ComponentRequired(SystemId, ComponentId),
+    ComponentNotFound(ComponentId),
     SystemNotFound(SystemId),
 }
 
@@ -60,16 +63,16 @@ pub struct Builder<'a> {
     components: HashSet<ComponentId>,
     systems: HashSet<SystemId>,
     entities: &'a IndexMap<usize, Entity>,
-    sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
-    comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+    comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+    sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
     queue: &'a mut Vec<Transaction>,
 }
 
 impl<'a> Builder<'a> {
     pub fn new(
         entities: &'a IndexMap<usize, Entity>,
-        sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
-        comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+        comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+        sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut Vec<Transaction>,
     ) -> Self {
         Builder {
@@ -77,8 +80,8 @@ impl<'a> Builder<'a> {
             components: HashSet::new(),
             systems: HashSet::new(),
             entities,
-            sys_comp,
             comp_sys,
+            sys_comp,
             queue,
         }
     }
@@ -88,32 +91,54 @@ impl<'a> Builder<'a> {
     }
 
     pub fn add_system_type(mut self, sys_id: SystemId) -> Result<Builder<'a>, TransactionError> {
-        let requirements = self.comp_sys.get(&sys_id).expect("System not found");
-        for cid in requirements {
-            if !self.components.contains(&cid) {
-                return Err(TransactionError::ComponentMissing(cid.clone()))
-            }
+        if let Some(missing) = self.core_check_missing_comp(sys_id) {
+            Err(TransactionError::ComponentMissing(missing))
+        } else {
+            self.core_record_sys_step(Step::AddSys(sys_id), sys_id);
+            Ok(self)
         }
-        self.tx.steps.push(Step::AddSys(sys_id));
-        Ok(self)
     }
 
     pub fn add_component<T: 'static>(mut self, instance: T) -> Builder<'a> {
-        let step = Builder::build_add_comp_step(instance);
-        self.tx.steps.push(step);
+        self.core_add_component(instance);
         self
     }
 
     pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Builder<'a> {
-        self.tx.steps.push(Step::AddCompJson((comp_id, json)));
+        self.core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
         self
     }
 
-    fn build_add_comp_step<T: 'static>(instance: T) -> Step {
+    fn core_add_component<T: 'static>(&mut self, instance: T) {
         // Stash away the pointer as a void type and leak the original box.
         // The type will be reinstated later by the component store.
         let ptr = Box::into_raw(Box::new(instance)) as *const ();
-        Step::AddComp((ComponentId::new::<T>(), ptr))
+        let comp_id = ComponentId::new::<T>();
+        let step = Step::AddComp((comp_id, ptr));
+        self.core_record_comp_step(step, comp_id);
+    }
+
+    fn core_record_comp_step(&mut self, step: Step, comp_id: ComponentId) {
+        self.tx.steps.push(step);
+        self.components.insert(comp_id);
+    }
+
+    fn core_record_sys_step(&mut self, step: Step, sys_id: SystemId) {
+        self.tx.steps.push(step);
+        self.systems.insert(sys_id);
+    }
+
+    fn core_check_missing_comp(&self, sys_id: SystemId) -> Option<Vec<ComponentId>> {
+        let requirements = self.sys_comp.get(&sys_id).expect(&format!("System {} not found", sys_id));
+        let missing: Vec<_> = requirements
+            .iter()
+            .filter_map(|cid| if !self.components.contains(&cid) { Some(*cid) } else { None })
+            .collect();
+
+        match missing.len() {
+            0 => None,
+            _ => Some(missing),
+        }
     }
 }
 
@@ -128,12 +153,12 @@ impl<'a> Editor<'a> {
     pub fn new(
         id: usize,
         entities: &'a IndexMap<usize, Entity>,
-        sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
-        comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+        comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+        sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut Vec<Transaction>,
     ) -> Result<Self, TransactionError> {
         if let Some(entity) = entities.get(&id) {
-            let builder = Builder::new(entities, sys_comp, comp_sys, queue);
+            let builder = Builder::new(entities, comp_sys, sys_comp, queue);
             Ok(Editor { entity, builder })
         } else {
             Err(TransactionError::EntityNotFound(id))
@@ -145,7 +170,17 @@ impl<'a> Editor<'a> {
     }
 
     pub fn add_system_type(mut self, sys_id: SystemId) -> Result<Editor<'a>, TransactionError> {
-        unimplemented!()
+        if let Some(missing) = self.builder.core_check_missing_comp(sys_id) {
+            if missing.iter().all(|cid| self.entity.components.contains_key(cid)) {
+                self.builder.core_record_sys_step(Step::AddSys(sys_id), sys_id);
+                Ok(self)
+            } else {
+                Err(TransactionError::ComponentMissing(missing))
+            }
+        } else {
+            self.builder.core_record_sys_step(Step::AddSys(sys_id), sys_id);
+            Ok(self)
+        }
     }
 
     pub fn remove_system<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
@@ -162,13 +197,12 @@ impl<'a> Editor<'a> {
     }
 
     pub fn add_component<T: 'static>(mut self, instance: T) -> Editor<'a> {
-        let step = Builder::build_add_comp_step(instance);
-        self.builder.tx.steps.push(step);
+        self.builder.core_add_component(instance);
         self
     }
 
     pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Editor<'a> {
-        self.builder.tx.steps.push(Step::AddCompJson((comp_id, json)));
+        self.builder.core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
         self
     }
 
@@ -177,30 +211,38 @@ impl<'a> Editor<'a> {
     }
 
     pub fn remove_component_type(mut self, comp_id: ComponentId) -> Result<Editor<'a>, TransactionError> {
-        // Check all systems that require this component, and ensure none of them are registered
-        // for this entity.
-        unimplemented!()
+        if let Some(systems) = self.builder.comp_sys.get(&comp_id) {
+            for sys_id in systems {
+                if self.entity.systems.contains(sys_id) || self.builder.systems.contains(sys_id) {
+                    return Err(TransactionError::ComponentRequired(*sys_id, comp_id));
+                }
+            }
+            self.builder.tx.steps.push(Step::RemoveComp(comp_id));
+            Ok(self)
+        } else {
+            Err(TransactionError::ComponentNotFound(comp_id))
+        }
     }
 }
 
 pub struct EntityStore<'a> {
     entities: &'a IndexMap<usize, Entity>,
-    sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
-    comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+    comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+    sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
     queue: &'a mut RwGuard<Vec<Transaction>>,
 }
 
 impl<'a> EntityStore<'a> {
     pub fn new(
         entities: &'a IndexMap<usize, Entity>,
-        sys_comp: &'a HashMap<ComponentId, HashSet<SystemId>>,
-        comp_sys: &'a HashMap<SystemId, HashSet<ComponentId>>,
+        comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+        sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut RwGuard<Vec<Transaction>>,
     ) -> Self {
         EntityStore {
             entities,
-            sys_comp,
             comp_sys,
+            sys_comp,
             queue,
         }
     }
@@ -208,11 +250,11 @@ impl<'a> EntityStore<'a> {
 
 impl<'a> EntityStore<'a> {
     pub fn add(&mut self) -> Builder {
-        Builder::new(self.entities, self.sys_comp, self.comp_sys, self.queue)
+        Builder::new(self.entities, self.comp_sys, self.sys_comp, self.queue)
     }
 
     pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
-        Editor::new(id, self.entities, self.sys_comp, self.comp_sys, self.queue)
+        Editor::new(id, self.entities, self.comp_sys, self.sys_comp, self.queue)
     }
 
     pub fn remove(&mut self, id: usize) {

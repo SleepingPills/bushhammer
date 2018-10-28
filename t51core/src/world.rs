@@ -19,26 +19,26 @@ pub struct World {
     systems: Registry<SystemId>,
     tx_queues: Rc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
     main_queue: Vec<entity::Transaction>,
-    sys_comp: HashMap<ComponentId, HashSet<SystemId>>,
-    comp_sys: HashMap<SystemId, HashSet<ComponentId>>,
+    comp_sys: HashMap<ComponentId, HashSet<SystemId>>,
+    sys_comp: HashMap<SystemId, HashSet<ComponentId>>,
 }
 
 impl World {
-    fn run_systems(&mut self) {
+    pub fn run_systems(&mut self) {
         let systems = self.systems.iter_mut::<System>();
 
         // TODO: Turn this into a parallelized SEDA execution
         for (id, mut sys) in systems {
             if let Some(tx_queue) = self.tx_queues.get(id) {
                 let mut tx = tx_queue.write();
-                sys.run(entity::EntityStore::new(&self.entities, &self.sys_comp, &self.comp_sys, &mut tx))
+                sys.run(entity::EntityStore::new(&self.entities, &self.comp_sys, &self.sys_comp, &mut tx))
             } else {
                 panic!("System {} not found", id)
             }
         }
     }
 
-    fn apply_transactions(&mut self) {
+    pub fn apply_transactions(&mut self) {
         for etx in self.tx_queues.clone().values() {
             let mut tx_queue = etx.write();
             for tx in tx_queue.drain(..) {
@@ -53,17 +53,26 @@ impl World {
         }
     }
 
-    fn apply_transaction(&mut self, tx: entity::Transaction) {}
-
-    fn add_entity(&mut self) -> entity::Builder {
-        entity::Builder::new(&self.entities, &self.sys_comp, &self.comp_sys, &mut self.main_queue)
+    fn apply_transaction(&mut self, tx: entity::Transaction) {
+        match tx {
+            entity::Transaction::AddEnt(steps) => {},
+            entity::Transaction::EditEnt(steps) => {},
+            entity::Transaction::RemoveEnt(id) => {
+                let entity = self.entities.swap_remove(&id);
+                //TODO: Remove from systems and components
+            }
+        }
     }
 
-    fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
-        entity::Editor::new(id, &self.entities, &self.sys_comp, &self.comp_sys, &mut self.main_queue)
+    pub fn add_entity(&mut self) -> entity::Builder {
+        entity::Builder::new(&self.entities, &self.comp_sys, &self.sys_comp, &mut self.main_queue)
     }
 
-    fn remove_entity(&mut self, id: usize) {
+    pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
+        entity::Editor::new(id, &self.entities, &self.comp_sys, &self.sys_comp, &mut self.main_queue)
+    }
+
+    pub fn remove_entity(&mut self, id: usize) {
         self.main_queue.push(entity::Transaction::RemoveEnt(id));
     }
 }

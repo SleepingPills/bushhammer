@@ -1,13 +1,10 @@
 use component::ComponentStore;
 use entity::Entity;
+use entity::EntityId;
+use entity::EntityStore;
 use indexmap::map::Iter;
 use indexmap::IndexMap;
 use std::marker::PhantomData;
-use entity::EntityStore;
-
-pub trait System {
-    fn run(&mut self, entities: EntityStore);
-}
 
 pub mod indexing {
     use super::*;
@@ -245,4 +242,152 @@ pub mod join {
     joinable!(Joinable3; Join3; a:A:1, b:B:2, c:C:3);
     joinable!(Joinable4; Join4; a:A:1, b:B:2, c:C:3, d:D:4);
     joinable!(Joinable5; Join5; a:A:1, b:B:2, c:C:3, d:D:4, e:E:5);
+}
+
+pub mod goof {
+    pub mod mysys_mod {
+        use indexmap::IndexMap;
+        use indexmap::map;
+        use component::{ComponentStore, ComponentField};
+        use sync::{RwGuard, ReadGuard};
+
+        pub struct MySysData {
+            entities: IndexMap<usize, (usize, usize, usize)>,
+            comp_a: ComponentField<i32>,
+            comp_b: ComponentField<u64>,
+            comp_c: ComponentField<u64>,
+        }
+
+        impl MySysData {
+            pub fn get_ctx(&self) -> MySysContext {
+                let comp_a_guard = self.comp_a.read();
+                let comp_b_guard = self.comp_b.read();
+                let mut comp_c_guard = self.comp_c.write();
+
+                unsafe {
+                    MySysContext {
+                        entities: &self.entities,
+                        comp_a: comp_a_guard.pool.get_store_ptr(),
+                        comp_b: comp_b_guard.pool.get_store_ptr(),
+                        comp_c: comp_c_guard.pool.get_store_mut_ptr(),
+                        _guards: (comp_a_guard, comp_b_guard, comp_c_guard),
+                    }
+                }
+            }
+        }
+
+        pub struct MySysContext<'a> {
+            entities: &'a IndexMap<usize, (usize, usize, usize)>,
+            comp_a: *const i32,
+            comp_b: *const u64,
+            comp_c: *mut u64,
+            _guards: (
+                ReadGuard<ComponentStore<i32>>,
+                ReadGuard<ComponentStore<u64>>,
+                RwGuard<ComponentStore<u64>>,
+            ),
+        }
+
+        impl<'a> MySysContext<'a> {
+            pub fn iter(&self) -> MySysDataIter {
+                MySysDataIter {
+                    entity_iter: self.entities.iter(),
+                    comp_a: self.comp_a,
+                    comp_b: self.comp_b,
+                    comp_c: self.comp_c,
+                }
+            }
+
+            #[inline(always)]
+            pub unsafe fn get_by_id(&self, id: usize) -> (&i32, &u64, &mut u64) {
+                let (a_idx, b_idx, c_idx) = self.entities[&id];
+                unsafe { (&*self.comp_a.add(a_idx), &*self.comp_b.add(b_idx), &mut *self.comp_c.add(c_idx)) }
+            }
+        }
+
+        impl<'a> IntoIterator for MySysContext<'a> {
+            type Item = (&'a i32, &'a u64, &'a mut u64);
+            type IntoIter = MySysDataIter<'a>;
+
+            fn into_iter(self) -> MySysDataIter<'a> {
+                MySysDataIter {
+                    entity_iter: self.entities.iter(),
+                    comp_a: self.comp_a,
+                    comp_b: self.comp_b,
+                    comp_c: self.comp_c,
+                }
+            }
+        }
+
+        pub struct MySysDataIter<'a> {
+            entity_iter: map::Iter<'a, usize, (usize, usize, usize)>,
+            comp_a: *const i32,
+            comp_b: *const u64,
+            comp_c: *mut u64,
+        }
+
+        impl<'a> Iterator for MySysDataIter<'a> {
+            type Item = (&'a i32, &'a u64, &'a mut u64);
+
+            fn next(&mut self) -> Option<(&'a i32, &'a u64, &'a mut u64)> {
+                match self.entity_iter.next() {
+                    Some((&id, &(a, b, c))) => Some(unsafe { (&*self.comp_a.add(a), &*self.comp_b.add(b), &mut *self.comp_c.add(c)) }),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+pub trait System {
+    fn run(&mut self, entities: EntityStore);
+}
+
+/// Marker for designating the components required by the system and their mutability.
+pub struct SystemData<T> {
+    _x: T,
+    _never: (),
+}
+
+impl<T> SystemData<T> {
+    pub fn get_ctx(&self) -> Context<T> {
+        unreachable!()
+    }
+}
+
+pub struct Context<T> {
+    _x: T,
+    _never: (),
+}
+
+impl<T> Context<T> {
+    pub fn iter(&self) -> SystemDataIter<T> {
+        unreachable!()
+    }
+
+    pub unsafe fn get_by_id(&self, entity_id: usize) -> T {
+        unreachable!()
+    }
+}
+
+impl<T> IntoIterator for Context<T> {
+    type Item = T;
+    type IntoIter = SystemDataIter<T>;
+
+    fn into_iter(self) -> SystemDataIter<T> {
+        unreachable!()
+    }
+}
+
+pub struct SystemDataIter<T> {
+    _x: T,
+    _never: (),
+}
+
+impl<T> Iterator for SystemDataIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<T> {
+        unreachable!()
+    }
 }

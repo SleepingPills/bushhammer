@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "t51core",
+    "t51core_proc",
     "t51game",
     "t51server"
 ]

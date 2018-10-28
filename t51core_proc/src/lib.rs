@@ -4,58 +4,207 @@
 #![allow(unused_imports, dead_code, unused_variables, unused_mut)]
 
 extern crate proc_macro;
+extern crate proc_macro2;
 #[macro_use]
 extern crate quote;
 #[macro_use]
 extern crate syn;
 
-use crate::proc_macro::TokenStream;
 use std::mem;
 use syn::spanned::Spanned;
 use syn::token::Token;
 use syn::visit::Visit;
 
-/*
-SystemDataFold will run a fold op through the AST. When it encounters the SystemData field, it replaces
-it with the appropriate thing, and then stashes away the data. It then continues parsing and if it encounters
-another one, it will fail.
-*/
+#[derive(Debug)]
+struct SystemDef {
+    mutability: Vec<bool>,
+    comp_ident: Vec<syn::Ident>,
+    comp_types: Vec<syn::TypePath>,
+    comp_types_mut: Vec<proc_macro2::TokenStream>,
+    ptr_fields: proc_macro2::TokenStream,
+    iter_tup: proc_macro2::TokenStream,
+}
+
+fn create_sys_def(provide_ent_id: bool, comp_def: Vec<(bool, syn::TypePath)>) -> SystemDef {
+    let mut mutability = Vec::new();
+    let mut comp_ident = Vec::new();
+    let mut comp_types = Vec::new();
+    let mut comp_types_mut = Vec::new();
+    let mut ptr_field_tokens = Vec::new();
+
+    for (idx, (mutable, ty)) in comp_def.iter().enumerate() {
+        mutability.push(*mutable);
+        comp_ident.push(create_comp_ident(idx));
+        comp_types.push(ty.clone());
+
+        let (ty_mut, ptr_token) = match mutable {
+            true => (quote!(mut #ty), quote!(*mut #ty)),
+            _ => (quote!(ty), quote!(*const #ty)),
+        };
+        comp_types_mut.push(ty_mut);
+        ptr_field_tokens.push(ptr_token)
+    }
+
+    let comp_ident_ref = &comp_ident;
+    let comp_types_mut_ref = &comp_types_mut;
+    let ptr_fields = quote!{#(#comp_ident_ref: #ptr_field_tokens),*};
+    let iter_tup = quote!{(#(&'a #comp_types_mut_ref),*)};
+
+    SystemDef {
+        mutability,
+        comp_ident,
+        comp_types,
+        comp_types_mut,
+        ptr_fields,
+        iter_tup,
+    }
+}
 
 #[proc_macro_attribute]
-pub fn make_system2(attr: TokenStream, item: TokenStream) -> TokenStream {
+pub fn make_system(attr: proc_macro::TokenStream, item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let mut struct_body: syn::ItemStruct = syn::parse(item).unwrap();
 
-    let system_name = struct_body.ident.to_string();
-    let module_name = system_name.to_lowercase() + "_mod";
+    let sys_name = struct_body.ident.to_string();
+    let sys_mod_name = sys_name.to_lowercase() + "_mod";
 
     // Construct the name of the actual data field
-    let actual_type_name = system_name + "Data";
-    let actual_type_path = format!("{}::{}", module_name, actual_type_name);
+    let sys_data_type_name = sys_name.clone() + "Data";
+    let sys_data_type_path = format!("{}::{}", sys_mod_name, sys_data_type_name);
 
     // Create the actual data type and swap it out with the placeholder
-    let sys_def = create_and_swap_data_field(&mut struct_body, &actual_type_path);
+    let raw_sys_def = swap_sys_def(&mut struct_body, sys_data_type_path);
 
-    let (provide_ent_id, sys_def) = match parse_sys_def(sys_def) {
+    let (provide_ent_id, comp_def) = match parse_sys_def(raw_sys_def) {
         Some(results) => results,
         _ => unreachable!(),
     };
 
+    let sys_def = create_sys_def(provide_ent_id, comp_def);
+
     println!("{:#?}", sys_def);
 
-    let mod_ident = parse_string::<syn::Ident>(module_name.as_str(), "Error constructing system module: {}");
-    let actual_type_ident = parse_string::<syn::Ident>(actual_type_name.as_str(), "Error constructing system struct ident: {}");
+    let mod_ident = parse_string::<syn::Ident>(sys_mod_name.as_str(), "Error constructing system module:");
+    let sys_data_ident = parse_string::<syn::Ident>(sys_data_type_name.as_str(), "Error constructing system struct ident");
+    let sys_ctx_ident = parse_string::<syn::Ident>((sys_name.clone() + "Context").as_str(), "Error constructing context:");
+
+    let sys_data_struct = create_sys_data_struct(&sys_data_ident, &sys_ctx_ident, &sys_def);
+    let sys_ctx_struct = create_sys_ctx_struct(&sys_ctx_ident, &sys_def);
 
     let result = quote! {
         pub mod #mod_ident {
-            pub struct #actual_type_ident {
+            use indexmap::IndexMap;
+            use indexmap::map;
+            use t51core::component::{ComponentStore, ComponentField};
+            use t51core::sync::{RwGuard, ReadGuard};
 
-            }
+            #sys_data_struct
+            #sys_ctx_struct
         }
 
         #struct_body
     };
 
     result.into()
+}
+
+fn create_sys_ctx_struct(sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> proc_macro2::TokenStream {
+    let idx_map = create_indexmap_type(sys_def.comp_ident.len());
+
+    let guard_decl: Vec<_> = sys_def.comp_types
+        .iter()
+        .enumerate()
+        .map(|(idx, ty)| {
+            let mutable = sys_def.mutability[idx];
+            match mutable {
+                true => quote!(RwGuard<ComponentStore<u64>>),
+                _ => quote!(ReadGuard<ComponentStore<#ty>>),
+            }
+        })
+        .collect();
+
+    let ptr_fields = &sys_def.ptr_fields;
+    quote!{
+        pub struct #sys_ctx_ident<'a> {
+            entities: &'a #idx_map,
+            #ptr_fields,
+            _guards: (#(#guard_decl),*)
+        }
+    }
+}
+
+fn create_sys_data_struct(sys_data_ident: &syn::Ident, sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> proc_macro2::TokenStream {
+    let idx_map = create_indexmap_type(sys_def.comp_ident.len());
+
+    let comp_ident = &sys_def.comp_ident;
+    let comp_types = &sys_def.comp_types;
+
+    let guards: Vec<_> = (0..sys_def.comp_ident.len()).map(create_guard_ident).collect();
+
+    let guard_decl: Vec<_> = comp_ident
+        .iter()
+        .enumerate()
+        .map(|(idx, ident)| {
+            let mutable = sys_def.mutability[idx];
+            let guard = &guards[idx];
+            match mutable {
+                true => quote!(let mut #guard = self.#ident.write()),
+                _ => quote!(let #guard = self.#ident.read()),
+            }
+        })
+        .collect();
+
+    let guard_assign: Vec<_> = comp_ident
+        .iter()
+        .enumerate()
+        .map(|(idx, ident)| {
+            let mutable = sys_def.mutability[idx];
+            let guard = &guards[idx];
+            match mutable {
+                true => quote!(#ident: #guard.get_pool_mut_ptr()),
+                _ => quote!(#ident: #guard.get_pool_ptr()),
+            }
+        })
+        .collect();
+
+    let guards_ref = &guards;
+    quote!{
+        pub struct #sys_data_ident {
+            entities: #idx_map,
+            #(#comp_ident: ComponentField<#comp_types>),*
+        }
+
+        impl #sys_data_ident {
+            #[inline]
+            pub fn get_ctx(&self) -> #sys_ctx_ident {
+                #(#guard_decl);*;
+
+                unsafe {
+                    MySysContext {
+                        entities: &self.entities,
+                        #(#guard_assign),*,
+                        _guards: (#(#guards_ref),*)
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn create_indexmap_type(rank: usize) -> proc_macro2::TokenStream {
+    let id_type = quote!(usize);
+    let mut idx_vec = Vec::new();
+    for _ in 0..rank {
+        idx_vec.push(id_type.clone());
+    }
+    quote!{IndexMap<usize, (#(#idx_vec),*)>}
+}
+
+fn create_comp_ident(counter: usize) -> syn::Ident {
+    syn::Ident::new(format!("comp_{}", counter).as_str(), proc_macro2::Span::call_site())
+}
+
+fn create_guard_ident(counter: usize) -> syn::Ident {
+    syn::Ident::new(format!("guard_{}", counter).as_str(), proc_macro2::Span::call_site())
 }
 
 fn parse_sys_def(sys_def: syn::TypePath) -> Option<(bool, Vec<(bool, syn::TypePath)>)> {
@@ -106,6 +255,7 @@ fn parse_sys_def_tuple_entries(elem: &syn::Type) -> (bool, syn::TypePath) {
     }
 }
 
+/// Checks whether the entity id is requested to be in the component iterator
 fn check_entity_id(ty: &syn::Type) -> bool {
     match ty {
         syn::Type::Path(path) => path.path.segments.iter().any(|seg| seg.ident == "EntityId"),
@@ -113,7 +263,7 @@ fn check_entity_id(ty: &syn::Type) -> bool {
     }
 }
 
-fn create_and_swap_data_field(struct_body: &mut syn::ItemStruct, actual_type_path: &String) -> syn::TypePath {
+fn swap_sys_def(struct_body: &mut syn::ItemStruct, sys_data_type_path: String) -> syn::TypePath {
     // Get the system data definition field by going through all fields and finding the first that has
     // the SystemData type.
     let data_field = struct_body
@@ -126,7 +276,7 @@ fn create_and_swap_data_field(struct_body: &mut syn::ItemStruct, actual_type_pat
         .expect("System Data field missing");
 
     // Construct the AST for the actual data type
-    let mut actual_type = parse_string::<syn::Type>(actual_type_path.as_str(), "Failed constructing system data type {}");
+    let mut actual_type = parse_string::<syn::Type>(sys_data_type_path.as_str(), "Failed constructing system data type {}");
 
     // Swap out the placeholder type with the actual one
     let placeholder_type = match mem::replace(&mut data_field.ty, actual_type) {
@@ -147,113 +297,4 @@ fn parse_string<T: syn::parse::Parse>(string: &str, error_msg: &str) -> T {
 fn fail_parse(span: proc_macro2::Span, msg: &str) -> ! {
     span.unstable().error(msg).emit();
     panic!("Incorrect system definition");
-}
-
-#[proc_macro_attribute]
-pub fn make_system(attr: TokenStream, item: TokenStream) -> TokenStream {
-    let gen = quote! {
-        pub mod mysys_mod {
-            use indexmap::IndexMap;
-            use indexmap::map;
-            use t51core::component::{ComponentStore, ComponentField};
-            use t51core::sync::{RwGuard, ReadGuard};
-
-            pub struct MySysData {
-                entities: IndexMap<usize, (usize, usize, usize)>,
-                comp_a: ComponentField<i32>,
-                comp_b: ComponentField<u64>,
-                comp_c: ComponentField<u64>,
-            }
-
-            impl MySysData {
-                pub fn get_ctx(&self) -> MySysContext {
-                    let comp_a_guard = self.comp_a.read();
-                    let comp_b_guard = self.comp_b.read();
-                    let mut comp_c_guard = self.comp_c.write();
-
-                    unsafe {
-                        MySysContext {
-                            entities: &self.entities,
-                            comp_a: comp_a_guard.get_pool_ptr(),
-                            comp_b: comp_b_guard.get_pool_ptr(),
-                            comp_c: comp_c_guard.get_pool_mut_ptr(),
-                            _guards: (comp_a_guard, comp_b_guard, comp_c_guard),
-                        }
-                    }
-                }
-            }
-
-            pub struct MySysContext<'a> {
-                entities: &'a IndexMap<usize, (usize, usize, usize)>,
-                comp_a: *const i32,
-                comp_b: *const u64,
-                comp_c: *mut u64,
-                _guards: (
-                    ReadGuard<ComponentStore<i32>>,
-                    ReadGuard<ComponentStore<u64>>,
-                    RwGuard<ComponentStore<u64>>,
-                ),
-            }
-
-            impl<'a> MySysContext<'a> {
-                pub fn iter(&self) -> MySysDataIter {
-                    MySysDataIter {
-                        entity_iter: self.entities.iter(),
-                        comp_a: self.comp_a,
-                        comp_b: self.comp_b,
-                        comp_c: self.comp_c,
-                    }
-                }
-
-                #[inline(always)]
-                pub unsafe fn get_by_id(&self, id: usize) -> (&i32, &u64, &mut u64) {
-                    let (a_idx, b_idx, c_idx) = self.entities[&id];
-                    unsafe { (&*self.comp_a.add(a_idx), &*self.comp_b.add(b_idx), &mut *self.comp_c.add(c_idx)) }
-                }
-            }
-
-            impl<'a> IntoIterator for MySysContext<'a> {
-                type Item = (&'a i32, &'a u64, &'a mut u64);
-                type IntoIter = MySysDataIter<'a>;
-
-                fn into_iter(self) -> MySysDataIter<'a> {
-                    MySysDataIter {
-                        entity_iter: self.entities.iter(),
-                        comp_a: self.comp_a,
-                        comp_b: self.comp_b,
-                        comp_c: self.comp_c,
-                    }
-                }
-            }
-
-            pub struct MySysDataIter<'a> {
-                entity_iter: map::Iter<'a, usize, (usize, usize, usize)>,
-                comp_a: *const i32,
-                comp_b: *const u64,
-                comp_c: *mut u64,
-            }
-
-            impl<'a> Iterator for MySysDataIter<'a> {
-                type Item = (&'a i32, &'a u64, &'a mut u64);
-
-                fn next(&mut self) -> Option<(&'a i32, &'a u64, &'a mut u64)> {
-                    match self.entity_iter.next() {
-                        Some((&id, &(a, b, c))) => {
-                            Some(unsafe {(
-                                &*self.comp_a.add(a),
-                                &*self.comp_b.add(b),
-                                &mut *self.comp_c.add(c)
-                            )})
-                        },
-                        _ => None,
-                    }
-                }
-            }
-        }
-
-        pub struct MySys {
-            data: mysys_mod::MySysData,
-        }
-    };
-    gen.into()
 }

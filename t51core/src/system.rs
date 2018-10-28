@@ -259,6 +259,7 @@ pub mod goof {
         }
 
         impl MySysData {
+            #[inline]
             pub fn get_ctx(&self) -> MySysContext {
                 let comp_a_guard = self.comp_a.read();
                 let comp_b_guard = self.comp_b.read();
@@ -289,6 +290,7 @@ pub mod goof {
         }
 
         impl<'a> MySysContext<'a> {
+            #[inline(always)]
             pub fn iter(&self) -> MySysDataIter {
                 MySysDataIter {
                     entity_iter: self.entities.iter(),
@@ -309,6 +311,7 @@ pub mod goof {
             type Item = (&'a i32, &'a u64, &'a mut u64);
             type IntoIter = MySysDataIter<'a>;
 
+            #[inline(always)]
             fn into_iter(self) -> MySysDataIter<'a> {
                 MySysDataIter {
                     entity_iter: self.entities.iter(),
@@ -329,6 +332,7 @@ pub mod goof {
         impl<'a> Iterator for MySysDataIter<'a> {
             type Item = (&'a i32, &'a u64, &'a mut u64);
 
+            #[inline(always)]
             fn next(&mut self) -> Option<(&'a i32, &'a u64, &'a mut u64)> {
                 match self.entity_iter.next() {
                     Some((&id, &(a, b, c))) => Some(unsafe { (&*self.comp_a.add(a), &*self.comp_b.add(b), &mut *self.comp_c.add(c)) }),

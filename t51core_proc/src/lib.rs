@@ -17,6 +17,7 @@ use syn::visit::Visit;
 
 #[derive(Debug)]
 struct SystemDef {
+    provide_ent_id: bool,
     mutability: Vec<bool>,
     comp_ident: Vec<syn::Ident>,
     comp_types: Vec<syn::TypePath>,
@@ -39,7 +40,7 @@ fn create_sys_def(provide_ent_id: bool, comp_def: Vec<(bool, syn::TypePath)>) ->
 
         let (ty_mut, ptr_token) = match mutable {
             true => (quote!(mut #ty), quote!(*mut #ty)),
-            _ => (quote!(ty), quote!(*const #ty)),
+            _ => (quote!(#ty), quote!(*const #ty)),
         };
         comp_types_mut.push(ty_mut);
         ptr_field_tokens.push(ptr_token)
@@ -51,6 +52,7 @@ fn create_sys_def(provide_ent_id: bool, comp_def: Vec<(bool, syn::TypePath)>) ->
     let iter_tup = quote!{(#(&'a #comp_types_mut_ref),*)};
 
     SystemDef {
+        provide_ent_id,
         mutability,
         comp_ident,
         comp_types,
@@ -81,24 +83,26 @@ pub fn make_system(attr: proc_macro::TokenStream, item: proc_macro::TokenStream)
 
     let sys_def = create_sys_def(provide_ent_id, comp_def);
 
-    println!("{:#?}", sys_def);
-
     let mod_ident = parse_string::<syn::Ident>(sys_mod_name.as_str(), "Error constructing system module:");
-    let sys_data_ident = parse_string::<syn::Ident>(sys_data_type_name.as_str(), "Error constructing system struct ident");
-    let sys_ctx_ident = parse_string::<syn::Ident>((sys_name.clone() + "Context").as_str(), "Error constructing context:");
+    let sys_data_ident = parse_string::<syn::Ident>(sys_data_type_name.as_str(), "Error constructing system struct ident:");
+    let sys_ctx_ident = parse_string::<syn::Ident>((sys_name.clone() + "Context").as_str(), "Error constructing context ident:");
+    let sys_iter_ident = parse_string::<syn::Ident>((sys_name.clone() + "Iter").as_str(), "Error constructing iterator ident:");
 
     let sys_data_struct = create_sys_data_struct(&sys_data_ident, &sys_ctx_ident, &sys_def);
-    let sys_ctx_struct = create_sys_ctx_struct(&sys_ctx_ident, &sys_def);
+    let sys_ctx_struct = create_sys_ctx_struct(&sys_ctx_ident, &sys_iter_ident, &sys_def);
+    let sys_iter_struct = create_sys_iter_struct(&sys_iter_ident, &sys_def);
 
     let result = quote! {
         pub mod #mod_ident {
             use indexmap::IndexMap;
             use indexmap::map;
             use t51core::component::{ComponentStore, ComponentField};
+            use t51core::entity::EntityId;
             use t51core::sync::{RwGuard, ReadGuard};
 
             #sys_data_struct
             #sys_ctx_struct
+            #sys_iter_struct
         }
 
         #struct_body
@@ -107,10 +111,65 @@ pub fn make_system(attr: proc_macro::TokenStream, item: proc_macro::TokenStream)
     result.into()
 }
 
-fn create_sys_ctx_struct(sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> proc_macro2::TokenStream {
+fn create_sys_iter_struct(sys_iter_ident: &syn::Ident, sys_def: &SystemDef) -> proc_macro2::TokenStream {
+    let comp_ident = &sys_def.comp_ident;
+    let comp_ident_dup = &sys_def.comp_ident;
+    let comp_types_mut = &sys_def.comp_types_mut;
+
+    let ptr_fields = &sys_def.ptr_fields;
+
+    let usize_vec = create_usize_tuple(sys_def.comp_ident.len());
+    let map_iter = quote!{map::Iter<'a, usize, (#(#usize_vec),*)>};
+
+    let iter_tuple = match sys_def.provide_ent_id {
+        true => quote!((EntityId, #(&'a #comp_types_mut),*)),
+        _ => quote!((#(&'a #comp_types_mut),*)),
+    };
+
+    let mut indexers = Vec::new();
+
+    if sys_def.provide_ent_id {
+        indexers.push(quote!(*id));
+    }
+
+    for (i, ident) in sys_def.comp_ident.iter().enumerate() {
+        let idx = match &sys_def.mutability[i] {
+            true => quote!(&mut *self.#ident.add(#ident)),
+            _ => quote!(&*self.#ident.add(#ident))
+        };
+
+        indexers.push(idx);
+    }
+
+    quote!{
+        pub struct #sys_iter_ident<'a> {
+            entity_iter: #map_iter,
+            #ptr_fields
+        }
+
+        impl<'a> Iterator for #sys_iter_ident<'a> {
+            type Item = #iter_tuple;
+
+            #[inline(always)]
+            fn next(&mut self) -> Option<#iter_tuple> {
+                match self.entity_iter.next() {
+                    Some((id, &(#(#comp_ident),*))) => Some(unsafe { (#(#indexers),*) }),
+                    _ => None,
+                }
+            }
+        }
+    }
+}
+
+fn create_sys_ctx_struct(
+    sys_ctx_ident: &syn::Ident,
+    sys_iter_ident: &syn::Ident,
+    sys_def: &SystemDef,
+) -> proc_macro2::TokenStream {
     let idx_map = create_indexmap_type(sys_def.comp_ident.len());
 
-    let guard_decl: Vec<_> = sys_def.comp_types
+    let guard_decl: Vec<_> = sys_def
+        .comp_types
         .iter()
         .enumerate()
         .map(|(idx, ty)| {
@@ -122,6 +181,27 @@ fn create_sys_ctx_struct(sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> pro
         })
         .collect();
 
+    let get_return: Vec<_> = sys_def
+        .comp_ident
+        .iter()
+        .enumerate()
+        .map(|(idx, ident)| {
+            let mutable = sys_def.mutability[idx];
+            match mutable {
+                true => quote!(&mut *self.#ident.add(#ident)),
+                _ => quote!(&*self.#ident.add(#ident)),
+            }
+        })
+        .collect();
+
+    let comp_ident = &sys_def.comp_ident;
+    let comp_ident_dup = &sys_def.comp_ident;
+    let comp_types_mut = &sys_def.comp_types_mut;
+    let iter_tuple = match sys_def.provide_ent_id {
+        true => quote!((EntityId, #(&'a #comp_types_mut),*)),
+        _ => quote!((#(&'a #comp_types_mut),*)),
+    };
+
     let ptr_fields = &sys_def.ptr_fields;
     quote!{
         pub struct #sys_ctx_ident<'a> {
@@ -129,10 +209,43 @@ fn create_sys_ctx_struct(sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> pro
             #ptr_fields,
             _guards: (#(#guard_decl),*)
         }
+
+        impl<'a> #sys_ctx_ident<'a> {
+            #[inline(always)]
+            pub fn iter(&self) -> #sys_iter_ident {
+                #sys_iter_ident {
+                    entity_iter: self.entities.iter(),
+                    #(#comp_ident: self.#comp_ident_dup),*
+                }
+            }
+
+            #[inline(always)]
+            pub unsafe fn get_by_id(&self, id: usize) -> (#(&#comp_types_mut),*) {
+                let (#(#comp_ident),*) = self.entities[&id];
+                unsafe { (#(#get_return),*) }
+            }
+        }
+
+        impl<'a> IntoIterator for #sys_ctx_ident<'a> {
+            type Item = #iter_tuple;
+            type IntoIter = #sys_iter_ident<'a>;
+
+            #[inline(always)]
+            fn into_iter(self) -> #sys_iter_ident<'a> {
+                #sys_iter_ident {
+                    entity_iter: self.entities.iter(),
+                    #(#comp_ident: self.#comp_ident_dup),*
+                }
+            }
+        }
     }
 }
 
-fn create_sys_data_struct(sys_data_ident: &syn::Ident, sys_ctx_ident: &syn::Ident, sys_def: &SystemDef) -> proc_macro2::TokenStream {
+fn create_sys_data_struct(
+    sys_data_ident: &syn::Ident,
+    sys_ctx_ident: &syn::Ident,
+    sys_def: &SystemDef,
+) -> proc_macro2::TokenStream {
     let idx_map = create_indexmap_type(sys_def.comp_ident.len());
 
     let comp_ident = &sys_def.comp_ident;
@@ -191,12 +304,17 @@ fn create_sys_data_struct(sys_data_ident: &syn::Ident, sys_ctx_ident: &syn::Iden
 }
 
 fn create_indexmap_type(rank: usize) -> proc_macro2::TokenStream {
+    let usize_vec = create_usize_tuple(rank);
+    quote!{IndexMap<usize, (#(#usize_vec),*)>}
+}
+
+fn create_usize_tuple(rank: usize) -> Vec<proc_macro2::TokenStream> {
     let id_type = quote!(usize);
-    let mut idx_vec = Vec::new();
+    let mut usize_vec = Vec::new();
     for _ in 0..rank {
-        idx_vec.push(id_type.clone());
+        usize_vec.push(id_type.clone());
     }
-    quote!{IndexMap<usize, (#(#idx_vec),*)>}
+    usize_vec
 }
 
 fn create_comp_ident(counter: usize) -> syn::Ident {

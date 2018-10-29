@@ -13,7 +13,7 @@ extern crate syn;
 use std::mem;
 
 mod util;
-mod system;
+mod sysdef;
 mod parse;
 mod build;
 
@@ -34,7 +34,7 @@ pub fn make_system(attr: proc_macro::TokenStream, item: proc_macro::TokenStream)
 
     let (provide_ent_id, comp_def) = parse::parse_raw_sys_def(raw_sys_def);
 
-    let sys_def = system::SystemDef::new(provide_ent_id, comp_def);
+    let sys_def = sysdef::SystemDef::new(provide_ent_id, comp_def);
 
     // Construct the various type identifiers
     let mod_ident = parse::parse_string::<syn::Ident>(&(sys_name.to_lowercase() + "_mod"), "Error constructing system module ident:");

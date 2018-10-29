@@ -1,13 +1,7 @@
 #![allow(unused_imports, dead_code)]
-#[macro_use]
-extern crate t51core;
-extern crate indexmap;
-extern crate t51core_proc;
-
 use t51core::system::SystemData;
 use t51core::entity::EntityId;
 use t51core_proc::{make_system};
-
 
 #[make_system]
 struct MySys<'a> {

@@ -1,4 +1,4 @@
-use crate::system::SystemDef;
+use crate::sysdef::SystemDef;
 use crate::util;
 use proc_macro2;
 use syn;

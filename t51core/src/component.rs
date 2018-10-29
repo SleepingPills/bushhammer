@@ -1,6 +1,6 @@
-use alloc::VecPool;
 use std::sync::Arc;
-use sync::RwCell;
+use crate::alloc::VecPool;
+use crate::sync::RwCell;
 
 pub struct ComponentStore<T> {
     pub(crate) pool: VecPool<T>,

@@ -1,16 +1,12 @@
-use entity;
-use entity::Entity;
 use indexmap::IndexMap;
-use object::{ComponentId, SystemId};
-use registry::Registry;
-use std::any::Any;
-use std::any::TypeId;
-use std::cell::RefCell;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::rc::Rc;
-use sync::RwCell;
-use system::System;
+use crate::entity;
+use crate::object::{ComponentId, SystemId};
+use crate::registry::Registry;
+use crate::sync::RwCell;
+use crate::system::System;
 
 pub struct World {
     counter: usize,

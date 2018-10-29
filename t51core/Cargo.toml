@@ -2,6 +2,7 @@
 name = "t51core"
 version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
+edition = "2018"
 
 [dependencies]
 anymap = "0.12.1"

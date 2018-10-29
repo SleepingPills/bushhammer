@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use std::marker::Unsize;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use sync::{ReadGuard, RwCell, RwGuard};
+use crate::sync::{ReadGuard, RwCell, RwGuard};
 
 /// Dynamically typed registry for shared ownership access to objects and traits they implement.
 /// Vanilla trait objects in rust take full ownership of the underlying instance, making it

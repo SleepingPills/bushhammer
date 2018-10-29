@@ -1,10 +1,7 @@
 use indexmap::IndexMap;
-use object::{ComponentId, SystemId};
-use std::any::Any;
 use std::collections::{HashMap, HashSet};
-use std::mem;
-use sync::ReadGuard;
-use sync::RwGuard;
+use crate::object::{ComponentId, SystemId};
+use crate::sync::{RwGuard};
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.

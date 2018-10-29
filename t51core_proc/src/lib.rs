@@ -47,13 +47,19 @@ pub fn make_system(attr: proc_macro::TokenStream, item: proc_macro::TokenStream)
     let sys_ctx_struct = build::create_sys_ctx_struct(&sys_ctx_ident, &sys_iter_ident, &sys_def);
     let sys_iter_struct = build::create_sys_iter_struct(&sys_iter_ident, &sys_def);
 
+    let import_prefix = match cfg!(feature="internal") {
+        true => quote!{crate},
+        _ => quote!{t51core}
+    };
+
     let result = quote! {
         pub mod #mod_ident {
             use indexmap::IndexMap;
             use indexmap::map;
-            use t51core::component::{ComponentStore, ComponentField};
-            use t51core::entity::EntityId;
-            use t51core::sync::{RwGuard, ReadGuard};
+
+            use #import_prefix::component::{ComponentStore, ComponentField};
+            use #import_prefix::entity::EntityId;
+            use #import_prefix::sync::{RwGuard, ReadGuard};
 
             #sys_data_struct
             #sys_ctx_struct

@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use crate::alloc::VecPool;
 use crate::sync::RwCell;
+use crate::entity::EntityId;
 
 pub struct ComponentStore<T> {
     pub(crate) pool: VecPool<T>,
@@ -19,3 +20,8 @@ impl<T> ComponentStore<T> {
 }
 
 pub type ComponentField<T> = Arc<RwCell<ComponentStore<T>>>;
+
+
+pub trait ComponentManager {
+    fn remove_entity(&mut self, id: EntityId);
+}

@@ -2,6 +2,7 @@ use crate::entity::{EntityId, EntityStore};
 
 pub trait System {
     fn run(&mut self, entities: EntityStore);
+    fn remove_entity(&mut self, id: EntityId);
 }
 
 /// Marker for designating the components required by the system and their mutability.

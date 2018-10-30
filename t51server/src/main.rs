@@ -1,4 +1,4 @@
-#![allow(unused_imports, dead_code)]
+#![allow(unused_imports, dead_code, unused_variables)]
 use t51core::system::SystemData;
 use t51core::entity::EntityId;
 use t51core_proc::{make_system};
@@ -10,8 +10,11 @@ struct MySys<'a> {
     glod: &'a str,
 }
 
-fn test(sys: &MySys) {
-    sys.data.get_ctx();
+fn test(sys: &mut MySys) {
+    let ctx = sys.data.get_ctx();
+    for (id, a, b, c) in ctx.iter() {
+        sys.plod = 4;
+    };
 }
 
 fn main() {

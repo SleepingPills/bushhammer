@@ -1,19 +1,19 @@
+use crate::object::{ComponentId, SystemId};
+use crate::sync::RwGuard;
 use indexmap::IndexMap;
 use std::collections::{HashMap, HashSet};
-use crate::object::{ComponentId, SystemId};
-use crate::sync::{RwGuard};
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.
 #[derive(Debug)]
 pub struct Entity {
-    pub id: usize,
-    pub components: HashMap<ComponentId, usize>,
+    pub id: EntityId,
+    pub components: HashMap<ComponentId, EntityId>,
     pub systems: HashSet<SystemId>,
 }
 
 impl Entity {
-    pub(crate) fn new(id: usize) -> Entity {
+    pub(crate) fn new(id: EntityId) -> Entity {
         Entity {
             id,
             components: HashMap::new(),
@@ -27,7 +27,7 @@ pub type EntityId = usize;
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TransactionError {
     ComponentMissing(Vec<ComponentId>),
-    EntityNotFound(usize),
+    EntityNotFound(EntityId),
     ComponentRequired(SystemId, ComponentId),
     ComponentNotFound(ComponentId),
     SystemNotFound(SystemId),
@@ -50,8 +50,8 @@ pub struct Composite {
 #[derive(Debug)]
 pub enum Transaction {
     AddEnt(Composite),
-    EditEnt(Composite),
-    RemoveEnt(usize),
+    EditEnt(EntityId, Composite),
+    RemoveEnt(EntityId),
 }
 
 #[derive(Debug)]
@@ -59,7 +59,6 @@ pub struct Builder<'a> {
     tx: Composite,
     components: HashSet<ComponentId>,
     systems: HashSet<SystemId>,
-    entities: &'a IndexMap<usize, Entity>,
     comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
     sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
     queue: &'a mut Vec<Transaction>,
@@ -67,7 +66,6 @@ pub struct Builder<'a> {
 
 impl<'a> Builder<'a> {
     pub fn new(
-        entities: &'a IndexMap<usize, Entity>,
         comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
         sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut Vec<Transaction>,
@@ -76,14 +74,13 @@ impl<'a> Builder<'a> {
             tx: Composite { steps: Vec::new() },
             components: HashSet::new(),
             systems: HashSet::new(),
-            entities,
             comp_sys,
             sys_comp,
             queue,
         }
     }
 
-    pub fn add_system<T: 'static>(mut self) -> Result<Builder<'a>, TransactionError> {
+    pub fn add_system<T: 'static>(self) -> Result<Builder<'a>, TransactionError> {
         self.add_system_type(SystemId::new::<T>())
     }
 
@@ -137,6 +134,10 @@ impl<'a> Builder<'a> {
             _ => Some(missing),
         }
     }
+
+    pub fn commit(self) {
+        self.queue.push(Transaction::AddEnt(self.tx));
+    }
 }
 
 #[derive(Debug)]
@@ -148,21 +149,16 @@ pub struct Editor<'a> {
 impl<'a> Editor<'a> {
     #[inline]
     pub fn new(
-        id: usize,
-        entities: &'a IndexMap<usize, Entity>,
+        entity: &'a Entity,
         comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
         sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut Vec<Transaction>,
-    ) -> Result<Self, TransactionError> {
-        if let Some(entity) = entities.get(&id) {
-            let builder = Builder::new(entities, comp_sys, sys_comp, queue);
-            Ok(Editor { entity, builder })
-        } else {
-            Err(TransactionError::EntityNotFound(id))
-        }
+    ) -> Self {
+        let builder = Builder::new(comp_sys, sys_comp, queue);
+        Editor { entity, builder }
     }
 
-    pub fn add_system<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+    pub fn add_system<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.add_system_type(SystemId::new::<T>())
     }
 
@@ -180,7 +176,7 @@ impl<'a> Editor<'a> {
         }
     }
 
-    pub fn remove_system<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+    pub fn remove_system<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.remove_system_type(SystemId::new::<T>())
     }
 
@@ -199,11 +195,12 @@ impl<'a> Editor<'a> {
     }
 
     pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Editor<'a> {
-        self.builder.core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
+        self.builder
+            .core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
         self
     }
 
-    pub fn remove_component<T: 'static>(mut self) -> Result<Editor<'a>, TransactionError> {
+    pub fn remove_component<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.remove_component_type(ComponentId::new::<T>())
     }
 
@@ -220,10 +217,14 @@ impl<'a> Editor<'a> {
             Err(TransactionError::ComponentNotFound(comp_id))
         }
     }
+
+    pub fn commit(self) {
+        self.builder.queue.push(Transaction::EditEnt(self.entity.id, self.builder.tx));
+    }
 }
 
 pub struct EntityStore<'a> {
-    entities: &'a IndexMap<usize, Entity>,
+    entities: &'a IndexMap<EntityId, Entity>,
     comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
     sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
     queue: &'a mut RwGuard<Vec<Transaction>>,
@@ -231,7 +232,7 @@ pub struct EntityStore<'a> {
 
 impl<'a> EntityStore<'a> {
     pub fn new(
-        entities: &'a IndexMap<usize, Entity>,
+        entities: &'a IndexMap<EntityId, Entity>,
         comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
         sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut RwGuard<Vec<Transaction>>,
@@ -247,11 +248,19 @@ impl<'a> EntityStore<'a> {
 
 impl<'a> EntityStore<'a> {
     pub fn add(&mut self) -> Builder {
-        Builder::new(self.entities, self.comp_sys, self.sys_comp, self.queue)
+        Builder::new(self.comp_sys, self.sys_comp, self.queue)
     }
 
     pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
-        Editor::new(id, self.entities, self.comp_sys, self.sys_comp, self.queue)
+        match self.entities.get(&id) {
+            Some(entity) => Ok(Editor::new(
+                entity,
+                self.comp_sys,
+                self.sys_comp,
+                self.queue,
+            )),
+            _ => Err(TransactionError::EntityNotFound(id)),
+        }
     }
 
     pub fn remove(&mut self, id: usize) {

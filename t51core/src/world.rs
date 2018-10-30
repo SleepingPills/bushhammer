@@ -1,22 +1,38 @@
-use indexmap::IndexMap;
-use std::collections::HashMap;
-use std::collections::HashSet;
-use std::rc::Rc;
+use crate::component::ComponentManager;
 use crate::entity;
 use crate::object::{ComponentId, SystemId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use crate::system::System;
+use indexmap::IndexMap;
+use std::collections::HashMap;
+use std::collections::HashSet;
+use std::sync::Arc;
 
 pub struct World {
-    counter: usize,
-    entities: IndexMap<usize, entity::Entity>,
+    id_counter: usize,
+    entities: IndexMap<entity::EntityId, entity::Entity>,
     components: Registry<ComponentId>,
     systems: Registry<SystemId>,
-    tx_queues: Rc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
+    tx_queues: Arc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
     main_queue: Vec<entity::Transaction>,
     comp_sys: HashMap<ComponentId, HashSet<SystemId>>,
     sys_comp: HashMap<SystemId, HashSet<ComponentId>>,
+}
+
+impl World {
+    pub fn new() -> World {
+        World {
+            id_counter: 0,
+            entities: IndexMap::new(),
+            components: Registry::new(),
+            systems: Registry::new(),
+            tx_queues: Arc::new(IndexMap::new()),
+            main_queue: Vec::new(),
+            comp_sys: HashMap::new(),
+            sys_comp: HashMap::new(),
+        }
+    }
 }
 
 impl World {
@@ -27,7 +43,12 @@ impl World {
         for (id, mut sys) in systems {
             if let Some(tx_queue) = self.tx_queues.get(id) {
                 let mut tx = tx_queue.write();
-                sys.run(entity::EntityStore::new(&self.entities, &self.comp_sys, &self.sys_comp, &mut tx))
+                sys.run(entity::EntityStore::new(
+                    &self.entities,
+                    &self.comp_sys,
+                    &self.sys_comp,
+                    &mut tx,
+                ))
             } else {
                 panic!("System {} not found", id)
             }
@@ -44,28 +65,72 @@ impl World {
         for _ in 0..self.main_queue.len() {
             match self.main_queue.pop() {
                 Some(tx) => self.apply_transaction(tx),
-                _ => break
+                _ => break,
             }
         }
     }
 
     fn apply_transaction(&mut self, tx: entity::Transaction) {
         match tx {
-            entity::Transaction::AddEnt(steps) => {},
-            entity::Transaction::EditEnt(steps) => {},
+            entity::Transaction::AddEnt(steps) => {
+                let mut entity = self.create_entity();
+
+                for step in steps.steps {
+                    self.apply_step(&mut entity, step);
+                }
+
+                self.entities.insert(entity.id,entity);
+            }
+            entity::Transaction::EditEnt(id, steps) => {
+                // TODO:
+//                let mut entity = self.entities[&id];
+//                for step in steps.steps {
+//                    self.apply_step(&mut entity, step)
+//                }
+            }
             entity::Transaction::RemoveEnt(id) => {
-                let entity = self.entities.swap_remove(&id);
-                //TODO: Remove from systems and components
+                if let Some(entity) = self.entities.swap_remove(&id) {
+                    for sys_id in entity.systems.iter() {
+                        let mut system = self.systems.get_trait::<System>(sys_id).expect("System not found").write();
+                        system.remove_entity(entity.id)
+                    }
+                    for comp_id in entity.components.keys() {
+                        let mut comp_mgr = self
+                            .components
+                            .get_trait::<ComponentManager>(comp_id)
+                            .expect("Component manager not found")
+                            .write();
+                        comp_mgr.remove_entity(entity.id);
+                    }
+                }
             }
         }
     }
 
+    fn apply_step(&self, entity: &mut entity::Entity, step: entity::Step) {}
+
+    fn create_entity(&mut self) -> entity::Entity {
+        let id = self.id_counter;
+        self.id_counter += 1;
+        entity::Entity::new(id)
+    }
+}
+
+impl World {
     pub fn add_entity(&mut self) -> entity::Builder {
-        entity::Builder::new(&self.entities, &self.comp_sys, &self.sys_comp, &mut self.main_queue)
+        entity::Builder::new(&self.comp_sys, &self.sys_comp, &mut self.main_queue)
     }
 
     pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
-        entity::Editor::new(id, &self.entities, &self.comp_sys, &self.sys_comp, &mut self.main_queue)
+        match self.entities.get(&id) {
+            Some(entity) => Ok(entity::Editor::new(
+                entity,
+                &self.comp_sys,
+                &self.sys_comp,
+                &mut self.main_queue,
+            )),
+            _ => Err(entity::TransactionError::EntityNotFound(id)),
+        }
     }
 
     pub fn remove_entity(&mut self, id: usize) {

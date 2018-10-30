@@ -73,20 +73,16 @@ impl World {
     fn apply_transaction(&mut self, tx: entity::Transaction) {
         match tx {
             entity::Transaction::AddEnt(steps) => {
-                let mut entity = self.create_entity();
+                let id = self.create_entity();
 
                 for step in steps.steps {
-                    self.apply_step(&mut entity, step);
+                    self.apply_step(id, step);
                 }
-
-                self.entities.insert(entity.id,entity);
             }
             entity::Transaction::EditEnt(id, steps) => {
-                // TODO:
-//                let mut entity = self.entities[&id];
-//                for step in steps.steps {
-//                    self.apply_step(&mut entity, step)
-//                }
+                for step in steps.steps {
+                    self.apply_step(id, step)
+                }
             }
             entity::Transaction::RemoveEnt(id) => {
                 if let Some(entity) = self.entities.swap_remove(&id) {
@@ -107,16 +103,18 @@ impl World {
         }
     }
 
-    fn apply_step(&self, entity: &mut entity::Entity, step: entity::Step) {}
+    fn apply_step(&self, id: entity::EntityId, step: entity::Step) {}
 
-    fn create_entity(&mut self) -> entity::Entity {
+    fn create_entity(&mut self) -> entity::EntityId {
         let id = self.id_counter;
         self.id_counter += 1;
-        entity::Entity::new(id)
+        self.entities.insert(id, entity::Entity::new(id));
+        id
     }
 }
 
 impl World {
+    #[inline]
     pub fn add_entity(&mut self) -> entity::Builder {
         entity::Builder::new(&self.comp_sys, &self.sys_comp, &mut self.main_queue)
     }
@@ -133,6 +131,7 @@ impl World {
         }
     }
 
+    #[inline]
     pub fn remove_entity(&mut self, id: usize) {
         self.main_queue.push(entity::Transaction::RemoveEnt(id));
     }

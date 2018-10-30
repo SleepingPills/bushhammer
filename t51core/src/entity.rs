@@ -13,6 +13,7 @@ pub struct Entity {
 }
 
 impl Entity {
+    #[inline]
     pub(crate) fn new(id: EntityId) -> Entity {
         Entity {
             id,
@@ -80,6 +81,7 @@ impl<'a> Builder<'a> {
         }
     }
 
+    #[inline]
     pub fn add_system<T: 'static>(self) -> Result<Builder<'a>, TransactionError> {
         self.add_system_type(SystemId::new::<T>())
     }
@@ -93,11 +95,13 @@ impl<'a> Builder<'a> {
         }
     }
 
+    #[inline]
     pub fn add_component<T: 'static>(mut self, instance: T) -> Builder<'a> {
         self.core_add_component(instance);
         self
     }
 
+    #[inline]
     pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Builder<'a> {
         self.core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
         self
@@ -112,11 +116,13 @@ impl<'a> Builder<'a> {
         self.core_record_comp_step(step, comp_id);
     }
 
+    #[inline]
     fn core_record_comp_step(&mut self, step: Step, comp_id: ComponentId) {
         self.tx.steps.push(step);
         self.components.insert(comp_id);
     }
 
+    #[inline]
     fn core_record_sys_step(&mut self, step: Step, sys_id: SystemId) {
         self.tx.steps.push(step);
         self.systems.insert(sys_id);
@@ -135,6 +141,7 @@ impl<'a> Builder<'a> {
         }
     }
 
+    #[inline]
     pub fn commit(self) {
         self.queue.push(Transaction::AddEnt(self.tx));
     }
@@ -158,6 +165,7 @@ impl<'a> Editor<'a> {
         Editor { entity, builder }
     }
 
+    #[inline]
     pub fn add_system<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.add_system_type(SystemId::new::<T>())
     }
@@ -176,6 +184,7 @@ impl<'a> Editor<'a> {
         }
     }
 
+    #[inline]
     pub fn remove_system<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.remove_system_type(SystemId::new::<T>())
     }
@@ -189,17 +198,20 @@ impl<'a> Editor<'a> {
         }
     }
 
+    #[inline]
     pub fn add_component<T: 'static>(mut self, instance: T) -> Editor<'a> {
         self.builder.core_add_component(instance);
         self
     }
 
+    #[inline]
     pub fn add_component_json(mut self, comp_id: ComponentId, json: String) -> Editor<'a> {
         self.builder
             .core_record_comp_step(Step::AddCompJson((comp_id, json)), comp_id);
         self
     }
 
+    #[inline]
     pub fn remove_component<T: 'static>(self) -> Result<Editor<'a>, TransactionError> {
         self.remove_component_type(ComponentId::new::<T>())
     }
@@ -218,6 +230,7 @@ impl<'a> Editor<'a> {
         }
     }
 
+    #[inline]
     pub fn commit(self) {
         self.builder.queue.push(Transaction::EditEnt(self.entity.id, self.builder.tx));
     }
@@ -231,6 +244,7 @@ pub struct EntityStore<'a> {
 }
 
 impl<'a> EntityStore<'a> {
+    #[inline]
     pub fn new(
         entities: &'a IndexMap<EntityId, Entity>,
         comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
@@ -247,10 +261,12 @@ impl<'a> EntityStore<'a> {
 }
 
 impl<'a> EntityStore<'a> {
+    #[inline]
     pub fn add(&mut self) -> Builder {
         Builder::new(self.comp_sys, self.sys_comp, self.queue)
     }
 
+    #[inline]
     pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
         match self.entities.get(&id) {
             Some(entity) => Ok(Editor::new(
@@ -263,6 +279,7 @@ impl<'a> EntityStore<'a> {
         }
     }
 
+    #[inline]
     pub fn remove(&mut self, id: usize) {
         self.queue.push(Transaction::RemoveEnt(id));
     }

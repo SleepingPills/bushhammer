@@ -13,6 +13,7 @@ pub struct RwCell<T> {
 }
 
 impl<T> RwCell<T> {
+    #[inline]
     pub fn new(item: T, guard: Arc<AtomicI64>) -> RwCell<T> {
         RwCell {
             item: UnsafeCell::new(item),

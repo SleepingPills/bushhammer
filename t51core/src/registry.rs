@@ -29,6 +29,7 @@ impl<K> Registry<K>
 where
     K: Eq + Hash,
 {
+    #[inline]
     pub fn new() -> Registry<K> {
         Registry::<K> { data: IndexMap::new() }
     }
@@ -161,6 +162,7 @@ impl<T: ?Sized> WeakBox<T> {
 impl<T: ?Sized> Deref for WeakBox<T> {
     type Target = Box<T>;
 
+    #[inline]
     fn deref(&self) -> &Box<T> {
         match self.item.as_ref() {
             Some(item) => item,
@@ -170,6 +172,7 @@ impl<T: ?Sized> Deref for WeakBox<T> {
 }
 
 impl<T: ?Sized> DerefMut for WeakBox<T> {
+    #[inline]
     fn deref_mut(&mut self) -> &mut Box<T> {
         match self.item.as_mut() {
             Some(item) => item,

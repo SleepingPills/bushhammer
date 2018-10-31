@@ -11,6 +11,7 @@ use std::sync::Arc;
 
 pub struct World {
     id_counter: usize,
+    // TODO: Replace this with a pool since it can be vector indexed
     entities: IndexMap<entity::EntityId, entity::Entity>,
     components: Registry<ComponentId>,
     systems: Registry<SystemId>,
@@ -87,23 +88,56 @@ impl World {
             entity::Transaction::RemoveEnt(id) => {
                 if let Some(entity) = self.entities.swap_remove(&id) {
                     for sys_id in entity.systems.iter() {
-                        let mut system = self.systems.get_trait::<System>(sys_id).expect("System not found").write();
+                        let mut system = self.systems.get_trait::<System>(sys_id).unwrap().write();
                         system.remove_entity(entity.id)
                     }
-                    for comp_id in entity.components.keys() {
+                    for (comp_id, index) in entity.components.iter() {
                         let mut comp_mgr = self
                             .components
                             .get_trait::<ComponentManager>(comp_id)
                             .expect("Component manager not found")
                             .write();
-                        comp_mgr.remove_entity(entity.id);
+                        comp_mgr.reclaim(*index);
                     }
                 }
             }
         }
     }
 
-    fn apply_step(&self, id: entity::EntityId, step: entity::Step) {}
+    fn apply_step(&mut self, id: entity::EntityId, step: entity::Step) {
+        if let Some(entity) = self.entities.get_mut(&id) {
+            match step {
+                entity::Step::AddComp((comp_id, ptr)) => {
+                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                    let index = comp_manager.add_component(comp_id, ptr);
+                    entity.components.insert(comp_id, index);
+                }
+                entity::Step::AddCompJson((comp_id, json)) => {
+                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                    let index = comp_manager.add_component_json(comp_id, json);
+                    entity.add_component(comp_id, index);
+                }
+                entity::Step::AddSys(sys_id) => {
+                    let mut system = self.systems.get_trait::<System>(&sys_id).unwrap().write();
+                    system.add_entity(entity);
+                    entity.add_system(sys_id);
+                }
+                entity::Step::RemoveComp(comp_id) => {
+                    // TODO: Check if the component can be safely removed due to system requirements
+                    if let Some(comp_index) = entity.remove_component(comp_id) {
+                        let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                        comp_manager.reclaim(comp_index);
+                    }
+                }
+                entity::Step::RemoveSys(sys_id) => {
+                    if entity.remove_system(sys_id) {
+                        let mut system = self.systems.get_trait::<System>(&sys_id).unwrap().write();
+                        system.remove_entity(entity.id);
+                    }
+                }
+            }
+        }
+    }
 
     fn create_entity(&mut self) -> entity::EntityId {
         let id = self.id_counter;
@@ -138,6 +172,7 @@ impl World {
 }
 
 impl World {
+    #[allow(unused_variables)]
     pub fn register_component<T>(&mut self, id: ComponentId) {
         /*
         Creates an instance of a componentstore and registers it in the registry
@@ -145,6 +180,7 @@ impl World {
         unimplemented!()
     }
 
+    #[allow(unused_variables)]
     pub fn register_system<T>(&mut self, id: SystemId) {
         /*
         Creates an instance of system.

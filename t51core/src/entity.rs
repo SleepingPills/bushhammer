@@ -8,7 +8,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug)]
 pub struct Entity {
     pub id: EntityId,
-    pub components: HashMap<ComponentId, EntityId>,
+    pub components: HashMap<ComponentId, usize>,
     pub systems: HashSet<SystemId>,
 }
 
@@ -20,6 +20,26 @@ impl Entity {
             components: HashMap::new(),
             systems: HashSet::new(),
         }
+    }
+
+    #[inline]
+    pub(crate) fn add_component(&mut self, id: ComponentId, index: usize) {
+        self.components.insert(id, index);
+    }
+
+    #[inline]
+    pub(crate) fn add_system(&mut self, id: SystemId) {
+        self.systems.insert(id);
+    }
+
+    #[inline]
+    pub(crate) fn remove_component(&mut self, id: ComponentId) -> Option<usize> {
+        self.components.remove(&id)
+    }
+
+    #[inline]
+    pub(crate) fn remove_system(&mut self, id: SystemId) -> bool{
+        self.systems.remove(&id)
     }
 }
 

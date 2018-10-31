@@ -1,7 +1,8 @@
-use crate::entity::{EntityId, EntityStore};
+use crate::entity::{Entity, EntityId, EntityStore};
 
 pub trait System {
     fn run(&mut self, entities: EntityStore);
+    fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
 }
 
@@ -27,6 +28,7 @@ impl<T> Context<T> {
         unreachable!()
     }
 
+    #[allow(unused_variables)]
     pub unsafe fn get_by_id(&self, entity_id: EntityId) -> T {
         unreachable!()
     }

@@ -48,7 +48,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_rwcell() {
+    fn test_pool() {
         let mut pool: VecPool<i32> = VecPool::new();
 
         // Add some items to the pool.

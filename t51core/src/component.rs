@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use crate::alloc::VecPool;
 use crate::sync::RwCell;
-use crate::entity::EntityId;
+use crate::object::ComponentId;
 
 pub struct ComponentStore<T> {
     pub(crate) pool: VecPool<T>,
@@ -23,5 +23,7 @@ pub type ComponentField<T> = Arc<RwCell<ComponentStore<T>>>;
 
 
 pub trait ComponentManager {
-    fn remove_entity(&mut self, id: EntityId);
+    fn add_component(&mut self, id: ComponentId, ptr: *const ()) -> usize;
+    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize;
+    fn reclaim(&mut self, index: usize);
 }

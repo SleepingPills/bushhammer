@@ -139,6 +139,7 @@ impl World {
         }
     }
 
+    #[inline]
     fn create_entity(&mut self) -> entity::EntityId {
         let id = self.id_counter;
         self.id_counter += 1;

@@ -1,9 +1,26 @@
+use crate::object::{ComponentId, SystemId};
 use crate::entity::{Entity, EntityId, EntityStore};
+use crate::registry::Registry;
 
 pub trait System {
     fn run(&mut self, entities: EntityStore);
+
+    #[allow(unused_variables)]
+    fn init(&mut self, components: &Registry<ComponentId>, systems: &Registry<SystemId>) {}
+    #[allow(unused_variables)]
+    fn entity_added(&mut self, entity: &Entity) {}
+    #[allow(unused_variables)]
+    fn entity_removed(&mut self, id: EntityId) {}
+}
+
+pub trait ManagedSystem : System {
     fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
+}
+
+pub trait BuildableSystem : ManagedSystem {
+    fn new(components: &Registry<ComponentId>) -> Self;
+    fn required_components() -> Vec<ComponentId>;
 }
 
 /// Marker for designating the components required by the system and their mutability.

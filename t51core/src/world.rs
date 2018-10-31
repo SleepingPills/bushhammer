@@ -3,15 +3,18 @@ use crate::entity;
 use crate::object::{ComponentId, SystemId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
-use crate::system::System;
+use crate::system::{BuildableSystem, ManagedSystem};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::iter::FromIterator;
 use std::sync::Arc;
 
 pub struct World {
     id_counter: usize,
-    // TODO: Replace this with a generational index
+    // TODO: Replace this with a variety of the VecPool that uses Option<T> for items and can therefore
+    // accurately represent holes and missing items. It can also swap out the content of the option when
+    // reclaiming, so all existing functionality can be mimiced neatly.
     entities: IndexMap<entity::EntityId, entity::Entity>,
     components: Registry<ComponentId>,
     systems: Registry<SystemId>,
@@ -38,7 +41,7 @@ impl World {
 
 impl World {
     pub fn run_systems(&mut self) {
-        let systems = self.systems.iter_mut::<System>();
+        let systems = self.systems.iter_mut::<ManagedSystem>();
 
         // TODO: Turn this into a parallelized SEDA execution
         for (id, mut sys) in systems {
@@ -88,7 +91,7 @@ impl World {
             entity::Transaction::RemoveEnt(id) => {
                 if let Some(entity) = self.entities.swap_remove(&id) {
                     for sys_id in entity.systems.iter() {
-                        let mut system = self.systems.get_trait::<System>(sys_id).write();
+                        let mut system = self.systems.get_trait::<ManagedSystem>(sys_id).write();
                         system.remove_entity(entity.id)
                     }
                     for (comp_id, index) in entity.components.iter() {
@@ -127,7 +130,7 @@ impl World {
                         }
                     }
 
-                    let mut system = self.systems.get_trait::<System>(&sys_id).write();
+                    let mut system = self.systems.get_trait::<ManagedSystem>(&sys_id).write();
                     system.add_entity(entity);
                     entity.add_system(sys_id);
                 }
@@ -149,7 +152,7 @@ impl World {
                 }
                 entity::Step::RemoveSys(sys_id) => {
                     if entity.remove_system(sys_id) {
-                        let mut system = self.systems.get_trait::<System>(&sys_id).write();
+                        let mut system = self.systems.get_trait::<ManagedSystem>(&sys_id).write();
                         system.remove_entity(entity.id);
                     }
                 }
@@ -200,17 +203,28 @@ impl World {
     }
 
     #[allow(unused_variables)]
-    pub fn register_system<T>(&mut self, id: SystemId) {
-        /*
-        Creates an instance of system.
-        Require: Default and System
-        
-        trait System {
-            fn new(component_registry)
-            fn init(&mut self, world)
-            fn required_components(&self) -> &[ComponentIds]
+    pub fn register_system<T>(&mut self, id: SystemId)
+    where
+        T: 'static + BuildableSystem,
+    {
+        let sys_id = SystemId::new::<T>();
+
+        // Build the system and run the init callback
+        let mut system = T::new(&self.components);
+        system.init(&self.components, &self.systems);
+
+        // Register the system and core trait
+        self.systems.register(sys_id, system);
+        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
+
+        // Add system dependencies
+        let required_components = T::required_components();
+
+        for &component_id in required_components.iter() {
+            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
+            entry.insert(sys_id);
         }
-        */
-        unimplemented!()
+
+        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
     }
 }

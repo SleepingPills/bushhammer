@@ -20,8 +20,17 @@ impl<T> VecPool<T> {
         self.queue.push(index);
     }
 
+    /// Get an immutable reference to the item at the supplied index.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&T> { self.store.get(index) }
+
+    /// Get a mutable reference to the item at the supplied index.
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> { self.store.get_mut(index) }
+
     /// Push a new value into the storage. The pool will attempt to use any reclaimed slots
     /// before appending to the end of the storage vector.
+    #[inline]
     pub fn push(&mut self, value: T) -> usize {
         if let Some(index) = self.queue.pop() {
             self.store[index] = value;
@@ -29,6 +38,15 @@ impl<T> VecPool<T> {
         } else {
             self.store.push(value);
             self.store.len() - 1
+        }
+    }
+
+    /// Get the location of the next insert.
+    #[inline]
+    pub fn peek_index(&self) -> usize {
+        match self.queue.last() {
+            Some(index) => *index,
+            _ => self.store.len()
         }
     }
 

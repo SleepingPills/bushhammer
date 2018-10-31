@@ -11,7 +11,7 @@ use std::sync::Arc;
 
 pub struct World {
     id_counter: usize,
-    // TODO: Replace this with a pool since it can be vector indexed
+    // TODO: Replace this with a generational index
     entities: IndexMap<entity::EntityId, entity::Entity>,
     components: Registry<ComponentId>,
     systems: Registry<SystemId>,
@@ -118,12 +118,30 @@ impl World {
                     entity.add_component(comp_id, index);
                 }
                 entity::Step::AddSys(sys_id) => {
+                    for comp_id in &self.sys_comp[&sys_id] {
+                        if !entity.components.contains_key(&comp_id) {
+                            panic!(
+                                "Can't add system {} to entity {}, requiredcomponent {} missing",
+                                sys_id, entity.id, comp_id
+                            );
+                        }
+                    }
+
                     let mut system = self.systems.get_trait::<System>(&sys_id).write();
                     system.add_entity(entity);
                     entity.add_system(sys_id);
                 }
                 entity::Step::RemoveComp(comp_id) => {
-                    // TODO: Check if the component can be safely removed due to system requirements
+                    // Panic in case the component to be removed is required by a system
+                    for sys_id in &self.comp_sys[&comp_id] {
+                        if entity.systems.contains(&sys_id) {
+                            panic!(
+                                "Can't remove component {} for entity {}, system {} depends on it",
+                                comp_id, entity.id, sys_id
+                            );
+                        }
+                    }
+
                     if let Some(comp_index) = entity.remove_component(comp_id) {
                         let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
                         comp_manager.reclaim(comp_index);

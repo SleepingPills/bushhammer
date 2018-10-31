@@ -88,13 +88,13 @@ impl World {
             entity::Transaction::RemoveEnt(id) => {
                 if let Some(entity) = self.entities.swap_remove(&id) {
                     for sys_id in entity.systems.iter() {
-                        let mut system = self.systems.get_trait::<System>(sys_id).unwrap().write();
+                        let mut system = self.systems.get_trait::<System>(sys_id).write();
                         system.remove_entity(entity.id)
                     }
                     for (comp_id, index) in entity.components.iter() {
                         let mut comp_mgr = self
                             .components
-                            .get_trait::<ComponentManager>(comp_id)
+                            .try_get_trait::<ComponentManager>(comp_id)
                             .expect("Component manager not found")
                             .write();
                         comp_mgr.reclaim(*index);
@@ -108,30 +108,30 @@ impl World {
         if let Some(entity) = self.entities.get_mut(&id) {
             match step {
                 entity::Step::AddComp((comp_id, ptr)) => {
-                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
                     let index = comp_manager.add_component(comp_id, ptr);
                     entity.components.insert(comp_id, index);
                 }
                 entity::Step::AddCompJson((comp_id, json)) => {
-                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                    let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
                     let index = comp_manager.add_component_json(comp_id, json);
                     entity.add_component(comp_id, index);
                 }
                 entity::Step::AddSys(sys_id) => {
-                    let mut system = self.systems.get_trait::<System>(&sys_id).unwrap().write();
+                    let mut system = self.systems.get_trait::<System>(&sys_id).write();
                     system.add_entity(entity);
                     entity.add_system(sys_id);
                 }
                 entity::Step::RemoveComp(comp_id) => {
                     // TODO: Check if the component can be safely removed due to system requirements
                     if let Some(comp_index) = entity.remove_component(comp_id) {
-                        let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).unwrap().write();
+                        let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
                         comp_manager.reclaim(comp_index);
                     }
                 }
                 entity::Step::RemoveSys(sys_id) => {
                     if entity.remove_system(sys_id) {
-                        let mut system = self.systems.get_trait::<System>(&sys_id).unwrap().write();
+                        let mut system = self.systems.get_trait::<System>(&sys_id).write();
                         system.remove_entity(entity.id);
                     }
                 }

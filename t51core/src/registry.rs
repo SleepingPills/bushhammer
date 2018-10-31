@@ -5,10 +5,12 @@ use std::sync::Arc;
 use anymap::AnyMap;
 use indexmap::IndexMap;
 
+use crate::sync::{ReadGuard, RwCell, RwGuard};
+use std::intrinsics::type_name;
 use std::marker::Unsize;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use crate::sync::{ReadGuard, RwCell, RwGuard};
+use std::fmt::Display;
 
 /// Dynamically typed registry for shared ownership access to objects and traits they implement.
 /// Vanilla trait objects in rust take full ownership of the underlying instance, making it
@@ -27,7 +29,7 @@ where
 
 impl<K> Registry<K>
 where
-    K: Eq + Hash,
+    K: Eq + Hash + Display,
 {
     #[inline]
     pub fn new() -> Registry<K> {
@@ -35,7 +37,7 @@ where
     }
 
     /// Get the root object associated with the given key.
-    pub fn get<T: 'static>(&self, key: &K) -> Option<Arc<RwCell<T>>> {
+    pub fn try_get<T: 'static>(&self, key: &K) -> Option<Arc<RwCell<T>>> {
         if let Some(bundle) = self.data.get(key) {
             if let Some(item) = bundle.get::<Arc<RwCell<T>>>() {
                 Some(item.clone())
@@ -49,7 +51,21 @@ where
 
     /// Get a trait object associated with the given key. The trait has to be registered
     /// first. The registry does not attempt to discover all traits an object implements.
-    pub fn get_trait<T: 'static>(&self, key: &K) -> Option<Arc<RwCell<WeakBox<T>>>>
+    pub fn try_get_trait<T>(&self, key: &K) -> Option<Arc<RwCell<WeakBox<T>>>>
+    where
+        T: 'static + ?Sized,
+    {
+        self.try_get::<WeakBox<T>>(key)
+    }
+
+    pub fn get<T: 'static>(&self, key: &K) -> Arc<RwCell<T>> {
+        match self.try_get::<T>(key) {
+            Some(item) => item,
+            _ => panic!("No {} instance found under key {}", unsafe{type_name::<T>()}, key),
+        }
+    }
+
+    pub fn get_trait<T>(&self, key: &K) -> Arc<RwCell<WeakBox<T>>>
     where
         T: 'static + ?Sized,
     {
@@ -227,17 +243,17 @@ mod tests {
         registry.register(123, Foo { x: 2 });
 
         {
-            let foo = registry.get::<Foo>(&123).unwrap().read();
+            let foo = registry.try_get::<Foo>(&123).unwrap().read();
 
             assert_eq!(foo.x, 2);
             assert_eq!(foo.get_x(), 2);
 
             // Ensure that the type is not available under another key
-            assert!(registry.get::<Foo>(&5).is_none())
+            assert!(registry.try_get::<Foo>(&5).is_none())
         }
 
         {
-            let mut foo = registry.get::<Foo>(&123).unwrap().write();
+            let mut foo = registry.get::<Foo>(&123).write();
 
             foo.x = 10;
             assert_eq!(foo.x, 10);
@@ -246,22 +262,22 @@ mod tests {
     }
 
     #[test]
-    fn register_trait() {
+    fn test_register_trait() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
         registry.register_trait::<Foo, FooTrait>(&123);
 
         {
-            let foo_trait = registry.get_trait::<FooTrait>(&123).unwrap().read();
+            let foo_trait = registry.try_get_trait::<FooTrait>(&123).unwrap().read();
 
             assert_eq!(foo_trait.get_x_times_two(), 4);
 
             // Ensure that the type is not available under another key
-            assert!(registry.get_trait::<FooTrait>(&5).is_none())
+            assert!(registry.try_get_trait::<FooTrait>(&5).is_none())
         }
 
         {
-            let mut foo_trait = registry.get_trait::<FooTrait>(&123).unwrap().write();
+            let mut foo_trait = registry.get_trait::<FooTrait>(&123).write();
 
             foo_trait.add_one();
 
@@ -270,13 +286,13 @@ mod tests {
     }
 
     #[test]
-    fn allow_multiple_readers() {
+    fn test_allow_multiple_readers() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
 
-        let foo1 = registry.get::<Foo>(&123).unwrap().read();
-        let foo2 = registry.get::<Foo>(&123).unwrap().read();
-        let foo3 = registry.get::<Foo>(&123).unwrap().read();
+        let foo1 = registry.try_get::<Foo>(&123).unwrap().read();
+        let foo2 = registry.try_get::<Foo>(&123).unwrap().read();
+        let foo3 = registry.get::<Foo>(&123).read();
 
         assert_eq!(foo1.x, 2);
         assert_eq!(foo2.x, 2);
@@ -284,37 +300,51 @@ mod tests {
     }
 
     #[test]
+    #[should_panic(expected = "No registry::tests::Foo instance found under key 123")]
+    fn test_fail_get_missing_root() {
+        let registry = Registry::<i32>::new();
+        registry.get::<Foo>(&123);
+    }
+
+    #[test]
+    #[should_panic(expected = "No registry::WeakBox<dyn registry::tests::FooTrait> instance found under key 123")]
+    fn test_fail_get_missing_trait() {
+        let registry = Registry::<i32>::new();
+        registry.get_trait::<FooTrait>(&123);
+    }
+
+    #[test]
     #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
-    fn fail_read_write_conflict() {
+    fn test_fail_read_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
 
-        let _foo1 = registry.get::<Foo>(&123).unwrap().read();
-        let _foo2 = registry.get::<Foo>(&123).unwrap().write();
+        let _foo1 = registry.try_get::<Foo>(&123).unwrap().read();
+        let _foo2 = registry.try_get::<Foo>(&123).unwrap().write();
     }
 
     #[test]
     #[should_panic(expected = "Attempted to acquire read lock when a write lock is already in effect")]
-    fn fail_write_read_conflict() {
+    fn test_fail_write_read_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
 
-        let _foo1 = registry.get::<Foo>(&123).unwrap().write();
-        let _foo2 = registry.get::<Foo>(&123).unwrap().read();
+        let _foo1 = registry.try_get::<Foo>(&123).unwrap().write();
+        let _foo2 = registry.try_get::<Foo>(&123).unwrap().read();
     }
 
     #[test]
     #[should_panic(expected = "Attempted to acquire a write lock while another lock is already in effect")]
-    fn fail_write_write_conflict() {
+    fn test_fail_write_write_conflict() {
         let mut registry = Registry::<i32>::new();
         registry.register(123, Foo { x: 2 });
 
-        let _foo1 = registry.get::<Foo>(&123).unwrap().write();
-        let _foo2 = registry.get::<Foo>(&123).unwrap().write();
+        let _foo1 = registry.try_get::<Foo>(&123).unwrap().write();
+        let _foo2 = registry.try_get::<Foo>(&123).unwrap().write();
     }
 
     #[test]
-    fn iter_contents() {
+    fn test_iter_contents() {
         let mut registry = Registry::<i32>::new();
 
         // Populate the registry with instances and traits
@@ -334,7 +364,7 @@ mod tests {
     }
 
     #[test]
-    fn iter_mut_contents() {
+    fn test_iter_mut_contents() {
         let mut registry = Registry::<i32>::new();
 
         // Populate the registry with instances and traits

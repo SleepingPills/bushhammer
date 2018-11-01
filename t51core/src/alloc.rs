@@ -127,7 +127,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_pool() {
+    fn test_vec_pool() {
         let mut pool: VecPool<i32> = VecPool::new();
 
         // Add some items to the pool.
@@ -142,5 +142,46 @@ mod tests {
         // Adding more items will fill up the holes first.
         assert_eq!(pool.push(3), 1);
         assert_eq!(pool.push(3), 0);
+    }
+
+    #[test]
+    fn test_slot_pool() {
+        let mut pool: SlotPool<i32> = SlotPool::new();
+
+        // Add some items to the pool.
+        assert_eq!(pool.push(1), 0);
+        assert_eq!(pool.push(2), 1);
+        assert_eq!(pool.push(3), 2);
+
+        // Reclaim a bunch of items.
+        pool.reclaim(0);
+        pool.reclaim(1);
+
+        // Adding more items will fill up the holes first.
+        assert_eq!(pool.push(3), 1);
+
+        // Retrieving a reclaimed slot yields `None`
+        assert!(pool.get(0).is_none());
+
+        // Retrieving out of bounds indices yields `None`
+        assert!(pool.get(10).is_none());
+    }
+
+    #[test]
+    fn test_slot_pool_peen_index() {
+        let mut pool: SlotPool<i32> = SlotPool::new();
+
+        // Add some items to the pool.
+        assert_eq!(pool.push(1), 0);
+        assert_eq!(pool.push(2), 1);
+
+        // The next available index is at the tail
+        assert_eq!(pool.peek_index(), 2);
+
+        // Reclaim the head
+        pool.reclaim(0);
+
+        // Now, the next available index is at the head
+        assert_eq!(pool.peek_index(), 0);
     }
 }

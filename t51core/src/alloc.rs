@@ -20,14 +20,6 @@ impl<T> VecPool<T> {
         self.queue.push(index);
     }
 
-    /// Get an immutable reference to the item at the supplied index.
-    #[inline]
-    pub fn get(&self, index: usize) -> Option<&T> { self.store.get(index) }
-
-    /// Get a mutable reference to the item at the supplied index.
-    #[inline]
-    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> { self.store.get_mut(index) }
-
     /// Push a new value into the storage. The pool will attempt to use any reclaimed slots
     /// before appending to the end of the storage vector.
     #[inline]
@@ -41,15 +33,6 @@ impl<T> VecPool<T> {
         }
     }
 
-    /// Get the location of the next insert.
-    #[inline]
-    pub fn peek_index(&self) -> usize {
-        match self.queue.last() {
-            Some(index) => *index,
-            _ => self.store.len()
-        }
-    }
-
     #[inline]
     pub unsafe fn get_store_ptr(&self) -> *const T {
         self.store.as_ptr()
@@ -58,6 +41,84 @@ impl<T> VecPool<T> {
     #[inline]
     pub unsafe fn get_store_mut_ptr(&mut self) -> *mut T {
         self.store.as_mut_ptr()
+    }
+}
+
+#[derive(Debug)]
+pub struct SlotPool<T> {
+    store: Vec<Option<T>>,
+    queue: Vec<usize>,
+}
+
+impl<T> SlotPool<T> {
+    pub fn new() -> Self {
+        SlotPool {
+            store: Vec::new(),
+            queue: Vec::new(),
+        }
+    }
+
+    /// Reclaim the value at supplied index.
+    #[inline]
+    pub fn reclaim(&mut self, index: usize) -> Option<T> {
+        self.queue.push(index);
+        self.store[index].take()
+    }
+
+    /// Get an immutable reference to the item at the supplied index.
+    #[inline]
+    pub fn get(&self, index: usize) -> Option<&T> {
+        if index >= self.store.len() {
+            return None
+        }
+
+        unsafe {
+            let slot = self.store.get_unchecked(index);
+            match slot {
+                Some(value) => Some(&value),
+                _ => None
+            }
+        }
+    }
+
+    /// Get a mutable reference to the item at the supplied index.
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
+        if index >= self.store.len() {
+            return None
+        }
+
+        unsafe {
+            let slot = self.store.get_unchecked_mut(index);
+            match slot {
+                Some(ref mut value) => Some(value),
+                _ => None
+            }
+        }
+    }
+
+    /// Push a new value into the storage. The pool will attempt to use any reclaimed slots
+    /// before appending to the end of the storage vector.
+    #[inline]
+    pub fn push(&mut self, value: T) -> usize {
+        let wrapped = Some(value);
+
+        if let Some(index) = self.queue.pop() {
+            self.store[index] = wrapped;
+            index
+        } else {
+            self.store.push(wrapped);
+            self.store.len() - 1
+        }
+    }
+
+    /// Get the location of the next insert.
+    #[inline]
+    pub fn peek_index(&self) -> usize {
+        match self.queue.last() {
+            Some(index) => *index,
+            _ => self.store.len()
+        }
     }
 }
 

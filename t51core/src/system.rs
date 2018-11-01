@@ -13,11 +13,13 @@ pub trait System {
     fn entity_removed(&mut self, id: EntityId) {}
 }
 
+// TODO: Implement in macro
 pub trait ManagedSystem : System {
     fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
 }
 
+// TODO: Implement in macro
 pub trait BuildableSystem : ManagedSystem {
     fn new(components: &Registry<ComponentId>) -> Self;
     fn required_components() -> Vec<ComponentId>;

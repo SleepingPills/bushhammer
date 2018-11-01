@@ -1,3 +1,4 @@
+use crate::alloc::SlotPool;
 use crate::component::ComponentManager;
 use crate::entity;
 use crate::object::{ComponentId, SystemId};
@@ -11,11 +12,7 @@ use std::iter::FromIterator;
 use std::sync::Arc;
 
 pub struct World {
-    id_counter: usize,
-    // TODO: Replace this with a variety of the VecPool that uses Option<T> for items and can therefore
-    // accurately represent holes and missing items. It can also swap out the content of the option when
-    // reclaiming, so all existing functionality can be mimiced neatly.
-    entities: IndexMap<entity::EntityId, entity::Entity>,
+    entities: SlotPool<entity::Entity>,
     components: Registry<ComponentId>,
     systems: Registry<SystemId>,
     tx_queues: Arc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
@@ -27,8 +24,7 @@ pub struct World {
 impl World {
     pub fn new() -> World {
         World {
-            id_counter: 0,
-            entities: IndexMap::new(),
+            entities: SlotPool::new(),
             components: Registry::new(),
             systems: Registry::new(),
             tx_queues: Arc::new(IndexMap::new()),
@@ -89,7 +85,7 @@ impl World {
                 }
             }
             entity::Transaction::RemoveEnt(id) => {
-                if let Some(entity) = self.entities.swap_remove(&id) {
+                if let Some(entity) = self.entities.reclaim(id) {
                     for sys_id in entity.systems.iter() {
                         let mut system = self.systems.get_trait::<ManagedSystem>(sys_id).write();
                         system.remove_entity(entity.id)
@@ -108,7 +104,7 @@ impl World {
     }
 
     fn apply_step(&mut self, id: entity::EntityId, step: entity::Step) {
-        if let Some(entity) = self.entities.get_mut(&id) {
+        if let Some(entity) = self.entities.get_mut(id) {
             match step {
                 entity::Step::AddComp((comp_id, ptr)) => {
                     let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
@@ -162,10 +158,8 @@ impl World {
 
     #[inline]
     fn create_entity(&mut self) -> entity::EntityId {
-        let id = self.id_counter;
-        self.id_counter += 1;
-        self.entities.insert(id, entity::Entity::new(id));
-        id
+        let id = self.entities.peek_index();
+        self.entities.push(entity::Entity::new(id))
     }
 }
 
@@ -176,7 +170,7 @@ impl World {
     }
 
     pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
-        match self.entities.get(&id) {
+        match self.entities.get(id) {
             Some(entity) => Ok(entity::Editor::new(
                 entity,
                 &self.comp_sys,

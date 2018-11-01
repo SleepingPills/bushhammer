@@ -3,9 +3,6 @@
 #![feature(integer_atomics)]
 #![feature(core_intrinsics)]
 
-extern crate anymap;
-extern crate indexmap;
-
 pub mod alloc;
 pub mod component;
 pub mod entity;

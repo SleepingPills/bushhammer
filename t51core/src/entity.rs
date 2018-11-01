@@ -1,6 +1,6 @@
 use crate::object::{ComponentId, SystemId};
 use crate::sync::RwGuard;
-use indexmap::IndexMap;
+use crate::alloc::SlotPool;
 use std::collections::{HashMap, HashSet};
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
@@ -257,7 +257,7 @@ impl<'a> Editor<'a> {
 }
 
 pub struct EntityStore<'a> {
-    entities: &'a IndexMap<EntityId, Entity>,
+    entities: &'a SlotPool<Entity>,
     comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
     sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
     queue: &'a mut RwGuard<Vec<Transaction>>,
@@ -266,7 +266,7 @@ pub struct EntityStore<'a> {
 impl<'a> EntityStore<'a> {
     #[inline]
     pub fn new(
-        entities: &'a IndexMap<EntityId, Entity>,
+        entities: &'a SlotPool<Entity>,
         comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
         sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
         queue: &'a mut RwGuard<Vec<Transaction>>,
@@ -288,7 +288,7 @@ impl<'a> EntityStore<'a> {
 
     #[inline]
     pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
-        match self.entities.get(&id) {
+        match self.entities.get(id) {
             Some(entity) => Ok(Editor::new(
                 entity,
                 self.comp_sys,

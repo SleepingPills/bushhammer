@@ -51,13 +51,13 @@ pub trait IndexablePtrTup {
 
 pub mod runtime {
     use super::support::{BundleDef, Context, DataBundle};
-    use super::{HashMap, IndexMap, Joined, MultiLock};
+    use super::{HashMap, IndexMap, Joined, MultiLock, EntityStore};
     use crate::object::{BundleId, EntityId};
 
     pub trait System {
         type Data: Joined;
 
-        fn run(&mut self, data: Context<Self::Data>);
+        fn run(&mut self, data: Context<Self::Data>, entities: EntityStore);
     }
 
     pub struct SystemData<T>
@@ -87,7 +87,7 @@ pub mod runtime {
     }
 
     pub trait SystemRuntime {
-        fn run(&mut self);
+        fn run(&mut self, entities: EntityStore);
         fn add_entity(&mut self, id: EntityId, bundle_id: BundleId);
         fn remove_entity(&mut self, id: EntityId);
         fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId);
@@ -100,8 +100,8 @@ pub mod runtime {
         T: System,
     {
         #[inline]
-        fn run(&mut self) {
-            self.system.run(self.data.context());
+        fn run(&mut self, entities: EntityStore) {
+            self.system.run(self.data.context(), entities);
         }
 
         #[inline]

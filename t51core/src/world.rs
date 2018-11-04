@@ -165,7 +165,7 @@ impl World {
 
 impl World {
     #[inline]
-    pub fn add_entity(&mut self) -> entity::Builder {
+    pub fn new_entity(&mut self) -> entity::Builder {
         entity::Builder::new(&self.comp_sys, &self.sys_comp, &mut self.main_queue)
     }
 

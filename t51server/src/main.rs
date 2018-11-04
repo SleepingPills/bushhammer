@@ -9,7 +9,7 @@ pub struct Goof<'a> {
 impl<'a> System for Goof<'a> {
     type Data = (Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>);
 
-    fn run(&mut self, ctx: Context<(Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>)>) {
+    fn run(&mut self, ctx: Context<(Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>)>, mut entities: EntityStore) {
         for (a, b, c) in ctx.iter() {
             *c = 5;
         }

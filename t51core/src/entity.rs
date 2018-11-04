@@ -280,7 +280,7 @@ impl<'a> EntityStore<'a> {
 
 impl<'a> EntityStore<'a> {
     #[inline]
-    pub fn add(&mut self) -> Builder {
+    pub fn new(&mut self) -> Builder {
         Builder::new(self.comp_sys, self.sys_comp, self.queue)
     }
 

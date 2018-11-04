@@ -319,6 +319,7 @@ pub mod refactor0 {
     use t51core::entity::Entity;
     use t51core::entity::EntityId;
     use indexmap::map::Values;
+    use std::sync::Arc;
 
     type BundleId = usize;
 
@@ -614,7 +615,7 @@ pub mod refactor0 {
         }
     }
 
-    pub struct SystemCore<T>
+    pub struct SystemData<T>
     where
         T: Joined,
     {
@@ -623,41 +624,16 @@ pub mod refactor0 {
         lock: MultiLock,
     }
 
-    impl<T> SystemCore<T>
+    impl<T> SystemData<T>
     where
         T: Joined,
     {
-        pub fn get_ctx(&self) -> Context<T> {
+        pub fn context(&self) -> Context<T> {
             Context {
                 bundles: &self.bundles,
                 entity_map: &self.entity_map,
-                _borrow: Rc::new(self.lock.acquire()),
+                _borrow: self.lock.acquire(),
             }
-        }
-
-        #[inline]
-        pub fn add_entity(&mut self, id: EntityId, bundle_id: BundleId) {
-            self.entity_map.insert(id, bundle_id);
-        }
-
-        #[inline]
-        pub fn remove_entity(&mut self, id: EntityId) {
-            self.entity_map.remove(&id);
-        }
-
-        #[inline]
-        pub fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId) {
-            self.entity_map.insert(id, bundle_id);
-        }
-
-        #[inline]
-        pub fn add_bundle(&mut self, bundle: BundleDef) {
-            self.bundles.insert(bundle.0, DataBundle::new(bundle));
-        }
-
-        #[inline]
-        pub fn remove_bundle(&mut self, id: BundleId) {
-            self.bundles.remove(&id);
         }
     }
 
@@ -667,7 +643,7 @@ pub mod refactor0 {
     {
         bundles: &'a IndexMap<BundleId, DataBundle<T>>,
         entity_map: &'a HashMap<EntityId, BundleId>,
-        _borrow: Rc<Borrow>,
+        _borrow: Borrow,
     }
 
     impl<'a, T> Context<'a, T>
@@ -675,14 +651,14 @@ pub mod refactor0 {
         T: Joined,
     {
         #[inline]
-        pub fn get_by_id(&self, id: EntityId) -> T::ItemTup {
+        pub fn get_by_id(&mut self, id: EntityId) -> T::ItemTup {
             let bundle_id = self.entity_map[&id];
             let bundle = &self.bundles[&bundle_id];
             bundle.get_by_id(id)
         }
 
         #[inline]
-        pub fn iter(&self) -> ComponentIterator<T> {
+        fn iter(&self) -> ComponentIterator<T> {
             let mut stream = self.bundles.values();
 
             unsafe {
@@ -696,7 +672,7 @@ pub mod refactor0 {
                     bundle,
                     size,
                     counter: 0,
-                    _borrow: self._borrow.clone()
+                    _borrow: &self._borrow
                 }
             }
         }
@@ -710,7 +686,7 @@ pub mod refactor0 {
         bundle: T::PtrTup,
         size: usize,
         counter: usize,
-        _borrow: Rc<Borrow>
+        _borrow: &'a Borrow
     }
 
     impl<'a, T> Iterator for ComponentIterator<'a, T> where T: Joined {
@@ -736,25 +712,82 @@ pub mod refactor0 {
         }
     }
 
-    pub struct Goof<'a> {
-        sys: SystemCore<(Reader<'a, EntityId>, Reader<'a, i32>, Writer<'a, u64>)>,
-        coll: Vec<&'a i32>
+    pub trait RestrictedJoined<'a> : Joined {
+
     }
 
-    impl<'a> Goof<'a> {
-        fn moof(&mut self) {
-            for (a, b, c) in self.sys.get_ctx().iter() {
-                self.coll.push(b);
-            }
+    impl<'a, A, B, C> RestrictedJoined<'a> for (A, B, C)
+        where
+            A: 'a + Query + Indexable + From<NonNull<()>>,
+            B: 'a + Query + Indexable + From<NonNull<()>>,
+            C: 'a + Query + Indexable + From<NonNull<()>>,
+    {
+    }
+
+    pub trait System {
+        type Data : Joined;
+
+        fn run(&mut self, data: Context<Self::Data>);
+    }
+
+    pub struct SystemEntry<T> where T : System {
+        system: T,
+        data: SystemData<T::Data>
+    }
+
+    pub trait SystemRuntime {
+        fn run(&mut self);
+        fn add_entity(&mut self, id: EntityId, bundle_id: BundleId);
+        fn remove_entity(&mut self, id: EntityId);
+        fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId);
+        fn add_bundle(&mut self, bundle: BundleDef);
+        fn remove_bundle(&mut self, id: BundleId);
+    }
+
+    impl<T> SystemRuntime for SystemEntry<T> where T : System {
+        #[inline]
+        fn run(&mut self) {
+            self.system.run(self.data.context());
+        }
+
+        #[inline]
+        fn add_entity(&mut self, id: EntityId, bundle_id: BundleId) {
+            self.data.entity_map.insert(id, bundle_id);
+        }
+
+        #[inline]
+        fn remove_entity(&mut self, id: EntityId) {
+            self.data.entity_map.remove(&id);
+        }
+
+        #[inline]
+        fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId) {
+            self.data.entity_map.insert(id, bundle_id);
+        }
+
+        #[inline]
+        fn add_bundle(&mut self, bundle: BundleDef) {
+            self.data.bundles.insert(bundle.0, DataBundle::new(bundle));
+        }
+
+        #[inline]
+        fn remove_bundle(&mut self, id: BundleId) {
+            self.data.bundles.remove(&id);
         }
     }
 
+    pub struct Goof<'a> {
+        coll: Vec<&'a i32>
+    }
 
-    fn poof(sys: SystemCore<(Reader<EntityId>, Reader<i32>, Writer<u64>)>) {
-        let ctx = sys.get_ctx();
+    impl<'a> System for Goof<'a> {
+        type Data = (Reader<'a, EntityId>, Reader<'a, i32>, Writer<'a, u64>);
 
-        for (a, b, c) in ctx.iter() {
-            *c = 5;
+        fn run(&mut self, ctx: Context<(Reader<'a, EntityId>, Reader<'a, i32>, Writer<'a, u64>)>) {
+            for (a, b, c) in ctx.iter() {
+                self.coll.push(b);
+
+            }
         }
     }
 }

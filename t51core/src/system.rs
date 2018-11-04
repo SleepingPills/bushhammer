@@ -52,7 +52,7 @@ pub trait IndexablePtrTup {
 
 pub mod runtime {
     use super::support::{BundleDef, Context, DataBundle};
-    use super::{EntityStore, HashMap, IndexMap, Joined, MultiLock};
+    use super::{ComponentId, Entity, EntityStore, HashMap, IndexMap, Joined, MultiLock};
     use crate::object::{BundleId, EntityId};
 
     pub trait System {
@@ -89,11 +89,12 @@ pub mod runtime {
 
     pub trait SystemRuntime {
         fn run(&mut self, entities: EntityStore);
-        fn add_entity(&mut self, id: EntityId, bundle_id: BundleId);
+        fn add_entity(&mut self, entity: Entity);
         fn remove_entity(&mut self, id: EntityId);
-        fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId);
+        fn update_entity_bundle(&mut self, entity: Entity);
         fn add_bundle(&mut self, bundle: BundleDef);
         fn remove_bundle(&mut self, id: BundleId);
+        fn get_required_components(&self) -> Vec<ComponentId>;
     }
 
     impl<T> SystemRuntime for SystemEntry<T>
@@ -106,8 +107,8 @@ pub mod runtime {
         }
 
         #[inline]
-        fn add_entity(&mut self, id: EntityId, bundle_id: BundleId) {
-            self.data.entity_map.insert(id, bundle_id);
+        fn add_entity(&mut self, entity: Entity) {
+            self.data.entity_map.insert(entity.id, entity.bundle_id);
         }
 
         #[inline]
@@ -116,8 +117,8 @@ pub mod runtime {
         }
 
         #[inline]
-        fn update_entity_bundle(&mut self, id: EntityId, bundle_id: BundleId) {
-            self.data.entity_map.insert(id, bundle_id);
+        fn update_entity_bundle(&mut self, entity: Entity) {
+            self.data.entity_map.insert(entity.id, entity.bundle_id);
         }
 
         #[inline]
@@ -129,6 +130,11 @@ pub mod runtime {
         #[inline]
         fn remove_bundle(&mut self, id: BundleId) {
             self.data.bundles.remove(&id);
+        }
+
+        #[inline]
+        fn get_required_components(&self) -> Vec<ComponentId> {
+            T::Data::get_comp_ids()
         }
     }
 }

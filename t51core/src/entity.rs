@@ -1,6 +1,6 @@
-use crate::object::{ComponentId, SystemId, EntityId};
-use crate::sync::RwGuard;
 use crate::alloc::SlotPool;
+use crate::object::{BundleId, ComponentId, EntityId, SystemId};
+use crate::sync::RwGuard;
 use std::collections::{HashMap, HashSet};
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
@@ -8,6 +8,7 @@ use std::collections::{HashMap, HashSet};
 #[derive(Debug)]
 pub struct Entity {
     pub id: EntityId,
+    pub bundle_id: BundleId,
     pub components: HashMap<ComponentId, usize>,
     pub systems: HashSet<SystemId>,
 }
@@ -17,6 +18,7 @@ impl Entity {
     pub(crate) fn new(id: EntityId) -> Entity {
         Entity {
             id,
+            bundle_id: 0usize,
             components: HashMap::new(),
             systems: HashSet::new(),
         }
@@ -38,7 +40,7 @@ impl Entity {
     }
 
     #[inline]
-    pub(crate) fn remove_system(&mut self, id: SystemId) -> bool{
+    pub(crate) fn remove_system(&mut self, id: SystemId) -> bool {
         self.systems.remove(&id)
     }
 }
@@ -287,12 +289,7 @@ impl<'a> EntityStore<'a> {
     #[inline]
     pub fn edit(&mut self, id: usize) -> Result<Editor, TransactionError> {
         match self.entities.get(id) {
-            Some(entity) => Ok(Editor::new(
-                entity,
-                self.comp_sys,
-                self.sys_comp,
-                self.queue,
-            )),
+            Some(entity) => Ok(Editor::new(entity, self.comp_sys, self.sys_comp, self.queue)),
             _ => Err(TransactionError::EntityNotFound(id)),
         }
     }

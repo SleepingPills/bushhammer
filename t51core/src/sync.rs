@@ -24,6 +24,14 @@ impl<T> RwCell<T> {
     }
 
     #[inline]
+    pub fn single(item: T) -> RwCell<T> {
+        RwCell {
+            item: UnsafeCell::new(item),
+            guard: Arc::new(AtomicI64::new(0)),
+        }
+    }
+
+    #[inline]
     pub fn guard() -> GuardCell {
         RwCell {
             item: UnsafeCell::new(0),

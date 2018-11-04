@@ -51,7 +51,7 @@ pub trait IndexablePtrTup {
 
 pub mod runtime {
     use super::support::{BundleDef, Context, DataBundle};
-    use super::{HashMap, IndexMap, Joined, MultiLock, EntityStore};
+    use super::{EntityStore, HashMap, IndexMap, Joined, MultiLock};
     use crate::object::{BundleId, EntityId};
 
     pub trait System {
@@ -299,59 +299,79 @@ pub mod join {
     use super::{Indexable, IndexablePtrTup, Joined, Query};
     use std::ptr::NonNull;
 
-    /// To macro_rules!
-    impl<A, B, C> IndexablePtrTup for (A, B, C)
-    where
-        A: Indexable,
-        B: Indexable,
-        C: Indexable,
-    {
-        type ItemTup = (A::Item, B::Item, C::Item);
+    macro_rules! ptr_tup {
+        ($( $field_type:ident:$field_seq:tt ),*) => {
+            impl<$($field_type),*> IndexablePtrTup for ($($field_type),*,)
+            where
+                $($field_type: Indexable),*
+            {
+                type ItemTup = ($($field_type::Item),*);
 
-        #[inline]
-        fn index(&self, idx: usize) -> (A::Item, B::Item, C::Item) {
-            (self.0.index(idx), self.1.index(idx), self.2.index(idx))
-        }
-    }
-
-    /// To macro_rules!
-    impl<A, B, C> Joined for (A, B, C)
-    where
-        A: Query + Indexable + From<NonNull<()>>,
-        B: Query + Indexable + From<NonNull<()>>,
-        C: Query + Indexable + From<NonNull<()>>,
-    {
-        type ItemTup = (A::Item, B::Item, C::Item);
-        type PtrTup = (A::DataPtr, B::DataPtr, C::DataPtr);
-
-        #[inline]
-        fn reify(bundle: &Vec<NonNull<()>>) -> (A, B, C) {
-            match bundle.len() {
-                3 => (bundle[0].into(), bundle[1].into(), bundle[2].into()),
-                len => panic!("Recieved bundle rank {}, expected {}", len, 3),
+                #[inline]
+                fn index(&self, idx: usize) -> ($($field_type::Item),*) {
+                    ($(self.$field_seq.index(idx)),*)
+                }
             }
-        }
-
-        #[inline]
-        fn len(&self) -> usize {
-            self.0.len()
-        }
-
-        #[inline]
-        fn get_by_index(&self, idx: usize) -> (A::Item, B::Item, C::Item) {
-            (self.0.index(idx), self.1.index(idx), self.2.index(idx))
-        }
-
-        #[inline]
-        fn get_ptr_tup(&self) -> (A::DataPtr, B::DataPtr, C::DataPtr) {
-            (self.0.unwrap(), self.1.unwrap(), self.2.unwrap())
-        }
-
-        #[inline]
-        unsafe fn get_zero_ptr_tup() -> (A::DataPtr, B::DataPtr, C::DataPtr) {
-            (A::null(), B::null(), C::null())
-        }
+        };
     }
+
+    ptr_tup!(A:0);
+    ptr_tup!(A:0, B:1);
+    ptr_tup!(A:0, B:1, C:2);
+    ptr_tup!(A:0, B:1, C:2, D:3);
+    ptr_tup!(A:0, B:1, C:2, D:3, E:4);
+    ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
+    ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+    macro_rules! joined {
+        ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
+            impl<$($field_type),*> Joined for ($($field_type),*,)
+            where
+                $($field_type: Query + Indexable + From<NonNull<()>>),*
+            {
+                type ItemTup = ($($field_type::Item),*,);
+                type PtrTup = ($($field_type::DataPtr),*,);
+
+                #[inline]
+                fn reify(bundle: &Vec<NonNull<()>>) -> ($($field_type),*,) {
+                    match bundle.len() {
+                        $field_count => ($(bundle[$field_seq].into()),*,),
+                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
+                    }
+                }
+
+                #[inline]
+                fn len(&self) -> usize {
+                    self.0.len()
+                }
+
+                #[inline]
+                fn get_by_index(&self, idx: usize) -> ($($field_type::Item),*,) {
+                    ($(self.$field_seq.index(idx)),*,)
+                }
+
+                #[inline]
+                fn get_ptr_tup(&self) -> ($($field_type::DataPtr),*,) {
+                    ($(self.$field_seq.unwrap()),*,)
+                }
+
+                #[inline]
+                unsafe fn get_zero_ptr_tup() -> ($($field_type::DataPtr),*,) {
+                    ($($field_type::null()),*,)
+                }
+            }
+        };
+    }
+
+    joined!(1; A:0);
+    joined!(2; A:0, B:1);
+    joined!(3; A:0, B:1, C:2);
+    joined!(4; A:0, B:1, C:2, D:3);
+    joined!(5; A:0, B:1, C:2, D:3, E:4);
+    joined!(6; A:0, B:1, C:2, D:3, E:4, F:5);
+    joined!(7; A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    joined!(8; A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 }
 
 pub mod support {
@@ -445,9 +465,9 @@ pub mod support {
             let mut stream = self.bundles.values();
 
             unsafe {
-                let (size, bundle) = match stream.next() {
-                    Some(item) => (item.len(), item.get_ptr_tup()),
-                    _ => (0usize, T::get_zero_ptr_tup()),
+                let (bundle, size) = match stream.next() {
+                    Some(item) => (item.get_ptr_tup(), item.len()),
+                    _ => (T::get_zero_ptr_tup(), 0usize),
                 };
 
                 ComponentIterator {

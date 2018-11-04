@@ -57,7 +57,7 @@ pub mod runtime {
     pub trait System {
         type Data: Joined;
 
-        fn run(&mut self, data: Context<Self::Data>, entities: EntityStore);
+        fn run(&mut self, ctx: Context<Self::Data>, entities: EntityStore);
     }
 
     pub struct SystemData<T>

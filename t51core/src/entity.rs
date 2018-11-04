@@ -1,4 +1,4 @@
-use crate::object::{ComponentId, SystemId};
+use crate::object::{ComponentId, SystemId, EntityId};
 use crate::sync::RwGuard;
 use crate::alloc::SlotPool;
 use std::collections::{HashMap, HashSet};
@@ -42,8 +42,6 @@ impl Entity {
         self.systems.remove(&id)
     }
 }
-
-pub type EntityId = usize;
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TransactionError {

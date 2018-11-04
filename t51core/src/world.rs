@@ -1,7 +1,7 @@
 use crate::alloc::SlotPool;
 use crate::component::ComponentManager;
 use crate::entity;
-use crate::object::{ComponentId, SystemId};
+use crate::object::{ComponentId, SystemId, EntityId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use crate::system::{BuildableSystem, ManagedSystem};
@@ -103,7 +103,7 @@ impl World {
         }
     }
 
-    fn apply_step(&mut self, id: entity::EntityId, step: entity::Step) {
+    fn apply_step(&mut self, id: EntityId, step: entity::Step) {
         if let Some(entity) = self.entities.get_mut(id) {
             match step {
                 entity::Step::AddComp((comp_id, ptr)) => {
@@ -157,7 +157,7 @@ impl World {
     }
 
     #[inline]
-    fn create_entity(&mut self) -> entity::EntityId {
+    fn create_entity(&mut self) -> EntityId {
         let id = self.entities.peek_index();
         self.entities.push(entity::Entity::new(id))
     }

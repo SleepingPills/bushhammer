@@ -58,6 +58,7 @@ macro_rules! object_id {
     };
 }
 
+pub type EntityId = usize;
+pub type BundleId = usize;
 object_id!(SystemId);
-
 object_id!(ComponentId);

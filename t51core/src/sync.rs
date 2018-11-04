@@ -123,6 +123,16 @@ impl<T> DerefMut for RwGuard<T> {
     }
 }
 
+pub struct MultiLock;
+
+impl MultiLock {
+    pub fn acquire(&self) -> MultiBorrow {
+        unimplemented!()
+    }
+}
+
+pub struct MultiBorrow;
+
 #[cfg(test)]
 mod tests {
     use super::*;

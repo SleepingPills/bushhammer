@@ -7,12 +7,8 @@ extern crate t51core;
 use criterion::black_box;
 use criterion::Criterion;
 use indexmap::IndexMap;
-use std::any::TypeId;
-use std::sync::atomic::AtomicI64;
-use std::sync::Arc;
-use t51core::sync::RwCell;
-use std::sync::RwLock;
-use indexmap::map::Iter;
+use rand::prelude::*;
+use std::marker::PhantomData;
 
 pub struct Indexer<'a> {
     entity_map: &'a IndexMap<usize, (usize, usize, usize)>,
@@ -47,36 +43,47 @@ impl<'a> Indexer<'a> {
     }
 }
 
+pub struct V3 {
+    x: f32,
+    y: f32,
+    z: f32,
+}
+
 pub struct Iterable<'a> {
-    entities: Iter<'a, usize, (usize, usize, usize)>,
-    comp_a: *const i32,
-    comp_b: *const u64,
-    comp_c: *mut u64,
+    len: usize,
+    counter: usize,
+    entities: *const (),
+    comps: (*const i32, *const V3, *mut V3),
+    _x: PhantomData<&'a usize>,
 }
 
 impl<'a> Iterator for Iterable<'a> {
-    type Item = (&'a i32, &'a u64, &'a mut u64);
-    #[inline(always)]
-    fn next(&mut self) -> Option<(&'a i32, &'a u64, &'a mut u64)> {
-        match self.entities.next() {
-            Some((id, &(comp_0, comp_1, comp_2))) => Some(unsafe {
-                (
-                    &*self.comp_a.add(comp_0),
-                    &*self.comp_b.add(comp_1),
-                    &mut *self.comp_c.add(comp_2),
-                )
-            }),
-            _ => None,
-        }
-    }
+    type Item = (&'a i32, &'a V3, &'a mut V3);
 
-    fn size_hint(&self) -> (usize, Option<usize>) {
-        self.entities.size_hint()
+    #[inline]
+    fn next(&mut self) -> Option<(&'a i32, &'a V3, &'a mut V3)> {
+        unsafe {
+            if self.counter < self.len {
+                let bucket = &*(self.entities as *const (usize, usize, usize)).add(self.counter);
+
+                self.counter += 1;
+
+                Some((
+                    &*self.comps.0.add(bucket.0),
+                    &*self.comps.1.add(bucket.1),
+                    &mut *self.comps.2.add(bucket.2),
+                ))
+            } else {
+                None
+            }
+        }
     }
 }
 
 impl<'a> ExactSizeIterator for Iterable<'a> {
-
+    fn len(&self) -> usize {
+        self.len
+    }
 }
 
 struct BenchData {
@@ -213,40 +220,37 @@ fn fluent_bench(c: &mut Criterion) {
 }
 
 fn iter_loop_bench(c: &mut Criterion) {
-    let mut entity_map: IndexMap<usize, (usize, usize, usize)> = IndexMap::new();
+    let mut entities: Vec<(usize, usize, usize)> = Vec::new();
     let mut v1 = Vec::new();
     let mut v2 = Vec::new();
     let mut v3 = Vec::new();
 
-    for i in 0..1000000 {
-        entity_map.insert(i, (i, i, i));
+    for i in 0..5000 {
+        entities.push((i, i, i));
         v1.push(i as i32);
-        v2.push(i as u64);
-        v3.push(i as u64);
+        v2.push(V3{x: i as f32, y: i as f32, z: i as f32});
+        v3.push(V3{x: 0f32, y: 0f32, z: 0f32});
     }
-
-    let mut data = BenchData {
-        entity_map,
-        comp_a: v1,
-        comp_b: v2,
-        comp_c: v3,
-    };
 
     c.bench_function("iterloop 1", move |b| {
         b.iter(|| {
             let iter = Iterable {
-                entities: data.entity_map.iter(),
-                comp_a: data.comp_a.as_ptr(),
-                comp_b: data.comp_b.as_ptr(),
-                comp_c: data.comp_c.as_mut_ptr(),
+                len: entities.len(),
+                counter: 0,
+                entities: entities.as_ptr() as *const (),
+                comps: (v1.as_ptr(), v2.as_ptr(),  v3.as_mut_ptr()),
+                _x: PhantomData,
             };
 
-            let mut d = 0u64;
+            let mut d = 0f32;
 
             for (a, b, c) in iter {
                 if *a % 2 == 0 {
-                    let val = *a as u64 + *b + *c;
-                    d += val;
+                    c.x = (*a as f32) * b.x;
+                    c.y = (*a as f32) * b.y;
+                    c.z = (*a as f32) * b.z;
+
+                    d += c.x + c.y + c.z;
                 }
             }
 
@@ -255,44 +259,56 @@ fn iter_loop_bench(c: &mut Criterion) {
     });
 }
 
-fn iter_fluent_bench(c: &mut Criterion) {
-    let mut entity_map: IndexMap<usize, (usize, usize, usize)> = IndexMap::new();
+fn iter_loop_rand_bench(c: &mut Criterion) {
+    let mut entities: Vec<(usize, usize, usize)> = Vec::new();
     let mut v1 = Vec::new();
     let mut v2 = Vec::new();
     let mut v3 = Vec::new();
 
-    for i in 0..1000000 {
-        entity_map.insert(i, (i, i, i));
-        v1.push(i as i32);
-        v2.push(i as u64);
-        v3.push(i as u64);
+    let mut rng = thread_rng();
+
+    for i in 0..5000 {
+        let idx = (
+            rng.gen_range::<usize>(0, 9999),
+            rng.gen_range::<usize>(0, 9999),
+            rng.gen_range::<usize>(0, 9999),
+        );
+        entities.push(idx);
     }
 
-    let mut data = BenchData {
-        entity_map,
-        comp_a: v1,
-        comp_b: v2,
-        comp_c: v3,
-    };
+    for i in 0..10000 {
+        v1.push(i as i32);
+        v2.push(V3{x: i as f32, y: i as f32, z: i as f32});
+        v3.push(V3{x: 0f32, y: 0f32, z: 0f32});
+    }
 
-    c.bench_function("iterfluent 1", move |b| {
+    c.bench_function("iterloop 1", move |b| {
         b.iter(|| {
             let iter = Iterable {
-                entities: data.entity_map.iter(),
-                comp_a: data.comp_a.as_ptr(),
-                comp_b: data.comp_b.as_ptr(),
-                comp_c: data.comp_c.as_mut_ptr(),
+                len: entities.len(),
+                counter: 0,
+                entities: entities.as_ptr() as *const (),
+                comps: (v1.as_ptr(), v2.as_ptr(),  v3.as_mut_ptr()),
+                _x: PhantomData,
             };
 
-            let d: u64 = iter.filter(|(a, _b, _c)| *a % 2 == 0)
-                .map(|(a, b, c)| *a as u64 + *b + *c)
-                .sum();
+            let mut d = 0f32;
 
+            for (a, b, c) in iter {
+                if *a % 2 == 0 {
+                    c.x = (*a as f32) * b.x;
+                    c.y = (*a as f32) * b.y;
+                    c.z = (*a as f32) * b.z;
+
+                    d += c.x + c.y + c.z;
+                }
+            }
 
             black_box(d);
         })
     });
 }
 
-criterion_group!(benches, for_each_bench, loop_bench, fluent_bench, iter_loop_bench, iter_fluent_bench);
+// for_each_bench, loop_bench, fluent_bench,
+criterion_group!(benches, iter_loop_bench, iter_loop_rand_bench);
 criterion_main!(benches);

@@ -37,6 +37,7 @@ pub trait Indexable {
 
 pub trait Query {
     type DataPtr: Indexable;
+    type DataType;
 
     fn len(&self) -> usize;
     fn unwrap(&self) -> Self::DataPtr;
@@ -247,6 +248,7 @@ pub mod store {
 
     impl<'a, T: 'a> Query for Read<'a, T> {
         type DataPtr = SharedConst<'a, T>;
+        type DataType = T;
 
         #[inline]
         fn len(&self) -> usize {
@@ -266,6 +268,7 @@ pub mod store {
 
     impl<'a, T: 'a> Query for Write<'a, T> {
         type DataPtr = SharedMut<'a, T>;
+        type DataType = T;
 
         #[inline]
         fn len(&self) -> usize {
@@ -292,11 +295,12 @@ pub trait Joined {
     fn len(&self) -> usize;
     fn get_by_index(&self, idx: usize) -> Self::ItemTup;
     fn get_ptr_tup(&self) -> Self::PtrTup;
+    fn get_comp_ids() -> Vec<ComponentId>;
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
 pub mod join {
-    use super::{Indexable, IndexablePtrTup, Joined, Query};
+    use super::{ComponentId, Indexable, IndexablePtrTup, Joined, Query};
     use std::ptr::NonNull;
 
     macro_rules! ptr_tup {
@@ -328,7 +332,8 @@ pub mod join {
         ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> Joined for ($($field_type),*,)
             where
-                $($field_type: Query + Indexable + From<NonNull<()>>),*
+                $($field_type: Query + Indexable + From<NonNull<()>>),*,
+                $($field_type::DataType: 'static),*
             {
                 type ItemTup = ($($field_type::Item),*,);
                 type PtrTup = ($($field_type::DataPtr),*,);
@@ -354,6 +359,11 @@ pub mod join {
                 #[inline]
                 fn get_ptr_tup(&self) -> ($($field_type::DataPtr),*,) {
                     ($(self.$field_seq.unwrap()),*,)
+                }
+
+                #[inline]
+                fn get_comp_ids() -> Vec<ComponentId> {
+                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
                 }
 
                 #[inline]

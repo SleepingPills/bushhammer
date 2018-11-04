@@ -12,12 +12,22 @@ pub struct RwCell<T> {
     guard: Arc<AtomicI64>,
 }
 
+type GuardCell = RwCell<u8>;
+
 impl<T> RwCell<T> {
     #[inline]
     pub fn new(item: T, guard: Arc<AtomicI64>) -> RwCell<T> {
         RwCell {
             item: UnsafeCell::new(item),
             guard,
+        }
+    }
+
+    #[inline]
+    pub fn guard() -> GuardCell {
+        RwCell {
+            item: UnsafeCell::new(0),
+            guard: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -123,15 +133,38 @@ impl<T> DerefMut for RwGuard<T> {
     }
 }
 
-pub struct MultiLock;
+pub enum Access {
+    Read(Arc<GuardCell>),
+    Write(Arc<GuardCell>),
+}
 
-impl MultiLock {
-    pub fn acquire(&self) -> MultiBorrow {
-        unimplemented!()
+impl Access {
+    fn acquire(&self) -> Box<Drop> {
+        match self {
+            Access::Read(access) => Box::new(access.read()),
+            Access::Write(access) => Box::new(access.write()),
+        }
     }
 }
 
-pub struct MultiBorrow;
+pub struct MultiLock {
+    locks: Vec<Access>,
+}
+
+impl MultiLock {
+    pub fn acquire(&self) -> MultiBorrow {
+        MultiBorrow {
+            _borrows: self.locks.iter().map(|lock| lock.acquire()).collect(),
+        }
+    }
+}
+
+pub struct MultiBorrow {
+    _borrows: Vec<Box<Drop>>,
+}
+
+unsafe impl Sync for MultiBorrow {}
+unsafe impl Send for MultiBorrow {}
 
 #[cfg(test)]
 mod tests {

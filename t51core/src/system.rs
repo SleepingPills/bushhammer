@@ -1,32 +1,91 @@
 use crate::entity::{Entity, EntityStore};
-use crate::object::{ComponentId, EntityId, SystemId};
-use crate::registry::Registry;
+use crate::object::{ComponentId, EntityId, BundleId};
 use crate::sync::{MultiBorrow, MultiLock};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::ptr::NonNull;
 
 pub trait System {
-    fn run(&mut self, entities: EntityStore);
+    type Data: Joined;
 
-    #[allow(unused_variables)]
-    fn init(&mut self, components: &Registry<ComponentId>, systems: &Registry<SystemId>) {}
-    #[allow(unused_variables)]
-    fn entity_added(&mut self, entity: &Entity) {}
-    #[allow(unused_variables)]
-    fn entity_removed(&mut self, id: EntityId) {}
+    fn run(&mut self, ctx: support::Context<Self::Data>, entities: EntityStore);
 }
 
-// TODO: Implement in macro
-pub trait ManagedSystem: System {
+pub struct SystemData<T>
+    where
+        T: Joined,
+{
+    bundles: IndexMap<BundleId, support::DataBundle<T>>,
+    entity_map: HashMap<EntityId, BundleId>,
+    lock: MultiLock,
+}
+
+impl<T> SystemData<T>
+    where
+        T: Joined,
+{
+    pub fn context(&self) -> support::Context<T> {
+        support::Context::new(&self.bundles, &self.entity_map, self.lock.acquire())
+    }
+}
+
+pub struct SystemEntry<T>
+    where
+        T: System,
+{
+    system: T,
+    data: SystemData<T::Data>,
+}
+
+pub trait SystemRuntime {
+    fn run(&mut self, entities: EntityStore);
     fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
+    fn update_entity_bundle(&mut self, entity: &Entity);
+    fn add_bundle(&mut self, bundle: support::BundleDef);
+    fn remove_bundle(&mut self, id: BundleId);
+    fn get_required_components(&self) -> Vec<ComponentId>;
 }
 
-// TODO: Implement in macro
-pub trait BuildableSystem: ManagedSystem {
-    fn new(components: &Registry<ComponentId>) -> Self;
-    fn required_components() -> Vec<ComponentId>;
+impl<T> SystemRuntime for SystemEntry<T>
+    where
+        T: System,
+{
+    #[inline]
+    fn run(&mut self, entities: EntityStore) {
+        self.system.run(self.data.context(), entities);
+    }
+
+    #[inline]
+    fn add_entity(&mut self, entity: &Entity) {
+        self.data.entity_map.insert(entity.id, entity.bundle_id);
+    }
+
+    #[inline]
+    fn remove_entity(&mut self, id: EntityId) {
+        self.data.entity_map.remove(&id);
+    }
+
+    #[inline]
+    fn update_entity_bundle(&mut self, entity: &Entity) {
+        self.data.entity_map.insert(entity.id, entity.bundle_id);
+    }
+
+    #[inline]
+    fn add_bundle(&mut self, bundle: support::BundleDef) {
+        let data_bundle = support::DataBundle::new(bundle);
+        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
+    }
+
+    #[inline]
+    fn remove_bundle(&mut self, id: BundleId) {
+        self.data.bundles.remove(&id);
+    }
+
+    #[inline]
+    fn get_required_components(&self) -> Vec<ComponentId> {
+        T::Data::get_comp_ids()
+    }
 }
 
 pub trait Indexable {
@@ -48,95 +107,6 @@ pub trait IndexablePtrTup {
     type ItemTup;
 
     fn index(&self, idx: usize) -> Self::ItemTup;
-}
-
-pub mod runtime {
-    use super::support::{BundleDef, Context, DataBundle};
-    use super::{ComponentId, Entity, EntityStore, HashMap, IndexMap, Joined, MultiLock};
-    use crate::object::{BundleId, EntityId};
-
-    pub trait System {
-        type Data: Joined;
-
-        fn run(&mut self, ctx: Context<Self::Data>, entities: EntityStore);
-    }
-
-    pub struct SystemData<T>
-    where
-        T: Joined,
-    {
-        bundles: IndexMap<BundleId, DataBundle<T>>,
-        entity_map: HashMap<EntityId, BundleId>,
-        lock: MultiLock,
-    }
-
-    impl<T> SystemData<T>
-    where
-        T: Joined,
-    {
-        pub fn context(&self) -> Context<T> {
-            Context::new(&self.bundles, &self.entity_map, self.lock.acquire())
-        }
-    }
-
-    pub struct SystemEntry<T>
-    where
-        T: System,
-    {
-        system: T,
-        data: SystemData<T::Data>,
-    }
-
-    pub trait SystemRuntime {
-        fn run(&mut self, entities: EntityStore);
-        fn add_entity(&mut self, entity: Entity);
-        fn remove_entity(&mut self, id: EntityId);
-        fn update_entity_bundle(&mut self, entity: Entity);
-        fn add_bundle(&mut self, bundle: BundleDef);
-        fn remove_bundle(&mut self, id: BundleId);
-        fn get_required_components(&self) -> Vec<ComponentId>;
-    }
-
-    impl<T> SystemRuntime for SystemEntry<T>
-    where
-        T: System,
-    {
-        #[inline]
-        fn run(&mut self, entities: EntityStore) {
-            self.system.run(self.data.context(), entities);
-        }
-
-        #[inline]
-        fn add_entity(&mut self, entity: Entity) {
-            self.data.entity_map.insert(entity.id, entity.bundle_id);
-        }
-
-        #[inline]
-        fn remove_entity(&mut self, id: EntityId) {
-            self.data.entity_map.remove(&id);
-        }
-
-        #[inline]
-        fn update_entity_bundle(&mut self, entity: Entity) {
-            self.data.entity_map.insert(entity.id, entity.bundle_id);
-        }
-
-        #[inline]
-        fn add_bundle(&mut self, bundle: BundleDef) {
-            let data_bundle = DataBundle::new(bundle);
-            self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
-        }
-
-        #[inline]
-        fn remove_bundle(&mut self, id: BundleId) {
-            self.data.bundles.remove(&id);
-        }
-
-        #[inline]
-        fn get_required_components(&self) -> Vec<ComponentId> {
-            T::Data::get_comp_ids()
-        }
-    }
 }
 
 pub mod store {

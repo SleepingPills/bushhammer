@@ -4,17 +4,16 @@ use crate::entity;
 use crate::object::{ComponentId, SystemId, EntityId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
-use crate::system::{BuildableSystem, ManagedSystem};
 use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::iter::FromIterator;
 use std::sync::Arc;
+use crate::system::SystemRuntime;
 
 pub struct World {
     entities: SlotPool<entity::Entity>,
     components: Registry<ComponentId>,
-    systems: Registry<SystemId>,
+    systems: IndexMap<SystemId, Arc<RwCell<Box<SystemRuntime>>>>,
     tx_queues: Arc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
     main_queue: Vec<entity::Transaction>,
     comp_sys: HashMap<ComponentId, HashSet<SystemId>>,
@@ -26,7 +25,7 @@ impl World {
         World {
             entities: SlotPool::new(),
             components: Registry::new(),
-            systems: Registry::new(),
+            systems: IndexMap::new(),
             tx_queues: Arc::new(IndexMap::new()),
             main_queue: Vec::new(),
             comp_sys: HashMap::new(),
@@ -37,10 +36,8 @@ impl World {
 
 impl World {
     pub fn run_systems(&mut self) {
-        let systems = self.systems.iter_mut::<ManagedSystem>();
-
-        // TODO: Turn this into a parallelized SEDA execution
-        for (id, mut sys) in systems {
+        for (id, cell) in self.systems.iter() {
+            let mut sys = cell.write();
             if let Some(tx_queue) = self.tx_queues.get(id) {
                 let mut tx = tx_queue.write();
                 sys.run(entity::EntityStore::new(
@@ -87,7 +84,7 @@ impl World {
             entity::Transaction::RemoveEnt(id) => {
                 if let Some(entity) = self.entities.reclaim(id) {
                     for sys_id in entity.systems.iter() {
-                        let mut system = self.systems.get_trait::<ManagedSystem>(sys_id).write();
+                        let mut system = self.systems[sys_id].write();
                         system.remove_entity(entity.id)
                     }
                     for (comp_id, index) in entity.components.iter() {
@@ -112,6 +109,7 @@ impl World {
                     entity.components.insert(comp_id, index);
                 }
                 entity::Step::AddCompJson((comp_id, json)) => {
+                    // TODO: Change so that we notify the system when the entity changes bundles.
                     let mut comp_manager = self.components.get_trait::<ComponentManager>(&comp_id).write();
                     let index = comp_manager.add_component_json(comp_id, json);
                     entity.add_component(comp_id, index);
@@ -126,11 +124,12 @@ impl World {
                         }
                     }
 
-                    let mut system = self.systems.get_trait::<ManagedSystem>(&sys_id).write();
+                    let mut system = self.systems[&sys_id].write();
                     system.add_entity(entity);
                     entity.add_system(sys_id);
                 }
                 entity::Step::RemoveComp(comp_id) => {
+                    // TODO: Change so that we notify the system when the entity changes bundles.
                     // Panic in case the component to be removed is required by a system
                     for sys_id in &self.comp_sys[&comp_id] {
                         if entity.systems.contains(&sys_id) {
@@ -148,7 +147,7 @@ impl World {
                 }
                 entity::Step::RemoveSys(sys_id) => {
                     if entity.remove_system(sys_id) {
-                        let mut system = self.systems.get_trait::<ManagedSystem>(&sys_id).write();
+                        let mut system = self.systems[&sys_id].write();
                         system.remove_entity(entity.id);
                     }
                 }
@@ -197,28 +196,25 @@ impl World {
     }
 
     #[allow(unused_variables)]
-    pub fn register_system<T>(&mut self, id: SystemId)
-    where
-        T: 'static + BuildableSystem,
-    {
-        let sys_id = SystemId::new::<T>();
-
-        // Build the system and run the init callback
-        let mut system = T::new(&self.components);
-        system.init(&self.components, &self.systems);
-
-        // Register the system and core trait
-        self.systems.register(sys_id, system);
-        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
-
-        // Add system dependencies
-        let required_components = T::required_components();
-
-        for &component_id in required_components.iter() {
-            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
-            entry.insert(sys_id);
-        }
-
-        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
+    pub fn register_system<T>(&mut self, id: SystemId) {
+//        let sys_id = SystemId::new::<T>();
+//
+//        // Build the system and run the init callback
+//        let mut system = T::new(&self.components);
+//        system.init(&self.components, &self.systems);
+//
+//        // Register the system and core trait
+//        self.systems.register(sys_id, system);
+//        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
+//
+//        // Add system dependencies
+//        let required_components = T::required_components();
+//
+//        for &component_id in required_components.iter() {
+//            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
+//            entry.insert(sys_id);
+//        }
+//
+//        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
     }
 }

@@ -73,7 +73,7 @@ impl World {
     fn apply_transaction(&mut self, tx: entity::Transaction) {
         match tx {
             entity::Transaction::AddEnt(steps) => {
-                let id = self.create_entity();
+                let id = self.create_entity_instance();
 
                 for step in steps.steps {
                     self.apply_step(id, step);
@@ -157,7 +157,7 @@ impl World {
     }
 
     #[inline]
-    fn create_entity(&mut self) -> EntityId {
+    fn create_entity_instance(&mut self) -> EntityId {
         let id = self.entities.peek_index();
         self.entities.push(entity::Entity::new(id))
     }
@@ -165,7 +165,7 @@ impl World {
 
 impl World {
     #[inline]
-    pub fn new_entity(&mut self) -> entity::Builder {
+    pub fn create_entity(&mut self) -> entity::Builder {
         entity::Builder::new(&self.comp_sys, &self.sys_comp, &mut self.main_queue)
     }
 

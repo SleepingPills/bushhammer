@@ -34,7 +34,7 @@ impl<T> RwCell<T> {
     #[inline]
     pub fn guard() -> GuardCell {
         RwCell {
-            item: UnsafeCell::new(0),
+            item: UnsafeCell::new(0u8),
             guard: Arc::new(AtomicI64::new(0)),
         }
     }
@@ -160,6 +160,10 @@ pub struct MultiLock {
 }
 
 impl MultiLock {
+    pub fn new(locks: Vec<Access>) -> MultiLock {
+        MultiLock { locks }
+    }
+
     pub fn acquire(&self) -> MultiBorrow {
         MultiBorrow {
             _borrows: self.locks.iter().map(|lock| lock.acquire()).collect(),
@@ -210,5 +214,38 @@ mod tests {
         let e = lock.read();
 
         assert_eq!(*e, 10);
+    }
+
+    #[test]
+    fn test_multilock() {
+        let cell1 = Arc::new(GuardCell::guard());
+        let cell2 = Arc::new(GuardCell::guard());
+        let cell3 = Arc::new(GuardCell::guard());
+
+        let lock1 = MultiLock::new(vec![
+            Access::Read(cell1.clone()),
+            Access::Read(cell2.clone()),
+            Access::Read(cell3.clone()),
+        ]);
+
+        let lock2 = MultiLock::new(vec![Access::Read(cell1), Access::Read(cell2), Access::Read(cell3)]);
+
+        // All locks are read-only and can therefore be acquired
+        let _guard1 = lock1.acquire();
+        let _guard2 = lock2.acquire();
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to acquire read lock when a write lock is already in effect")]
+    fn test_multilock_fail() {
+        let cell1 = Arc::new(GuardCell::guard());
+        let cell2 = Arc::new(GuardCell::guard());
+
+        let lock1 = MultiLock::new(vec![Access::Read(cell1.clone()), Access::Write(cell2.clone())]);
+        let lock2 = MultiLock::new(vec![Access::Read(cell2)]);
+
+        // Fails while trying to acquire cell2 for both read and write.
+        let _guard1 = lock1.acquire();
+        let _guard2 = lock2.acquire();
     }
 }

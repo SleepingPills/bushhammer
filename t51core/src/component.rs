@@ -1,5 +1,6 @@
 use crate::alloc::VoidPtr;
 use crate::object::{BundleId, ComponentId, EntityId};
+use crate::system::support::BundleDef;
 use std::collections::HashMap;
 
 pub struct ComponentStore<T> {
@@ -7,23 +8,25 @@ pub struct ComponentStore<T> {
 }
 
 pub trait Store {
-    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr);
-    fn add_component_json(&mut self, id: ComponentId, json: String);
+    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr) -> usize;
+    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize;
 
     unsafe fn get_vec_ptr(&self) -> VoidPtr;
 }
 
 impl<T: 'static> Store for ComponentStore<T> {
     #[inline]
-    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr) {
+    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr) -> usize {
         unsafe {
             let instance = *Box::from_raw(ptr.cast::<T>().as_ptr());
+            let index = self.data.len();
             self.data.push(instance);
+            index
         }
     }
 
     #[inline]
-    fn add_component_json(&mut self, id: ComponentId, json: String) {
+    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize {
         unimplemented!()
     }
 
@@ -32,8 +35,6 @@ impl<T: 'static> Store for ComponentStore<T> {
         VoidPtr::new_unchecked(&self.data as *const _ as *mut ())
     }
 }
-
-pub struct BundleDef(pub(crate) BundleId, pub(crate) *const HashMap<EntityId, usize>, pub(crate) Vec<VoidPtr>);
 
 pub struct ComponentBundle {
     id: BundleId,
@@ -56,6 +57,8 @@ impl Bundle for ComponentBundle {
         }
     }
 }
+
+pub struct BundleRegistry {}
 
 pub trait ComponentManager {
     fn add_component(&mut self, id: ComponentId, ptr: *const ()) -> usize;

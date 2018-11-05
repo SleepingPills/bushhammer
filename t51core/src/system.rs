@@ -1,5 +1,4 @@
 use crate::alloc::VoidPtr;
-use crate::component::BundleDef;
 use crate::entity::{Entity, EntityStore};
 use crate::object::{BundleId, ComponentId, EntityId};
 use crate::sync::{MultiBorrow, MultiLock};
@@ -43,7 +42,7 @@ pub trait SystemRuntime {
     fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
     fn update_entity_bundle(&mut self, entity: &Entity);
-    fn add_bundle(&mut self, bundle: BundleDef);
+    fn add_bundle(&mut self, bundle: support::BundleDef);
     fn remove_bundle(&mut self, id: BundleId);
     fn get_required_components(&self) -> Vec<ComponentId>;
 }
@@ -73,7 +72,7 @@ where
     }
 
     #[inline]
-    fn add_bundle(&mut self, bundle: BundleDef) {
+    fn add_bundle(&mut self, bundle: support::BundleDef) {
         let data_bundle = support::DataBundle::new(bundle);
         self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
     }
@@ -361,9 +360,15 @@ pub mod join {
 }
 
 pub mod support {
-    use super::{BundleDef, HashMap, IndexMap, IndexablePtrTup, Joined, MultiBorrow};
+    use super::{HashMap, IndexMap, IndexablePtrTup, Joined, MultiBorrow, VoidPtr};
     use crate::object::{BundleId, EntityId};
     use indexmap::map::Values;
+
+    pub struct BundleDef(
+        pub(crate) BundleId,
+        pub(crate) *const HashMap<EntityId, usize>,
+        pub(crate) Vec<VoidPtr>,
+    );
 
     pub struct DataBundle<T>
     where
@@ -380,8 +385,11 @@ pub mod support {
     {
         #[inline]
         pub fn new(bundle: BundleDef) -> DataBundle<T> {
-            let BundleDef(id, entities, data) = bundle;
-            DataBundle { id, entities, data: T::reify(&data) }
+            DataBundle {
+                id: bundle.0,
+                entities: bundle.1,
+                data: T::reify(&bundle.2),
+            }
         }
 
         #[inline]

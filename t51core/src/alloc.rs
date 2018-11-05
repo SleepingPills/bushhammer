@@ -1,3 +1,7 @@
+use std::ptr::NonNull;
+
+pub(crate) type VoidPtr = NonNull<()>;
+
 /// A pool allocator that keeps all items in an efficient dense vector. New elements will be
 /// used to fill up holes created by previous reclamation.
 #[derive(Debug)]
@@ -34,12 +38,12 @@ impl<T> VecPool<T> {
     }
 
     #[inline]
-    pub unsafe fn get_store_ptr(&self) -> *const T {
+    pub unsafe fn get_buffer_ptr(&self) -> *const T {
         self.store.as_ptr()
     }
 
     #[inline]
-    pub unsafe fn get_store_mut_ptr(&mut self) -> *mut T {
+    pub unsafe fn get_buffer_mut_ptr(&mut self) -> *mut T {
         self.store.as_mut_ptr()
     }
 }
@@ -69,14 +73,14 @@ impl<T> SlotPool<T> {
     #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         if index >= self.store.len() {
-            return None
+            return None;
         }
 
         unsafe {
             let slot = self.store.get_unchecked(index);
             match slot {
                 Some(value) => Some(&value),
-                _ => None
+                _ => None,
             }
         }
     }
@@ -85,14 +89,14 @@ impl<T> SlotPool<T> {
     #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         if index >= self.store.len() {
-            return None
+            return None;
         }
 
         unsafe {
             let slot = self.store.get_unchecked_mut(index);
             match slot {
                 Some(ref mut value) => Some(value),
-                _ => None
+                _ => None,
             }
         }
     }
@@ -117,7 +121,7 @@ impl<T> SlotPool<T> {
     pub fn peek_index(&self) -> usize {
         match self.queue.last() {
             Some(index) => *index,
-            _ => self.store.len()
+            _ => self.store.len(),
         }
     }
 }

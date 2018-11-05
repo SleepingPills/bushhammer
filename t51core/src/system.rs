@@ -1,9 +1,10 @@
+use crate::alloc::VoidPtr;
+use crate::component::BundleDef;
 use crate::entity::{Entity, EntityStore};
-use crate::object::{ComponentId, EntityId, BundleId};
+use crate::object::{BundleId, ComponentId, EntityId};
 use crate::sync::{MultiBorrow, MultiLock};
 use indexmap::IndexMap;
 use std::collections::HashMap;
-use std::ptr::NonNull;
 
 pub trait System {
     type Data: Joined;
@@ -12,8 +13,8 @@ pub trait System {
 }
 
 pub struct SystemData<T>
-    where
-        T: Joined,
+where
+    T: Joined,
 {
     bundles: IndexMap<BundleId, support::DataBundle<T>>,
     entity_map: HashMap<EntityId, BundleId>,
@@ -21,8 +22,8 @@ pub struct SystemData<T>
 }
 
 impl<T> SystemData<T>
-    where
-        T: Joined,
+where
+    T: Joined,
 {
     pub fn context(&self) -> support::Context<T> {
         support::Context::new(&self.bundles, &self.entity_map, self.lock.acquire())
@@ -30,8 +31,8 @@ impl<T> SystemData<T>
 }
 
 pub struct SystemEntry<T>
-    where
-        T: System,
+where
+    T: System,
 {
     system: T,
     data: SystemData<T::Data>,
@@ -42,14 +43,14 @@ pub trait SystemRuntime {
     fn add_entity(&mut self, entity: &Entity);
     fn remove_entity(&mut self, id: EntityId);
     fn update_entity_bundle(&mut self, entity: &Entity);
-    fn add_bundle(&mut self, bundle: support::BundleDef);
+    fn add_bundle(&mut self, bundle: BundleDef);
     fn remove_bundle(&mut self, id: BundleId);
     fn get_required_components(&self) -> Vec<ComponentId>;
 }
 
 impl<T> SystemRuntime for SystemEntry<T>
-    where
-        T: System,
+where
+    T: System,
 {
     #[inline]
     fn run(&mut self, entities: EntityStore) {
@@ -72,7 +73,7 @@ impl<T> SystemRuntime for SystemEntry<T>
     }
 
     #[inline]
-    fn add_bundle(&mut self, bundle: support::BundleDef) {
+    fn add_bundle(&mut self, bundle: BundleDef) {
         let data_bundle = support::DataBundle::new(bundle);
         self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
     }
@@ -110,7 +111,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Indexable, Query};
+    use super::{Indexable, Query, VoidPtr};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -164,9 +165,9 @@ pub mod store {
 
     impl<'a, T> Read<'a, T> {
         #[inline]
-        fn new(ptr: *const ()) -> Read<'a, T> {
+        fn new(ptr: VoidPtr) -> Read<'a, T> {
             Read {
-                ptr: SharedConst::new(ptr as *const Vec<T>),
+                ptr: SharedConst::new(ptr.cast::<Vec<T>>().as_ptr()),
             }
         }
 
@@ -178,9 +179,9 @@ pub mod store {
 
     impl<'a, T> Write<'a, T> {
         #[inline]
-        fn new(ptr: *const ()) -> Write<'a, T> {
+        fn new(ptr: VoidPtr) -> Write<'a, T> {
             Write {
-                ptr: SharedMut::new(ptr as *mut Vec<T>),
+                ptr: SharedMut::new(ptr.cast::<Vec<T>>().as_ptr()),
             }
         }
 
@@ -190,17 +191,17 @@ pub mod store {
         }
     }
 
-    impl<'a, T> From<ptr::NonNull<()>> for Read<'a, T> {
+    impl<'a, T> From<VoidPtr> for Read<'a, T> {
         #[inline]
-        fn from(ptr: ptr::NonNull<()>) -> Self {
-            Read::new(ptr.as_ptr())
+        fn from(ptr: VoidPtr) -> Self {
+            Read::new(ptr)
         }
     }
 
-    impl<'a, T> From<ptr::NonNull<()>> for Write<'a, T> {
+    impl<'a, T> From<VoidPtr> for Write<'a, T> {
         #[inline]
-        fn from(ptr: ptr::NonNull<()>) -> Self {
-            Write::new(ptr.as_ptr())
+        fn from(ptr: VoidPtr) -> Self {
+            Write::new(ptr)
         }
     }
 
@@ -267,7 +268,7 @@ pub trait Joined {
     type ItemTup;
     type PtrTup: IndexablePtrTup;
 
-    fn reify(bundle: &Vec<NonNull<()>>) -> Self;
+    fn reify(bundle: &Vec<VoidPtr>) -> Self;
     fn len(&self) -> usize;
     fn get_by_index(&self, idx: usize) -> Self::ItemTup;
     fn get_ptr_tup(&self) -> Self::PtrTup;
@@ -276,8 +277,7 @@ pub trait Joined {
 }
 
 pub mod join {
-    use super::{ComponentId, Indexable, IndexablePtrTup, Joined, Query};
-    use std::ptr::NonNull;
+    use super::{ComponentId, Indexable, IndexablePtrTup, Joined, Query, VoidPtr};
 
     macro_rules! ptr_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
@@ -308,14 +308,14 @@ pub mod join {
         ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> Joined for ($($field_type),*,)
             where
-                $($field_type: Query + Indexable + From<NonNull<()>>),*,
+                $($field_type: Query + Indexable + From<VoidPtr>),*,
                 $($field_type::DataType: 'static),*
             {
                 type ItemTup = ($($field_type::Item),*,);
                 type PtrTup = ($($field_type::DataPtr),*,);
 
                 #[inline]
-                fn reify(bundle: &Vec<NonNull<()>>) -> ($($field_type),*,) {
+                fn reify(bundle: &Vec<VoidPtr>) -> ($($field_type),*,) {
                     match bundle.len() {
                         $field_count => ($(bundle[$field_seq].into()),*,),
                         len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
@@ -361,18 +361,16 @@ pub mod join {
 }
 
 pub mod support {
-    use super::{HashMap, IndexMap, IndexablePtrTup, Joined, MultiBorrow, NonNull};
+    use super::{BundleDef, HashMap, IndexMap, IndexablePtrTup, Joined, MultiBorrow};
     use crate::object::{BundleId, EntityId};
     use indexmap::map::Values;
-
-    pub struct BundleDef(BundleId, NonNull<HashMap<EntityId, usize>>, Vec<NonNull<()>>);
 
     pub struct DataBundle<T>
     where
         T: Joined,
     {
         id: BundleId,
-        entities: NonNull<HashMap<EntityId, usize>>,
+        entities: *const HashMap<EntityId, usize>,
         data: T,
     }
 
@@ -382,11 +380,8 @@ pub mod support {
     {
         #[inline]
         pub fn new(bundle: BundleDef) -> DataBundle<T> {
-            DataBundle {
-                id: bundle.0,
-                entities: bundle.1,
-                data: T::reify(&bundle.2),
-            }
+            let BundleDef(id, entities, data) = bundle;
+            DataBundle { id, entities, data: T::reify(&data) }
         }
 
         #[inline]
@@ -402,7 +397,7 @@ pub mod support {
         #[inline]
         pub fn get_by_id(&self, id: EntityId) -> T::ItemTup {
             unsafe {
-                let index = self.entities.as_ref()[&id];
+                let index = (&*self.entities)[&id];
                 self.data.get_by_index(index)
             }
         }

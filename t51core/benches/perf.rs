@@ -309,6 +309,40 @@ fn iter_loop_rand_bench(c: &mut Criterion) {
     });
 }
 
+pub struct Adder;
+
+pub trait AddTwo {
+    fn add(&self, input: f32) -> f32;
+}
+
+impl AddTwo for Adder {
+    #[inline]
+    fn add(&self, input: f32) -> f32 {
+        input + 2f32
+    }
+}
+
+fn iter_boxed_and_raw(c: &mut Criterion) {
+    let adder1 = Box::new(Adder{});
+    let boxed: Box<AddTwo> = adder1;
+
+    c.bench_function("boxed", move |b| {
+        b.iter(|| {
+            let d = boxed.add(5f32);;
+            black_box(d);
+        })
+    });
+
+    let adder = Adder{};
+
+    c.bench_function("raw", move |b| {
+        b.iter(|| {
+            let d = adder.add(5f32);;
+            black_box(d);
+        })
+    });
+}
+
 // for_each_bench, loop_bench, fluent_bench,
-criterion_group!(benches, iter_loop_bench, iter_loop_rand_bench);
+criterion_group!(benches, iter_boxed_and_raw);
 criterion_main!(benches);

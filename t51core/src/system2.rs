@@ -1,6 +1,9 @@
 use crate::entity::{Entity, EntityStore};
 use crate::object::{BundleId, ComponentId, EntityId};
+use crate::sync::RwCell;
 use indexmap::IndexMap;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 pub trait System {
     type Data: SystemDef;
@@ -14,6 +17,7 @@ where
 {
     stores: T,
     bundles: IndexMap<BundleId, <T::JoinItem as Joined>::Indexer>,
+    entity_map: Arc<RwCell<HashMap<EntityId, Entity>>>,
 }
 
 impl<T> SystemData<T>
@@ -22,7 +26,7 @@ where
 {
     #[inline]
     pub fn context(&self) -> core::Context<<T as SystemDef>::JoinItem> {
-        core::Context::new(self.stores.as_joined(), &self.bundles)
+        core::Context::new(self.stores.as_joined(), &self.bundles, self.entity_map.read())
     }
 }
 
@@ -34,57 +38,56 @@ where
     data: SystemData<T::Data>,
 }
 
-
-pub trait SystemRuntime {
-    fn run(&mut self, entities: EntityStore);
-    fn add_entity(&mut self, entity: &Entity);
-    fn remove_entity(&mut self, id: EntityId);
-    fn update_entity_bundle(&mut self, entity: &Entity);
-    fn add_bundle(&mut self, bundle: support::BundleDef);
-    fn remove_bundle(&mut self, id: BundleId);
-    fn get_required_components(&self) -> Vec<ComponentId>;
-}
-
-impl<T> SystemRuntime for SystemEntry<T>
-where
-    T: System,
-{
-    #[inline]
-    fn run(&mut self, entities: EntityStore) {
-        self.system.run(&self.data, entities);
-    }
-
-    #[inline]
-    fn add_entity(&mut self, entity: &Entity) {
-        self.data.entity_map.insert(entity.id, entity.bundle_id);
-    }
-
-    #[inline]
-    fn remove_entity(&mut self, id: EntityId) {
-        self.data.entity_map.remove(&id);
-    }
-
-    #[inline]
-    fn update_entity_bundle(&mut self, entity: &Entity) {
-        self.data.entity_map.insert(entity.id, entity.bundle_id);
-    }
-
-    #[inline]
-    fn add_bundle(&mut self, bundle: support::BundleDef) {
-        let data_bundle = support::DataBundle::new(bundle);
-        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
-    }
-
-    #[inline]
-    fn remove_bundle(&mut self, id: BundleId) {
-        self.data.bundles.remove(&id);
-    }
-
-    #[inline]
-    fn get_required_components(&self) -> Vec<ComponentId> {
-        T::Data::get_comp_ids()
-    }
-}
+//pub trait SystemRuntime {
+//    fn run(&mut self, entities: EntityStore);
+//    fn add_entity(&mut self, entity: &Entity);
+//    fn remove_entity(&mut self, id: EntityId);
+//    fn update_entity_bundle(&mut self, entity: &Entity);
+//    fn add_bundle(&mut self, bundle: support::BundleDef);
+//    fn remove_bundle(&mut self, id: BundleId);
+//    fn get_required_components(&self) -> Vec<ComponentId>;
+//}
+//
+//impl<T> SystemRuntime for SystemEntry<T>
+//where
+//    T: System,
+//{
+//    #[inline]
+//    fn run(&mut self, entities: EntityStore) {
+//        self.system.run(&self.data, entities);
+//    }
+//
+//    #[inline]
+//    fn add_entity(&mut self, entity: &Entity) {
+//        self.data.entity_map.insert(entity.id, entity.bundle_id);
+//    }
+//
+//    #[inline]
+//    fn remove_entity(&mut self, id: EntityId) {
+//        self.data.entity_map.remove(&id);
+//    }
+//
+//    #[inline]
+//    fn update_entity_bundle(&mut self, entity: &Entity) {
+//        self.data.entity_map.insert(entity.id, entity.bundle_id);
+//    }
+//
+//    #[inline]
+//    fn add_bundle(&mut self, bundle: support::BundleDef) {
+//        let data_bundle = support::DataBundle::new(bundle);
+//        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
+//    }
+//
+//    #[inline]
+//    fn remove_bundle(&mut self, id: BundleId) {
+//        self.data.bundles.remove(&id);
+//    }
+//
+//    #[inline]
+//    fn get_required_components(&self) -> Vec<ComponentId> {
+//        T::Data::get_comp_ids()
+//    }
+//}
 
 pub trait Indexable {
     type Item;
@@ -94,9 +97,11 @@ pub trait Indexable {
 
 pub trait Query {
     type DataPtr: Indexable;
+    type Item;
 
     fn len(&self, section: usize) -> usize;
-    fn unwrap(&self, section: usize) -> Self::DataPtr;
+    fn get_by_coords(&self, coords: (usize, usize)) -> Self::Item;
+    fn unwrap(&mut self, section: usize) -> Self::DataPtr;
     fn null() -> Self::DataPtr;
 }
 
@@ -114,12 +119,11 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Indexable, Query, Store};
+    use super::{Arc, Indexable, Query, RwCell, Store};
     use crate::component::ComponentStore;
-    use crate::sync::{ReadGuard, RwCell, RwGuard};
+    use crate::sync::{ReadGuard, RwGuard};
     use std::marker::PhantomData;
     use std::ptr;
-    use std::sync::Arc;
 
     #[repr(transparent)]
     pub struct SharedConst<'a, T>(*const T, PhantomData<&'a ()>);
@@ -187,14 +191,19 @@ pub mod store {
 
     impl<'a, T: 'a> Query for ReadQuery<'a, T> {
         type DataPtr = SharedConst<'a, T>;
+        type Item = &'a T;
 
         #[inline]
         fn len(&self, section: usize) -> usize {
             self.store.section_len(section)
         }
 
+        fn get_by_coords(&self, coords: (usize, usize)) -> &'a T {
+            unimplemented!()
+        }
+
         #[inline]
-        fn unwrap(&self, section: usize) -> SharedConst<'a, T> {
+        fn unwrap(&mut self, section: usize) -> SharedConst<'a, T> {
             SharedConst::new(self.store.get_data_ptr(section))
         }
 
@@ -206,14 +215,19 @@ pub mod store {
 
     impl<'a, T: 'a> Query for WriteQuery<'a, T> {
         type DataPtr = SharedMut<'a, T>;
+        type Item = &'a mut T;
 
         #[inline]
         fn len(&self, section: usize) -> usize {
             self.store.section_len(section)
         }
 
+        fn get_by_coords(&self, coords: (usize, usize)) -> &'a mut T {
+            unimplemented!()
+        }
+
         #[inline]
-        fn unwrap(&self, section: usize) -> SharedMut<'a, T> {
+        fn unwrap(&mut self, section: usize) -> SharedMut<'a, T> {
             SharedMut::new(self.store.get_data_mut_ptr(section))
         }
 
@@ -256,9 +270,10 @@ pub mod store {
 
 pub trait Joined {
     type PtrTup: IndexablePtrTup;
+    type ItemTup;
     type Indexer;
 
-    fn get_ptr_tup(&self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
+    fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
@@ -310,12 +325,18 @@ pub mod join {
                 $($field_type: Query),*,
             {
                 type PtrTup = ($($field_type::DataPtr),*,);
+                type ItemTup = ($($field_type::Item),*,);
                 type Indexer = ($(_decl_system_replace_expr!($field_type usize)),*,);
 
                 #[inline]
-                fn get_ptr_tup(&self, idx: &($(_decl_system_replace_expr!($field_type usize)),*,)) -> (usize, ($($field_type::DataPtr),*,)) {
+                fn get_ptr_tup(&mut self, idx: &($(_decl_system_replace_expr!($field_type usize)),*,)) -> (usize, ($($field_type::DataPtr),*,)) {
                     (self.0.len(idx.0), ($(self.$field_seq.unwrap(idx.$field_seq)),*,))
                 }
+
+//                #[inline]
+//                fn get_by_index(&self, idx: usize) -> ($($field_type::Item),*,) {
+//                    ($(self.$field_seq.index(idx)),*,)
+//                }
 
                 #[inline]
                 unsafe fn get_zero_ptr_tup() -> ($($field_type::DataPtr),*,) {
@@ -360,11 +381,6 @@ pub mod join {
 //                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
 //                    }
 //                }
-
-//                #[inline]
-//                fn get_by_index(&self, idx: usize) -> ($($field_type::Item),*,) {
-//                    ($(self.$field_seq.index(idx)),*,)
-//                }
             }
         };
     }
@@ -380,8 +396,8 @@ pub mod join {
 }
 
 pub mod core {
-    use super::{IndexMap, IndexablePtrTup, Joined};
-    use crate::object::BundleId;
+    use super::{BundleId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
+    use crate::sync::ReadGuard;
     use indexmap::map::Values;
 
     pub struct Context<'a, T>
@@ -390,6 +406,7 @@ pub mod core {
     {
         stores: T,
         bundles: &'a IndexMap<BundleId, T::Indexer>,
+        entity_map: ReadGuard<HashMap<EntityId, Entity>>,
     }
 
     impl<'a, T> Context<'a, T>
@@ -397,16 +414,22 @@ pub mod core {
         T: Joined,
     {
         #[inline]
-        pub fn new(stores: T, bundles: &'a IndexMap<BundleId, T::Indexer>) -> Context<'a, T> {
-            Context { stores, bundles }
+        pub fn new(
+            stores: T,
+            bundles: &'a IndexMap<BundleId, T::Indexer>,
+            entity_map: ReadGuard<HashMap<EntityId, Entity>>,
+        ) -> Context<'a, T> {
+            Context {
+                stores,
+                bundles,
+                entity_map,
+            }
         }
 
-        //        #[inline]
-        //        pub fn get_by_id(&mut self, id: EntityId) -> T::ItemTup {
-        //            let bundle_id = self.entity_map[&id];
-        //            let bundle = &self.bundles[&bundle_id];
-        //            bundle.get_by_id(id)
-        //        }
+        #[inline]
+        pub fn get_entity(&mut self, id: EntityId) -> T::ItemTup {
+            unimplemented!()
+        }
     }
 
     impl<'a, T> IntoIterator for Context<'a, T>
@@ -417,7 +440,7 @@ pub mod core {
         type IntoIter = ComponentIterator<'a, T>;
 
         #[inline]
-        fn into_iter(self) -> ComponentIterator<'a, T> {
+        fn into_iter(mut self) -> ComponentIterator<'a, T> {
             let mut stream = self.bundles.values();
 
             unsafe {

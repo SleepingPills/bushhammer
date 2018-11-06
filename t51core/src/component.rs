@@ -10,6 +10,20 @@ pub struct ComponentStore<T> {
 
 impl<T> ComponentStore<T> {
     #[inline]
+    pub(crate) fn get_item(&self, (section, loc): (usize, usize)) -> &T {
+        unsafe {
+            self.data.get_unchecked(section).get_unchecked(loc)
+        }
+    }
+
+    #[inline]
+    pub(crate) fn get_item_mut(&mut self, (section, loc): (usize, usize)) -> &mut T {
+        unsafe {
+            self.data.get_unchecked_mut(section).get_unchecked_mut(loc)
+        }
+    }
+
+    #[inline]
     pub(crate) fn section_len(&self, section: usize) -> usize {
         unsafe {
             self.data.get_unchecked(section).len()
@@ -24,9 +38,9 @@ impl<T> ComponentStore<T> {
     }
 
     #[inline]
-    pub(crate) fn get_data_mut_ptr(&self, section: usize) -> *mut T {
+    pub(crate) fn get_data_mut_ptr(&mut self, section: usize) -> *mut T {
         unsafe {
-            self.data.get_unchecked(section).as_ptr() as *mut T
+            self.data.get_unchecked_mut(section).as_mut_ptr()
         }
     }
 }

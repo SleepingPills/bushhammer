@@ -11,4 +11,5 @@ pub mod prelude;
 pub mod registry;
 pub mod sync;
 pub mod system;
+pub mod system2;
 pub mod world;

@@ -38,13 +38,18 @@ impl<T> VecPool<T> {
     }
 
     #[inline]
-    pub unsafe fn get_buffer_ptr(&self) -> *const T {
-        self.store.as_ptr()
+    pub unsafe fn get_unchecked(&self, index: usize) -> &T {
+        self.store.get_unchecked(index)
     }
 
     #[inline]
-    pub unsafe fn get_buffer_mut_ptr(&mut self) -> *mut T {
-        self.store.as_mut_ptr()
+    pub unsafe fn get_unchecked_mut(&mut self, index: usize) -> &mut T {
+        self.store.get_unchecked_mut(index)
+    }
+
+    #[inline]
+    pub unsafe fn get_buffer_ptr(&self) -> *const T {
+        self.store.as_ptr()
     }
 }
 

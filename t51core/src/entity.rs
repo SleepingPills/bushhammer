@@ -15,8 +15,9 @@ pub struct Entity {
 
 
 impl Entity {
-    pub(crate) fn get_coords<T: 'static>(&self) -> ComponentCoords {
-        self.components[&ComponentId::new::<T>()]
+    #[inline]
+    pub(crate) fn get_coords(&self, comp_id: &ComponentId) -> ComponentCoords {
+        self.components[comp_id]
     }
 }
 

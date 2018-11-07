@@ -11,12 +11,12 @@ pub struct ComponentStore<T> {
 
 impl<T> ComponentStore<T> {
     #[inline]
-    pub(crate) fn get_item(&self, (section, loc): (usize, usize)) -> &T {
+    pub(crate) fn get_item(&self, (section, loc): ComponentCoords) -> &T {
         unsafe { self.data.get_unchecked(section).get_unchecked(loc) }
     }
 
     #[inline]
-    pub(crate) fn get_item_mut(&mut self, (section, loc): (usize, usize)) -> &mut T {
+    pub(crate) fn get_item_mut(&mut self, (section, loc): ComponentCoords) -> &mut T {
         unsafe { self.data.get_unchecked_mut(section).get_unchecked_mut(loc) }
     }
 

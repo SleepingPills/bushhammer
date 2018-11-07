@@ -1,4 +1,5 @@
 use crate::alloc::SlotPool;
+use crate::component::ComponentCoords;
 use crate::object::{BundleId, ComponentId, EntityId, SystemId};
 use crate::sync::RwGuard;
 use std::collections::{HashMap, HashSet};
@@ -9,42 +10,17 @@ use std::collections::{HashMap, HashSet};
 pub struct Entity {
     pub id: EntityId,
     pub bundle_id: BundleId,
-    pub components: HashMap<ComponentId, usize>,
-    pub systems: HashSet<SystemId>,
+    pub components: HashMap<ComponentId, ComponentCoords>,
 }
+
 
 impl Entity {
-    #[inline]
-    pub(crate) fn new(id: EntityId) -> Entity {
-        Entity {
-            id,
-            bundle_id: 0usize,
-            components: HashMap::new(),
-            systems: HashSet::new(),
-        }
-    }
-
-    #[inline]
-    pub(crate) fn add_component(&mut self, id: ComponentId, index: usize) {
-        self.components.insert(id, index);
-    }
-
-    #[inline]
-    pub(crate) fn add_system(&mut self, id: SystemId) {
-        self.systems.insert(id);
-    }
-
-    #[inline]
-    pub(crate) fn remove_component(&mut self, id: ComponentId) -> Option<usize> {
-        self.components.remove(&id)
-    }
-
-    #[inline]
-    pub(crate) fn remove_system(&mut self, id: SystemId) -> bool {
-        self.systems.remove(&id)
+    pub(crate) fn get_coords<T: 'static>(&self) -> ComponentCoords {
+        self.components[&ComponentId::new::<T>()]
     }
 }
 
+/*
 #[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub enum TransactionError {
     ComponentMissing(Vec<ComponentId>),
@@ -255,14 +231,14 @@ impl<'a> Editor<'a> {
         self.builder.queue.push(Transaction::EditEnt(self.entity.id, self.builder.tx));
     }
 }
-
+*/
 pub struct EntityStore<'a> {
     entities: &'a SlotPool<Entity>,
-    comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
-    sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
-    queue: &'a mut RwGuard<Vec<Transaction>>,
+//    comp_sys: &'a HashMap<ComponentId, HashSet<SystemId>>,
+//    sys_comp: &'a HashMap<SystemId, HashSet<ComponentId>>,
+//    queue: &'a mut RwGuard<Vec<Transaction>>,
 }
-
+/*
 impl<'a> EntityStore<'a> {
     #[inline]
     pub fn new(
@@ -299,3 +275,4 @@ impl<'a> EntityStore<'a> {
         self.queue.push(Transaction::RemoveEnt(id));
     }
 }
+*/

@@ -1,31 +1,38 @@
-use crate::alloc::VoidPtr;
 use crate::entity::{Entity, EntityStore};
 use crate::object::{BundleId, ComponentId, EntityId};
-use crate::sync::{MultiBorrow, MultiLock};
+use crate::component::{ComponentCoords};
+use crate::sync::RwCell;
 use indexmap::IndexMap;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub trait System {
-    type Data: Joined;
+    type Data: SystemDef;
 
-    fn run(&mut self, ctx: support::Context<Self::Data>, entities: EntityStore);
+    fn run(&mut self, data: &SystemData<Self::Data>, entities: EntityStore);
 }
 
 pub struct SystemData<T>
 where
-    T: Joined,
+    T: SystemDef,
 {
-    bundles: IndexMap<BundleId, support::DataBundle<T>>,
-    entity_map: HashMap<EntityId, BundleId>,
-    lock: MultiLock,
+    stores: T,
+    bundles: IndexMap<BundleId, <T::JoinItem as Joined>::Indexer>,
+    entity_map: Arc<RwCell<HashMap<EntityId, Entity>>>,
+    components: Vec<ComponentId>,
 }
 
 impl<T> SystemData<T>
 where
-    T: Joined,
+    T: SystemDef,
 {
-    pub fn context(&self) -> support::Context<T> {
-        support::Context::new(&self.bundles, &self.entity_map, self.lock.acquire())
+    #[inline]
+    pub fn context(&self) -> support::Context<<T as SystemDef>::JoinItem> {
+        support::Context::new(
+            self.stores.as_joined(),
+            &self.bundles,
+            self.entity_map.read(),
+        )
     }
 }
 
@@ -37,56 +44,56 @@ where
     data: SystemData<T::Data>,
 }
 
-pub trait SystemRuntime {
-    fn run(&mut self, entities: EntityStore);
-    fn add_entity(&mut self, entity: &Entity);
-    fn remove_entity(&mut self, id: EntityId);
-    fn update_entity_bundle(&mut self, entity: &Entity);
-    fn add_bundle(&mut self, bundle: support::BundleDef);
-    fn remove_bundle(&mut self, id: BundleId);
-    fn get_required_components(&self) -> Vec<ComponentId>;
-}
-
-impl<T> SystemRuntime for SystemEntry<T>
-where
-    T: System,
-{
-    #[inline]
-    fn run(&mut self, entities: EntityStore) {
-        self.system.run(self.data.context(), entities);
-    }
-
-    #[inline]
-    fn add_entity(&mut self, entity: &Entity) {
-        self.data.entity_map.insert(entity.id, entity.bundle_id);
-    }
-
-    #[inline]
-    fn remove_entity(&mut self, id: EntityId) {
-        self.data.entity_map.remove(&id);
-    }
-
-    #[inline]
-    fn update_entity_bundle(&mut self, entity: &Entity) {
-        self.data.entity_map.insert(entity.id, entity.bundle_id);
-    }
-
-    #[inline]
-    fn add_bundle(&mut self, bundle: support::BundleDef) {
-        let data_bundle = support::DataBundle::new(bundle);
-        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
-    }
-
-    #[inline]
-    fn remove_bundle(&mut self, id: BundleId) {
-        self.data.bundles.remove(&id);
-    }
-
-    #[inline]
-    fn get_required_components(&self) -> Vec<ComponentId> {
-        T::Data::get_comp_ids()
-    }
-}
+//pub trait SystemRuntime {
+//    fn run(&mut self, entities: EntityStore);
+//    fn add_entity(&mut self, entity: &Entity);
+//    fn remove_entity(&mut self, id: EntityId);
+//    fn update_entity_bundle(&mut self, entity: &Entity);
+//    fn add_bundle(&mut self, bundle: support::BundleDef);
+//    fn remove_bundle(&mut self, id: BundleId);
+//    fn get_required_components(&self) -> Vec<ComponentId>;
+//}
+//
+//impl<T> SystemRuntime for SystemEntry<T>
+//where
+//    T: System,
+//{
+//    #[inline]
+//    fn run(&mut self, entities: EntityStore) {
+//        self.system.run(&self.data, entities);
+//    }
+//
+//    #[inline]
+//    fn add_entity(&mut self, entity: &Entity) {
+//        self.data.entity_map.insert(entity.id, entity.bundle_id);
+//    }
+//
+//    #[inline]
+//    fn remove_entity(&mut self, id: EntityId) {
+//        self.data.entity_map.remove(&id);
+//    }
+//
+//    #[inline]
+//    fn update_entity_bundle(&mut self, entity: &Entity) {
+//        self.data.entity_map.insert(entity.id, entity.bundle_id);
+//    }
+//
+//    #[inline]
+//    fn add_bundle(&mut self, bundle: support::BundleDef) {
+//        let data_bundle = support::DataBundle::new(bundle);
+//        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
+//    }
+//
+//    #[inline]
+//    fn remove_bundle(&mut self, id: BundleId) {
+//        self.data.bundles.remove(&id);
+//    }
+//
+//    #[inline]
+//    fn get_required_components(&self) -> Vec<ComponentId> {
+//        T::Data::get_comp_ids()
+//    }
+//}
 
 pub trait Indexable {
     type Item;
@@ -96,11 +103,19 @@ pub trait Indexable {
 
 pub trait Query {
     type DataPtr: Indexable;
+    type Item;
+
+    fn len(&self, section: usize) -> usize;
+    fn get_by_coords(&self, coords: ComponentCoords) -> Self::Item;
+    fn unwrap(&mut self, section: usize) -> Self::DataPtr;
+    fn null() -> Self::DataPtr;
+}
+
+pub trait Store {
+    type QueryItem: Query;
     type DataType;
 
-    fn len(&self) -> usize;
-    fn unwrap(&self) -> Self::DataPtr;
-    fn null() -> Self::DataPtr;
+    fn get_query(&self) -> Self::QueryItem;
 }
 
 pub trait IndexablePtrTup {
@@ -110,7 +125,9 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Indexable, Query, VoidPtr};
+    use super::{Arc, Indexable, Query, RwCell, Store, ComponentCoords};
+    use crate::component::ComponentStore;
+    use crate::sync::{ReadGuard, RwGuard};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -153,87 +170,48 @@ pub mod store {
     }
 
     #[repr(transparent)]
-    pub struct Read<'a, T> {
-        ptr: SharedConst<'a, Vec<T>>,
+    pub struct ReadQuery<'a, T> {
+        store: ReadGuard<ComponentStore<T>>,
+        _x: PhantomData<&'a T>,
     }
 
     #[repr(transparent)]
-    pub struct Write<'a, T> {
-        ptr: SharedMut<'a, Vec<T>>,
+    pub struct WriteQuery<'a, T> {
+        store: RwGuard<ComponentStore<T>>,
+        _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Read<'a, T> {
+    impl<'a, T> ReadQuery<'a, T> {
         #[inline]
-        fn new(ptr: VoidPtr) -> Read<'a, T> {
-            Read {
-                ptr: SharedConst::new(ptr.cast::<Vec<T>>().as_ptr()),
-            }
-        }
-
-        #[inline]
-        fn deref_ptr(&self) -> &'a Vec<T> {
-            unsafe { &*(self.ptr).0 }
+        fn new(store: ReadGuard<ComponentStore<T>>) -> ReadQuery<'a, T> {
+            ReadQuery { store, _x: PhantomData }
         }
     }
 
-    impl<'a, T> Write<'a, T> {
+    impl<'a, T> WriteQuery<'a, T> {
         #[inline]
-        fn new(ptr: VoidPtr) -> Write<'a, T> {
-            Write {
-                ptr: SharedMut::new(ptr.cast::<Vec<T>>().as_ptr()),
-            }
-        }
-
-        #[inline]
-        fn deref_ptr(&self) -> &'a mut Vec<T> {
-            unsafe { &mut *(self.ptr).0 }
+        fn new(store: RwGuard<ComponentStore<T>>) -> WriteQuery<'a, T> {
+            WriteQuery { store, _x: PhantomData }
         }
     }
 
-    impl<'a, T> From<VoidPtr> for Read<'a, T> {
-        #[inline]
-        fn from(ptr: VoidPtr) -> Self {
-            Read::new(ptr)
-        }
-    }
-
-    impl<'a, T> From<VoidPtr> for Write<'a, T> {
-        #[inline]
-        fn from(ptr: VoidPtr) -> Self {
-            Write::new(ptr)
-        }
-    }
-
-    impl<'a, T: 'a> Indexable for Read<'a, T> {
+    impl<'a, T: 'a> Query for ReadQuery<'a, T> {
+        type DataPtr = SharedConst<'a, T>;
         type Item = &'a T;
 
         #[inline]
-        fn index(&self, idx: usize) -> &'a T {
-            &self.deref_ptr()[idx]
-        }
-    }
-
-    impl<'a, T: 'a> Indexable for Write<'a, T> {
-        type Item = &'a mut T;
-
-        #[inline]
-        fn index(&self, idx: usize) -> &'a mut T {
-            &mut (self.deref_ptr())[idx]
-        }
-    }
-
-    impl<'a, T: 'a> Query for Read<'a, T> {
-        type DataPtr = SharedConst<'a, T>;
-        type DataType = T;
-
-        #[inline]
-        fn len(&self) -> usize {
-            self.deref_ptr().len()
+        fn len(&self, section: usize) -> usize {
+            self.store.section_len(section)
         }
 
         #[inline]
-        fn unwrap(&self) -> SharedConst<'a, T> {
-            SharedConst::new(self.deref_ptr().as_ptr())
+        fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
+            unimplemented!()
+        }
+
+        #[inline]
+        fn unwrap(&mut self, section: usize) -> SharedConst<'a, T> {
+            SharedConst::new(self.store.get_data_ptr(section))
         }
 
         #[inline]
@@ -242,18 +220,23 @@ pub mod store {
         }
     }
 
-    impl<'a, T: 'a> Query for Write<'a, T> {
+    impl<'a, T: 'a> Query for WriteQuery<'a, T> {
         type DataPtr = SharedMut<'a, T>;
-        type DataType = T;
+        type Item = &'a mut T;
 
         #[inline]
-        fn len(&self) -> usize {
-            self.deref_ptr().len()
+        fn len(&self, section: usize) -> usize {
+            self.store.section_len(section)
         }
 
         #[inline]
-        fn unwrap(&self) -> SharedMut<'a, T> {
-            SharedMut::new(self.deref_ptr().as_mut_ptr())
+        fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
+            unimplemented!()
+        }
+
+        #[inline]
+        fn unwrap(&mut self, section: usize) -> SharedMut<'a, T> {
+            SharedMut::new(self.store.get_data_mut_ptr(section))
         }
 
         #[inline]
@@ -261,22 +244,63 @@ pub mod store {
             SharedMut::new(ptr::null_mut())
         }
     }
+
+    pub struct Read<'a, T> {
+        store: Arc<RwCell<ComponentStore<T>>>,
+        _x: PhantomData<&'a T>,
+    }
+
+    impl<'a, T> Store for Read<'a, T> {
+        type QueryItem = ReadQuery<'a, T>;
+        type DataType = T;
+
+        #[inline]
+        fn get_query(&self) -> ReadQuery<'a, T> {
+            ReadQuery::new(self.store.read())
+        }
+    }
+
+    pub struct Write<'a, T> {
+        store: Arc<RwCell<ComponentStore<T>>>,
+        _x: PhantomData<&'a T>,
+    }
+
+    impl<'a, T> Store for Write<'a, T> {
+        type QueryItem = WriteQuery<'a, T>;
+        type DataType = T;
+
+        #[inline]
+        fn get_query(&self) -> WriteQuery<'a, T> {
+            WriteQuery::new(self.store.write())
+        }
+    }
 }
 
 pub trait Joined {
-    type ItemTup;
     type PtrTup: IndexablePtrTup;
+    type ItemTup;
+    type Indexer;
 
-    fn reify(bundle: &Vec<VoidPtr>) -> Self;
-    fn len(&self) -> usize;
-    fn get_by_index(&self, idx: usize) -> Self::ItemTup;
-    fn get_ptr_tup(&self) -> Self::PtrTup;
-    fn get_comp_ids() -> Vec<ComponentId>;
+    fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
+    fn get_entity(&self, entity: &Entity) -> Self::ItemTup;
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
+pub trait SystemDef {
+    type JoinItem: Joined;
+
+    fn as_joined(&self) -> Self::JoinItem;
+    fn get_comp_ids() -> Vec<ComponentId>;
+}
+
 pub mod join {
-    use super::{ComponentId, Indexable, IndexablePtrTup, Joined, Query, VoidPtr};
+    use super::{ComponentId, Indexable, IndexablePtrTup, Joined, Query, Store, SystemDef, Entity};
+
+    macro_rules! _decl_system_replace_expr {
+        ($_t:tt $sub:ty) => {
+            $sub
+        };
+    }
 
     macro_rules! ptr_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
@@ -304,41 +328,24 @@ pub mod join {
     ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
     macro_rules! joined {
-        ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
+        ($( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> Joined for ($($field_type),*,)
             where
-                $($field_type: Query + Indexable + From<VoidPtr>),*,
-                $($field_type::DataType: 'static),*
+                $($field_type: Query),*,
             {
-                type ItemTup = ($($field_type::Item),*,);
                 type PtrTup = ($($field_type::DataPtr),*,);
+                type ItemTup = ($($field_type::Item),*,);
+                type Indexer = ($(_decl_system_replace_expr!($field_type usize)),*,);
 
                 #[inline]
-                fn reify(bundle: &Vec<VoidPtr>) -> ($($field_type),*,) {
-                    match bundle.len() {
-                        $field_count => ($(bundle[$field_seq].into()),*,),
-                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
-                    }
+                fn get_ptr_tup(&mut self, idx: &($(_decl_system_replace_expr!($field_type usize)),*,)) -> (usize, ($($field_type::DataPtr),*,)) {
+                    (self.0.len(idx.0), ($(self.$field_seq.unwrap(idx.$field_seq)),*,))
                 }
 
                 #[inline]
-                fn len(&self) -> usize {
-                    self.0.len()
-                }
-
-                #[inline]
-                fn get_by_index(&self, idx: usize) -> ($($field_type::Item),*,) {
-                    ($(self.$field_seq.index(idx)),*,)
-                }
-
-                #[inline]
-                fn get_ptr_tup(&self) -> ($($field_type::DataPtr),*,) {
-                    ($(self.$field_seq.unwrap()),*,)
-                }
-
-                #[inline]
-                fn get_comp_ids() -> Vec<ComponentId> {
-                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
+                fn get_entity(&self, entity: &Entity) -> ($($field_type::Item),*,) {
+//                    ($(self.$field_seq.get_by_coords(entity.get_coords::<$field_type>())),*,)
+                    unimplemented!()
                 }
 
                 #[inline]
@@ -349,80 +356,67 @@ pub mod join {
         };
     }
 
-    joined!(1; A:0);
-    joined!(2; A:0, B:1);
-    joined!(3; A:0, B:1, C:2);
-    joined!(4; A:0, B:1, C:2, D:3);
-    joined!(5; A:0, B:1, C:2, D:3, E:4);
-    joined!(6; A:0, B:1, C:2, D:3, E:4, F:5);
-    joined!(7; A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-    joined!(8; A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+    joined!(A:0);
+    joined!(A:0, B:1);
+    joined!(A:0, B:1, C:2);
+    joined!(A:0, B:1, C:2, D:3);
+    joined!(A:0, B:1, C:2, D:3, E:4);
+    joined!(A:0, B:1, C:2, D:3, E:4, F:5);
+    joined!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    joined!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+    macro_rules! system_def {
+        ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
+            impl<$($field_type),*> SystemDef for ($($field_type),*,)
+            where
+                $($field_type: Store),*,
+                $($field_type::DataType: 'static),*
+            {
+                type JoinItem = ($($field_type::QueryItem),*,);
+
+                #[inline]
+                fn as_joined(&self) -> ($($field_type::QueryItem),*,) {
+                    ($(self.$field_seq.get_query()),*,)
+                }
+
+                #[inline]
+                fn get_comp_ids() -> Vec<ComponentId> {
+                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
+                }
+
+//                #[inline]
+//                fn reify(bundle: &Vec<VoidPtr>) -> ($($field_type),*,) {
+//                    match bundle.len() {
+//                        $field_count => ($(bundle[$field_seq].into()),*,),
+//                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
+//                    }
+//                }
+            }
+        };
+    }
+
+    system_def!(1; A:0);
+    system_def!(2; A:0, B:1);
+    system_def!(3; A:0, B:1, C:2);
+    system_def!(4; A:0, B:1, C:2, D:3);
+    system_def!(5; A:0, B:1, C:2, D:3, E:4);
+    system_def!(6; A:0, B:1, C:2, D:3, E:4, F:5);
+    system_def!(7; A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    system_def!(8; A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 }
 
 pub mod support {
-    use super::{HashMap, IndexMap, IndexablePtrTup, Joined, MultiBorrow, VoidPtr};
-    use crate::object::{BundleId, EntityId};
+    use super::{BundleId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
+    use crate::sync::ReadGuard;
     use indexmap::map::Values;
-
-    pub struct BundleDef(
-        pub(crate) BundleId,
-        pub(crate) *const HashMap<EntityId, usize>,
-        pub(crate) Vec<VoidPtr>,
-    );
-
-    pub struct DataBundle<T>
-    where
-        T: Joined,
-    {
-        id: BundleId,
-        entities: *const HashMap<EntityId, usize>,
-        data: T,
-    }
-
-    impl<T> DataBundle<T>
-    where
-        T: Joined,
-    {
-        #[inline]
-        pub fn new(bundle: BundleDef) -> DataBundle<T> {
-            DataBundle {
-                id: bundle.0,
-                entities: bundle.1,
-                data: T::reify(&bundle.2),
-            }
-        }
-
-        #[inline]
-        pub fn bundle_id(&self) -> BundleId {
-            self.id
-        }
-
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.data.len()
-        }
-
-        #[inline]
-        pub fn get_by_id(&self, id: EntityId) -> T::ItemTup {
-            unsafe {
-                let index = (&*self.entities)[&id];
-                self.data.get_by_index(index)
-            }
-        }
-
-        #[inline]
-        pub fn get_ptr_tup(&self) -> T::PtrTup {
-            self.data.get_ptr_tup()
-        }
-    }
 
     pub struct Context<'a, T>
     where
         T: Joined,
     {
-        bundles: &'a IndexMap<BundleId, DataBundle<T>>,
-        entity_map: &'a HashMap<EntityId, BundleId>,
-        _borrow: MultiBorrow,
+        stores: T,
+        bundles: &'a IndexMap<BundleId, T::Indexer>,
+        entity_map: ReadGuard<HashMap<EntityId, Entity>>,
     }
 
     impl<'a, T> Context<'a, T>
@@ -431,40 +425,50 @@ pub mod support {
     {
         #[inline]
         pub fn new(
-            bundles: &'a IndexMap<BundleId, DataBundle<T>>,
-            entity_map: &'a HashMap<EntityId, BundleId>,
-            _borrow: MultiBorrow,
+            stores: T,
+            bundles: &'a IndexMap<BundleId, T::Indexer>,
+            entity_map: ReadGuard<HashMap<EntityId, Entity>>,
         ) -> Context<'a, T> {
             Context {
+                stores,
                 bundles,
                 entity_map,
-                _borrow,
             }
         }
 
         #[inline]
-        pub fn get_by_id(&mut self, id: EntityId) -> T::ItemTup {
-            let bundle_id = self.entity_map[&id];
-            let bundle = &self.bundles[&bundle_id];
-            bundle.get_by_id(id)
+        pub fn get_entity(&mut self, id: EntityId) -> Option<T::ItemTup> {
+            if let Some(entity) = self.entity_map.get(&id) {
+                Some(self.stores.get_entity(&entity))
+            } else {
+                None
+            }
         }
+    }
+
+    impl<'a, T> IntoIterator for Context<'a, T>
+    where
+        T: 'a + Joined,
+    {
+        type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
+        type IntoIter = ComponentIterator<'a, T>;
 
         #[inline]
-        pub fn iter(&self) -> ComponentIterator<T> {
+        fn into_iter(mut self) -> ComponentIterator<'a, T> {
             let mut stream = self.bundles.values();
 
             unsafe {
-                let (bundle, size) = match stream.next() {
-                    Some(item) => (item.get_ptr_tup(), item.len()),
-                    _ => (T::get_zero_ptr_tup(), 0usize),
+                let (size, bundle) = match stream.next() {
+                    Some(item) => self.stores.get_ptr_tup(item),
+                    _ => (0usize, T::get_zero_ptr_tup()),
                 };
 
                 ComponentIterator {
+                    stores: self.stores,
                     stream,
                     bundle,
                     size,
                     counter: 0,
-                    _borrow: &self._borrow,
                 }
             }
         }
@@ -474,11 +478,11 @@ pub mod support {
     where
         T: Joined,
     {
-        stream: Values<'a, BundleId, DataBundle<T>>,
+        stores: T,
+        stream: Values<'a, BundleId, T::Indexer>,
         bundle: T::PtrTup,
         size: usize,
         counter: usize,
-        _borrow: &'a MultiBorrow,
     }
 
     impl<'a, T> Iterator for ComponentIterator<'a, T>
@@ -496,9 +500,10 @@ pub mod support {
                     return Some(self.bundle.index(idx));
                 }
 
-                if let Some(new_bundle) = self.stream.next() {
-                    self.bundle = new_bundle.get_ptr_tup();
-                    self.size = new_bundle.len();
+                if let Some(item) = self.stream.next() {
+                    let (size, bundle) = self.stores.get_ptr_tup(item);
+                    self.bundle = bundle;
+                    self.size = size;
                     self.counter = 0;
                 } else {
                     return None;

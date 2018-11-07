@@ -1,8 +1,9 @@
 use crate::alloc::VecPool;
 use crate::alloc::VoidPtr;
 use crate::object::{BundleId, ComponentId, EntityId};
-use crate::system::support::BundleDef;
 use std::collections::HashMap;
+
+pub(crate) type ComponentCoords = (usize, usize);
 
 pub struct ComponentStore<T> {
     data: VecPool<Vec<T>>,
@@ -11,37 +12,27 @@ pub struct ComponentStore<T> {
 impl<T> ComponentStore<T> {
     #[inline]
     pub(crate) fn get_item(&self, (section, loc): (usize, usize)) -> &T {
-        unsafe {
-            self.data.get_unchecked(section).get_unchecked(loc)
-        }
+        unsafe { self.data.get_unchecked(section).get_unchecked(loc) }
     }
 
     #[inline]
     pub(crate) fn get_item_mut(&mut self, (section, loc): (usize, usize)) -> &mut T {
-        unsafe {
-            self.data.get_unchecked_mut(section).get_unchecked_mut(loc)
-        }
+        unsafe { self.data.get_unchecked_mut(section).get_unchecked_mut(loc) }
     }
 
     #[inline]
     pub(crate) fn section_len(&self, section: usize) -> usize {
-        unsafe {
-            self.data.get_unchecked(section).len()
-        }
+        unsafe { self.data.get_unchecked(section).len() }
     }
 
     #[inline]
     pub(crate) fn get_data_ptr(&self, section: usize) -> *const T {
-        unsafe {
-            self.data.get_unchecked(section).as_ptr()
-        }
+        unsafe { self.data.get_unchecked(section).as_ptr() }
     }
 
     #[inline]
     pub(crate) fn get_data_mut_ptr(&mut self, section: usize) -> *mut T {
-        unsafe {
-            self.data.get_unchecked_mut(section).as_mut_ptr()
-        }
+        unsafe { self.data.get_unchecked_mut(section).as_mut_ptr() }
     }
 }
 

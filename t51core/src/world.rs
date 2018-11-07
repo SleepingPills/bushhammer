@@ -8,6 +8,8 @@ use indexmap::IndexMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
+
+/*
 use crate::system::SystemRuntime;
 
 pub struct World {
@@ -197,24 +199,25 @@ impl World {
 
     #[allow(unused_variables)]
     pub fn register_system<T>(&mut self, id: SystemId) {
-//        let sys_id = SystemId::new::<T>();
-//
-//        // Build the system and run the init callback
-//        let mut system = T::new(&self.components);
-//        system.init(&self.components, &self.systems);
-//
-//        // Register the system and core trait
-//        self.systems.register(sys_id, system);
-//        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
-//
-//        // Add system dependencies
-//        let required_components = T::required_components();
-//
-//        for &component_id in required_components.iter() {
-//            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
-//            entry.insert(sys_id);
-//        }
-//
-//        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
+        let sys_id = SystemId::new::<T>();
+
+        // Build the system and run the init callback
+        let mut system = T::new(&self.components);
+        system.init(&self.components, &self.systems);
+
+        // Register the system and core trait
+        self.systems.register(sys_id, system);
+        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
+
+        // Add system dependencies
+        let required_components = T::required_components();
+
+        for &component_id in required_components.iter() {
+            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
+            entry.insert(sys_id);
+        }
+
+        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
     }
 }
+*/

@@ -37,14 +37,15 @@ impl<T> ComponentStore<T> {
     }
 }
 
-pub(crate) struct Bundle {
+pub struct Bundle {
     pub(crate) id: BundleId,
     sections: HashMap<ComponentId, usize>,
 }
 
 impl Bundle {
-    pub(crate) fn get_locs(&self, comps: &Vec<ComponentId>) -> Vec<usize> {
-        comps.iter().map(|cid| self.sections[cid]).collect()
+    #[inline]
+    pub(crate) fn get_loc(&self, id: ComponentId) -> usize {
+        self.sections[&id]
     }
 }
 

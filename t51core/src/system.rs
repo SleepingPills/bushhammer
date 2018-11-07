@@ -3,8 +3,8 @@ use crate::component::ComponentCoords;
 use crate::entity::{Entity, EntityStore};
 use crate::object::{BundleId, ComponentId, EntityId};
 use crate::sync::RwCell;
-use indexmap::IndexMap;
 use hashbrown::HashMap;
+use indexmap::IndexMap;
 use std::sync::Arc;
 
 pub trait System {
@@ -36,6 +36,16 @@ where
             &self.components,
         )
     }
+
+    #[inline]
+    fn add_bundle(&mut self, bundle: &component::Bundle) {
+        self.bundles.insert(bundle.id, T::reify_bundle(&self.components, bundle));
+    }
+
+    #[inline]
+    fn remove_bundle(&mut self, id: BundleId) {
+        self.bundles.remove(&id);
+    }
 }
 
 pub struct SystemEntry<T>
@@ -64,13 +74,12 @@ where
 
     #[inline]
     fn add_bundle(&mut self, bundle: &component::Bundle) {
-        let locs = bundle.get_locs(&self.data.components);
-        unimplemented!()
+        self.data.add_bundle(bundle);
     }
 
     #[inline]
     fn remove_bundle(&mut self, id: BundleId) {
-        self.data.bundles.remove(&id);
+        self.data.remove_bundle(id);
     }
 
     #[inline]
@@ -192,9 +201,7 @@ pub mod store {
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
             let (section, loc) = coords;
             let ptr = self.store.get_data_ptr(section);
-            unsafe {
-                &*ptr.add(loc)
-            }
+            unsafe { &*ptr.add(loc) }
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
             // self.store.get_item(coords)
@@ -224,9 +231,7 @@ pub mod store {
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
             let (section, loc) = coords;
             let ptr = self.store.get_data_ptr(section);
-            unsafe {
-                &mut *(ptr.add(loc) as *mut _)
-            }
+            unsafe { &mut *(ptr.add(loc) as *mut _) }
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
             // self.store.get_item_mut(coords)
@@ -288,11 +293,13 @@ pub trait SystemDef {
     type JoinItem: Joined;
 
     fn as_joined(&self) -> Self::JoinItem;
+    fn reify_bundle(sys_comps: &Vec<ComponentId>, bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer;
     fn get_comp_ids() -> Vec<ComponentId>;
 }
 
 pub mod join {
     use super::{ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Store, SystemDef};
+    use crate::component;
 
     macro_rules! _decl_system_replace_expr {
         ($_t:tt $sub:ty) => {
@@ -336,17 +343,17 @@ pub mod join {
                 type Indexer = ($(_decl_system_replace_expr!($field_type usize)),*,);
 
                 #[inline]
-                fn get_ptr_tup(&mut self, idx: &($(_decl_system_replace_expr!($field_type usize)),*,)) -> (usize, ($($field_type::DataPtr),*,)) {
+                fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup) {
                     (self.0.len(idx.0), ($(self.$field_seq.unwrap(idx.$field_seq)),*,))
                 }
 
                 #[inline]
-                fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> ($($field_type::Item),*,) {
+                fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> Self::ItemTup {
                     ($(self.$field_seq.get_by_coords(entity.get_coords(&components[$field_seq]))),*,)
                 }
 
                 #[inline]
-                unsafe fn get_zero_ptr_tup() -> ($($field_type::DataPtr),*,) {
+                unsafe fn get_zero_ptr_tup() -> Self::PtrTup {
                     ($($field_type::null()),*,)
                 }
             }
@@ -376,13 +383,10 @@ pub mod join {
                     ($(self.$field_seq.get_query()),*,)
                 }
 
-//                #[inline]
-//                fn reify(bundle: &Vec<>) -> ($($field_type),*,) {
-//                    match bundle.len() {
-//                        $field_count => ($(bundle[$field_seq].into()),*,),
-//                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
-//                    }
-//                }
+                fn reify_bundle(sys_comps: &Vec<ComponentId>,
+                                bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer {
+                    ($(bundle.get_loc(sys_comps[$field_seq])),*,)
+                }
 
                 #[inline]
                 fn get_comp_ids() -> Vec<ComponentId> {

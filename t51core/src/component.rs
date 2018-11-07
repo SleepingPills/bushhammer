@@ -1,7 +1,6 @@
 use crate::alloc::VecPool;
-use crate::alloc::VoidPtr;
-use crate::object::{BundleId, ComponentId, EntityId};
-use std::collections::HashMap;
+use crate::object::{BundleId, ComponentId};
+use hashbrown::HashMap;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -10,11 +9,13 @@ pub struct ComponentStore<T> {
 }
 
 impl<T> ComponentStore<T> {
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn get_item(&self, (section, loc): ComponentCoords) -> &T {
         unsafe { self.data.get_unchecked(section).get_unchecked(loc) }
     }
 
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn get_item_mut(&mut self, (section, loc): ComponentCoords) -> &mut T {
         unsafe { self.data.get_unchecked_mut(section).get_unchecked_mut(loc) }
@@ -33,6 +34,17 @@ impl<T> ComponentStore<T> {
     #[inline]
     pub(crate) fn get_data_mut_ptr(&mut self, section: usize) -> *mut T {
         unsafe { self.data.get_unchecked_mut(section).as_mut_ptr() }
+    }
+}
+
+pub(crate) struct Bundle {
+    pub(crate) id: BundleId,
+    sections: HashMap<ComponentId, usize>,
+}
+
+impl Bundle {
+    pub(crate) fn get_locs(&self, comps: &Vec<ComponentId>) -> Vec<usize> {
+        comps.iter().map(|cid| self.sections[cid]).collect()
     }
 }
 

@@ -1,8 +1,7 @@
 use crate::alloc::SlotPool;
 use crate::component::ComponentCoords;
-use crate::object::{BundleId, ComponentId, EntityId, SystemId};
-use crate::sync::RwGuard;
-use std::collections::{HashMap, HashSet};
+use crate::object::{BundleId, ComponentId, EntityId};
+use hashbrown::{HashMap};
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.

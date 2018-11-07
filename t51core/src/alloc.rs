@@ -1,6 +1,6 @@
 use std::ptr::NonNull;
 
-pub(crate) type VoidPtr = NonNull<()>;
+pub type VoidPtr = NonNull<()>;
 
 /// A pool allocator that keeps all items in an efficient dense vector. New elements will be
 /// used to fill up holes created by previous reclamation.

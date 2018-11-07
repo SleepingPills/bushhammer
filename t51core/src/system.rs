@@ -1,9 +1,10 @@
+use crate::component;
 use crate::component::ComponentCoords;
 use crate::entity::{Entity, EntityStore};
 use crate::object::{BundleId, ComponentId, EntityId};
 use crate::sync::RwCell;
 use indexmap::IndexMap;
-use std::collections::HashMap;
+use hashbrown::HashMap;
 use std::sync::Arc;
 
 pub trait System {
@@ -27,8 +28,8 @@ where
     T: SystemDef,
 {
     #[inline]
-    pub fn context(&self) -> support::Context<<T as SystemDef>::JoinItem> {
-        support::Context::new(
+    pub fn context(&self) -> context::Context<<T as SystemDef>::JoinItem> {
+        context::Context::new(
             self.stores.as_joined(),
             &self.bundles,
             self.entity_map.read(),
@@ -45,10 +46,10 @@ where
     data: SystemData<T::Data>,
 }
 
-pub trait SystemRuntime {
+trait SystemRuntime {
     fn run(&mut self, entities: EntityStore);
-//    fn add_bundle(&mut self, bundle: support::BundleDef);
-//    fn remove_bundle(&mut self, id: BundleId);
+    fn add_bundle(&mut self, bundle: &component::Bundle);
+    fn remove_bundle(&mut self, id: BundleId);
     fn get_required_components(&self) -> Vec<ComponentId>;
 }
 
@@ -61,16 +62,16 @@ where
         self.system.run(&self.data, entities);
     }
 
-//    #[inline]
-//    fn add_bundle(&mut self, bundle: support::BundleDef) {
-//        let data_bundle = support::DataBundle::new(bundle);
-//        self.data.bundles.insert(data_bundle.bundle_id(), data_bundle);
-//    }
-//
-//    #[inline]
-//    fn remove_bundle(&mut self, id: BundleId) {
-//        self.data.bundles.remove(&id);
-//    }
+    #[inline]
+    fn add_bundle(&mut self, bundle: &component::Bundle) {
+        let locs = bundle.get_locs(&self.data.components);
+        unimplemented!()
+    }
+
+    #[inline]
+    fn remove_bundle(&mut self, id: BundleId) {
+        self.data.bundles.remove(&id);
+    }
 
     #[inline]
     fn get_required_components(&self) -> Vec<ComponentId> {
@@ -189,8 +190,14 @@ pub mod store {
 
         #[inline]
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
-            unimplemented!()
-//            self.store.get_item(coords)
+            let (section, loc) = coords;
+            let ptr = self.store.get_data_ptr(section);
+            unsafe {
+                &*ptr.add(loc)
+            }
+            // Can't do the safe thing here due to lack of generic associated types as the
+            // lifetimes would clash.
+            // self.store.get_item(coords)
         }
 
         #[inline]
@@ -215,7 +222,14 @@ pub mod store {
 
         #[inline]
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
-            unimplemented!()
+            let (section, loc) = coords;
+            let ptr = self.store.get_data_ptr(section);
+            unsafe {
+                &mut *(ptr.add(loc) as *mut _)
+            }
+            // Can't do the safe thing here due to lack of generic associated types as the
+            // lifetimes would clash.
+            // self.store.get_item_mut(coords)
         }
 
         #[inline]
@@ -362,18 +376,18 @@ pub mod join {
                     ($(self.$field_seq.get_query()),*,)
                 }
 
-                #[inline]
-                fn get_comp_ids() -> Vec<ComponentId> {
-                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
-                }
-
 //                #[inline]
-//                fn reify(bundle: &Vec<VoidPtr>) -> ($($field_type),*,) {
+//                fn reify(bundle: &Vec<>) -> ($($field_type),*,) {
 //                    match bundle.len() {
 //                        $field_count => ($(bundle[$field_seq].into()),*,),
 //                        len => panic!("Recieved bundle rank {}, expected {}", len, $field_count),
 //                    }
 //                }
+
+                #[inline]
+                fn get_comp_ids() -> Vec<ComponentId> {
+                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
+                }
             }
         };
     }
@@ -388,7 +402,7 @@ pub mod join {
     system_def!(8; A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 }
 
-pub mod support {
+pub mod context {
     use super::{BundleId, ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
     use crate::sync::ReadGuard;
     use indexmap::map::Values;
@@ -497,10 +511,4 @@ pub mod support {
             }
         }
     }
-}
-
-
-#[repr(transparent)]
-pub struct Mut<T>{
-    data: T
 }

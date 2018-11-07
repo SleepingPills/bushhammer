@@ -1,5 +1,4 @@
 #![allow(unused_imports, dead_code, unused_variables)]
-use std::collections::HashMap;
 use t51core::object::EntityId;
 use t51core::prelude::*;
 
@@ -11,7 +10,9 @@ impl<'a> System for Goof<'a> {
     type Data = (Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>);
 
     fn run(&mut self, data: &SystemData<Self::Data>, entities: EntityStore) {
-        let ctx = data.context();
+        let mut ctx = data.context();
+
+        let (d, e, f) = ctx.get_entity(5).unwrap();
 
         for (a, b, c) in ctx {
             *c = 5;

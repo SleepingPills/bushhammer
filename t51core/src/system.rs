@@ -13,6 +13,13 @@ pub trait System {
     fn run(&mut self, data: &SystemData<Self::Data>, entities: EntityStore);
 }
 
+trait SystemRuntime {
+    fn run(&mut self, entities: EntityStore);
+    fn add_bundle(&mut self, bundle: &component::Bundle);
+    fn remove_bundle(&mut self, id: BundleId);
+    fn get_required_components(&self) -> Vec<ComponentId>;
+}
+
 pub struct SystemData<T>
 where
     T: SystemDef,
@@ -54,13 +61,6 @@ where
 {
     system: T,
     data: SystemData<T::Data>,
-}
-
-trait SystemRuntime {
-    fn run(&mut self, entities: EntityStore);
-    fn add_bundle(&mut self, bundle: &component::Bundle);
-    fn remove_bundle(&mut self, id: BundleId);
-    fn get_required_components(&self) -> Vec<ComponentId>;
 }
 
 impl<T> SystemRuntime for SystemEntry<T>
@@ -370,7 +370,7 @@ pub mod join {
     joined!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
     macro_rules! system_def {
-        ($field_count:tt; $( $field_type:ident:$field_seq:tt ),*) => {
+        ($( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> SystemDef for ($($field_type),*,)
             where
                 $($field_type: Store),*,
@@ -396,14 +396,14 @@ pub mod join {
         };
     }
 
-    system_def!(1; A:0);
-    system_def!(2; A:0, B:1);
-    system_def!(3; A:0, B:1, C:2);
-    system_def!(4; A:0, B:1, C:2, D:3);
-    system_def!(5; A:0, B:1, C:2, D:3, E:4);
-    system_def!(6; A:0, B:1, C:2, D:3, E:4, F:5);
-    system_def!(7; A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-    system_def!(8; A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+    system_def!(A:0);
+    system_def!(A:0, B:1);
+    system_def!(A:0, B:1, C:2);
+    system_def!(A:0, B:1, C:2, D:3);
+    system_def!(A:0, B:1, C:2, D:3, E:4);
+    system_def!(A:0, B:1, C:2, D:3, E:4, F:5);
+    system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 }
 
 pub mod context {

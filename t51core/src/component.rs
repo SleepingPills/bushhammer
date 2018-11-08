@@ -1,6 +1,11 @@
 use crate::alloc::VecPool;
+use crate::entity::Entity;
+use crate::object::EntityId;
 use crate::object::{BundleId, ComponentId};
+use crate::registry::Registry;
+use crate::sync::RwCell;
 use hashbrown::HashMap;
+use std::sync::Arc;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -70,9 +75,3 @@ impl Bundle {
 //        unimplemented!()
 //    }
 //}
-
-pub trait ComponentManager {
-    fn add_component(&mut self, id: ComponentId, ptr: *const ()) -> usize;
-    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize;
-    fn reclaim(&mut self, index: usize);
-}

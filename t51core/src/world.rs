@@ -1,26 +1,37 @@
-//use crate::alloc::SlotPool;
-//use crate::component::ComponentManager;
-//use crate::entity;
-//use crate::object::{ComponentId, SystemId, EntityId};
-//use crate::registry::Registry;
-//use crate::sync::RwCell;
-//use indexmap::IndexMap;
-//use hashbrown::{HashMap, HashSet};
-//use std::sync::Arc;
-
-/*
+use crate::entity;
+use crate::object::{ComponentId, EntityId, SystemId};
+use crate::registry::Registry;
+use crate::sync::RwCell;
 use crate::system::SystemRuntime;
+use hashbrown::HashMap;
+use indexmap::IndexMap;
+use std::sync::Arc;
+use hashbrown::HashSet;
 
 pub struct World {
-    entities: SlotPool<entity::Entity>,
     components: Registry<ComponentId>,
-    systems: IndexMap<SystemId, Arc<RwCell<Box<SystemRuntime>>>>,
-    tx_queues: Arc<IndexMap<SystemId, RwCell<Vec<entity::Transaction>>>>,
-    main_queue: Vec<entity::Transaction>,
-    comp_sys: HashMap<ComponentId, HashSet<SystemId>>,
-    sys_comp: HashMap<SystemId, HashSet<ComponentId>>,
+    entities: HashMap<EntityId, entity::Entity>,
+    systems: IndexMap<SystemId, Box<SystemRuntime>>,
+    //    transactions: Vec<entity::Transaction>,
 }
 
+impl World {
+    #[inline]
+    pub fn create_entity(&mut self) -> entity::Builder {
+        unimplemented!()
+    }
+
+//    pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
+//        unimplemented!()
+//    }
+
+    #[inline]
+    pub fn remove_entity(&mut self, id: usize) {
+        unimplemented!()
+    }
+}
+
+/*
 impl World {
     pub fn new() -> World {
         World {
@@ -193,30 +204,30 @@ impl World {
         /*
         Creates an instance of a componentstore and registers it in the registry
         */
-        unimplemented!()
-    }
+unimplemented!()
+}
 
-    #[allow(unused_variables)]
-    pub fn register_system<T>(&mut self, id: SystemId) {
-        let sys_id = SystemId::new::<T>();
+#[allow(unused_variables)]
+pub fn register_system<T>(&mut self, id: SystemId) {
+let sys_id = SystemId::new::<T>();
 
-        // Build the system and run the init callback
-        let mut system = T::new(&self.components);
-        system.init(&self.components, &self.systems);
+// Build the system and run the init callback
+let mut system = T::new(&self.components);
+system.init(&self.components, &self.systems);
 
-        // Register the system and core trait
-        self.systems.register(sys_id, system);
-        self.systems.register_trait::<T, ManagedSystem>(&sys_id);
+// Register the system and core trait
+self.systems.register(sys_id, system);
+self.systems.register_trait::<T, ManagedSystem>(&sys_id);
 
-        // Add system dependencies
-        let required_components = T::required_components();
+// Add system dependencies
+let required_components = T::required_components();
 
-        for &component_id in required_components.iter() {
-            let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
-            entry.insert(sys_id);
-        }
+for &component_id in required_components.iter() {
+let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
+entry.insert(sys_id);
+}
 
-        self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
-    }
+self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
+}
 }
 */

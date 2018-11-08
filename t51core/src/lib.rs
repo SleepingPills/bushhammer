@@ -7,8 +7,11 @@ pub mod alloc;
 pub mod component;
 pub mod entity;
 pub mod object;
-pub mod prelude;
 pub mod registry;
 pub mod sync;
+
+#[macro_use]
 pub mod system;
+
 pub mod world;
+pub mod prelude;

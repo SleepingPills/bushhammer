@@ -1,21 +1,25 @@
 #![allow(unused_imports, dead_code, unused_variables)]
+#[macro_use]
+extern crate t51core;
+
 use t51core::object::EntityId;
 use t51core::prelude::*;
+use t51core::system::context::Context;
+use t51core::system::SystemDef;
 
 pub struct Goof<'a> {
     coll: Vec<&'a i32>,
 }
 
 impl<'a> System for Goof<'a> {
-    type Data = (Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>);
+    require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>);
 
-    fn run(&mut self, data: &SystemData<Self::Data>, entities: EntityStore) {
-        let mut ctx = data.context();
+    fn run(&mut self, mut data: Context<Self::JoinItem>, entities: EntityStore) {
+        let (d, e, f) = data.get_entity(5).unwrap();
 
-        let (d, e, f) = ctx.get_entity(5).unwrap();
-
-        for (a, b, c) in ctx {
+        for (a, b, c) in data.iter() {
             *c = 5;
+            self.coll.push(b);
         }
     }
 }

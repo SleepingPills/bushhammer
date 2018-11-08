@@ -1,20 +1,29 @@
 use crate::component;
 use crate::component::ComponentCoords;
-use crate::entity::{Entity, EntityStore};
+use crate::entity::{Entity, EntityStore, Transaction};
 use crate::object::{BundleId, ComponentId, EntityId};
 use crate::sync::RwCell;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::sync::Arc;
 
-pub trait System {
-    type Data: SystemDef;
-
-    fn run(&mut self, data: &SystemData<Self::Data>, entities: EntityStore);
+#[macro_export]
+macro_rules! require {
+    ($($exprs:ty),*) => {
+        type Data = ($($exprs),*);
+        type JoinItem = <Self::Data as SystemDef>::JoinItem;
+    };
 }
 
-trait SystemRuntime {
-    fn run(&mut self, entities: EntityStore);
+pub trait System {
+    type Data: SystemDef;
+    type JoinItem: Joined;
+
+    fn run(&mut self, data: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: EntityStore);
+}
+
+pub trait SystemRuntime {
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
     fn add_bundle(&mut self, bundle: &component::Bundle);
     fn remove_bundle(&mut self, id: BundleId);
     fn get_required_components(&self) -> Vec<ComponentId>;
@@ -26,7 +35,6 @@ where
 {
     stores: T,
     bundles: IndexMap<BundleId, <T::JoinItem as Joined>::Indexer>,
-    entity_map: Arc<RwCell<HashMap<EntityId, Entity>>>,
     components: Vec<ComponentId>,
 }
 
@@ -35,13 +43,11 @@ where
     T: SystemDef,
 {
     #[inline]
-    pub fn context(&self) -> context::Context<<T as SystemDef>::JoinItem> {
-        context::Context::new(
-            self.stores.as_joined(),
-            &self.bundles,
-            self.entity_map.read(),
-            &self.components,
-        )
+    pub fn context<'a, 'b>(&'a self, entity_map: &'b HashMap<EntityId, Entity>) -> context::Context<<T as SystemDef>::JoinItem>
+    where
+        'b: 'a,
+    {
+        context::Context::new(self.stores.as_joined(), &self.bundles, entity_map, &self.components)
     }
 
     #[inline]
@@ -61,6 +67,7 @@ where
 {
     system: T,
     data: SystemData<T::Data>,
+    transactions: Vec<Transaction>,
 }
 
 impl<T> SystemRuntime for SystemEntry<T>
@@ -68,8 +75,11 @@ where
     T: System,
 {
     #[inline]
-    fn run(&mut self, entities: EntityStore) {
-        self.system.run(&self.data, entities);
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>) {
+        self.system.run(
+            self.data.context(entity_map),
+            EntityStore::new(entity_map, &mut self.transactions),
+        );
     }
 
     #[inline]
@@ -383,6 +393,7 @@ pub mod join {
                     ($(self.$field_seq.get_query()),*,)
                 }
 
+                #[inline]
                 fn reify_bundle(sys_comps: &Vec<ComponentId>,
                                 bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer {
                     ($(bundle.get_loc(sys_comps[$field_seq])),*,)
@@ -408,7 +419,6 @@ pub mod join {
 
 pub mod context {
     use super::{BundleId, ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
-    use crate::sync::ReadGuard;
     use indexmap::map::Values;
 
     pub struct Context<'a, T>
@@ -417,7 +427,7 @@ pub mod context {
     {
         stores: T,
         bundles: &'a IndexMap<BundleId, T::Indexer>,
-        entity_map: ReadGuard<HashMap<EntityId, Entity>>,
+        entity_map: &'a HashMap<EntityId, Entity>,
         components: &'a Vec<ComponentId>,
     }
 
@@ -429,7 +439,7 @@ pub mod context {
         pub fn new(
             stores: T,
             bundles: &'a IndexMap<BundleId, T::Indexer>,
-            entity_map: ReadGuard<HashMap<EntityId, Entity>>,
+            entity_map: &'a HashMap<EntityId, Entity>,
             components: &'a Vec<ComponentId>,
         ) -> Context<'a, T> {
             Context {
@@ -448,17 +458,9 @@ pub mod context {
                 None
             }
         }
-    }
-
-    impl<'a, T> IntoIterator for Context<'a, T>
-    where
-        T: 'a + Joined,
-    {
-        type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
-        type IntoIter = ComponentIterator<'a, T>;
 
         #[inline]
-        fn into_iter(mut self) -> ComponentIterator<'a, T> {
+        pub fn iter(&mut self) -> ComponentIterator<T> {
             let mut stream = self.bundles.values();
 
             unsafe {
@@ -468,7 +470,7 @@ pub mod context {
                 };
 
                 ComponentIterator {
-                    stores: self.stores,
+                    stores: &mut self.stores,
                     stream,
                     bundle,
                     size,
@@ -482,7 +484,7 @@ pub mod context {
     where
         T: Joined,
     {
-        stores: T,
+        stores: &'a mut T,
         stream: Values<'a, BundleId, T::Indexer>,
         bundle: T::PtrTup,
         size: usize,

@@ -88,13 +88,13 @@ impl<'a> Builder<'a> {
     }
 
     #[inline]
-    pub fn component<T: 'static>(mut self, instance: T) -> Self {
+    pub fn with<T: 'static>(mut self, instance: T) -> Self {
         self.record_component(ComponentId::new::<T>(), CompDef::Boxed(Box::new(instance)));
         self
     }
 
     #[inline]
-    pub fn component_json(mut self, type_id: ComponentId, json: String) -> Self {
+    pub fn with_json(mut self, type_id: ComponentId, json: String) -> Self {
         self.record_component(type_id, CompDef::Json(json));
         self
     }
@@ -126,15 +126,27 @@ impl<'a> Editor<'a> {
     }
 
     #[inline]
-    pub fn component<T: 'static>(mut self, instance: T) -> Self {
+    pub fn with<T: 'static>(mut self, instance: T) -> Self {
         self.builder
             .record_component(ComponentId::new::<T>(), CompDef::Boxed(Box::new(instance)));
         self
     }
 
     #[inline]
-    pub fn component_json(mut self, type_id: ComponentId, json: String) -> Self {
-        self.builder.record_component(type_id, CompDef::Json(json));
+    pub fn with_json(mut self, comp_id: ComponentId, json: String) -> Self {
+        self.builder.record_component(comp_id, CompDef::Json(json));
+        self
+    }
+
+    #[inline]
+    pub fn remove<T: 'static>(mut self) -> Self {
+        self.builder.ent_def.components.remove(&ComponentId::new::<T>());
+        self
+    }
+
+    #[inline]
+    pub fn remove_id(mut self, comp_id: ComponentId) -> Self {
+        self.builder.ent_def.components.remove(&comp_id);
         self
     }
 
@@ -164,7 +176,7 @@ impl<'a> EntityStore<'a> {
     pub fn edit(&mut self, id: EntityId) -> Result<Editor, TransactionError> {
         match self.entity_map.get(&id) {
             Some(entity) => Ok(Editor::new(entity, self.queue)),
-            _ => Err(TransactionError::EntityNotFound(id))
+            _ => Err(TransactionError::EntityNotFound(id)),
         }
     }
 

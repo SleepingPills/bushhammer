@@ -13,7 +13,7 @@ pub struct RwCell<T> {
     guard: Arc<AtomicI64>,
 }
 
-type GuardCell = RwCell<u8>;
+pub type GuardCell = RwCell<u8>;
 
 impl<T> RwCell<T> {
     #[inline]

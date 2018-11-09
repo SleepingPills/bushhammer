@@ -228,8 +228,16 @@ fn iter_loop_bench(c: &mut Criterion) {
     for i in 0..5000 {
         entities.push((i, i, i));
         v1.push(i as i32);
-        v2.push(V3{x: i as f32, y: i as f32, z: i as f32});
-        v3.push(V3{x: 0f32, y: 0f32, z: 0f32});
+        v2.push(V3 {
+            x: i as f32,
+            y: i as f32,
+            z: i as f32,
+        });
+        v3.push(V3 {
+            x: 0f32,
+            y: 0f32,
+            z: 0f32,
+        });
     }
 
     c.bench_function("iterloop 1", move |b| {
@@ -238,7 +246,7 @@ fn iter_loop_bench(c: &mut Criterion) {
                 len: entities.len(),
                 counter: 0,
                 entities: entities.as_ptr() as *const (),
-                comps: (v1.as_ptr(), v2.as_ptr(),  v3.as_mut_ptr()),
+                comps: (v1.as_ptr(), v2.as_ptr(), v3.as_mut_ptr()),
                 _x: PhantomData,
             };
 
@@ -278,8 +286,16 @@ fn iter_loop_rand_bench(c: &mut Criterion) {
 
     for i in 0..10000 {
         v1.push(i as i32);
-        v2.push(V3{x: i as f32, y: i as f32, z: i as f32});
-        v3.push(V3{x: 0f32, y: 0f32, z: 0f32});
+        v2.push(V3 {
+            x: i as f32,
+            y: i as f32,
+            z: i as f32,
+        });
+        v3.push(V3 {
+            x: 0f32,
+            y: 0f32,
+            z: 0f32,
+        });
     }
 
     c.bench_function("iterloop 1", move |b| {
@@ -288,7 +304,7 @@ fn iter_loop_rand_bench(c: &mut Criterion) {
                 len: entities.len(),
                 counter: 0,
                 entities: entities.as_ptr() as *const (),
-                comps: (v1.as_ptr(), v2.as_ptr(),  v3.as_mut_ptr()),
+                comps: (v1.as_ptr(), v2.as_ptr(), v3.as_mut_ptr()),
                 _x: PhantomData,
             };
 
@@ -323,7 +339,7 @@ impl AddTwo for Adder {
 }
 
 fn iter_boxed_and_raw(c: &mut Criterion) {
-    let adder1 = Box::new(Adder{});
+    let adder1 = Box::new(Adder {});
     let boxed: Box<AddTwo> = adder1;
 
     c.bench_function("boxed", move |b| {
@@ -333,7 +349,7 @@ fn iter_boxed_and_raw(c: &mut Criterion) {
         })
     });
 
-    let adder = Adder{};
+    let adder = Adder {};
 
     c.bench_function("raw", move |b| {
         b.iter(|| {
@@ -343,6 +359,19 @@ fn iter_boxed_and_raw(c: &mut Criterion) {
     });
 }
 
+use t51core::sync::GuardCell;
+
+fn rwcell(c: &mut Criterion) {
+    let cell = GuardCell::guard();
+
+    c.bench_function("rwcell", move |b| {
+        b.iter(|| {
+            let guard = cell.read();
+            black_box(guard);
+        })
+    });
+}
+
 // for_each_bench, loop_bench, fluent_bench,
-criterion_group!(benches, iter_boxed_and_raw);
+criterion_group!(benches, rwcell);
 criterion_main!(benches);

@@ -108,8 +108,8 @@ where
     }
 
     #[inline]
-    fn add_shard(&mut self, bundle: &component::Shard) {
-        self.data.add_shard(bundle);
+    fn add_shard(&mut self, shard: &component::Shard) {
+        self.data.add_shard(shard);
     }
 
     #[inline]

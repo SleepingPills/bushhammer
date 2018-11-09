@@ -9,7 +9,7 @@ use std::any::Any;
 #[derive(Debug)]
 pub struct Entity {
     pub id: EntityId,
-    pub bundle_id: ShardId,
+    pub shard_id: ShardId,
     pub components: HashMap<ComponentId, ComponentCoords>,
 }
 
@@ -27,16 +27,6 @@ pub enum CompDef {
     Boxed(Box<Any>),
     Json(String),
     Nop(),
-}
-
-impl CompDef {
-    pub fn unpack<T: 'static>(self) -> Option<T> {
-        match self {
-            CompDef::Boxed(boxed) => Some(*boxed.downcast::<T>().expect("Incorrect component type")),
-            CompDef::Json(_) => unimplemented!(),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Debug)]

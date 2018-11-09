@@ -2,6 +2,7 @@ use std::any::TypeId;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
+use std::cmp::Ordering;
 
 #[macro_export]
 macro_rules! object_id {
@@ -47,6 +48,18 @@ macro_rules! object_id {
             #[inline(always)]
             fn hash<H: Hasher>(&self, state: &mut H) {
                 self.id.hash(state)
+            }
+        }
+
+        impl PartialOrd for $name {
+            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+                self.id.partial_cmp(&other.id)
+            }
+        }
+
+        impl Ord for $name {
+            fn cmp(&self, other: &Self) -> Ordering {
+                self.id.cmp(&other.id)
             }
         }
 

@@ -1,6 +1,7 @@
 use crate::alloc::VecPool;
-use crate::object::{ShardId, ComponentId};
+use crate::object::{ComponentId, ShardId};
 use hashbrown::HashMap;
+use std::any::Any;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -41,12 +42,19 @@ impl<T> ShardedColumn<T> {
     }
 }
 
-trait Column {
-
+pub trait Column {
+    fn ingest_box(&mut self, boxed: Box<Any>) -> usize;
+    fn ingest_json(&mut self, json: String) -> usize;
 }
 
 impl<T> Column for ShardedColumn<T> {
+    fn ingest_box(&mut self, boxed: Box<Any>) -> usize {
+        unimplemented!()
+    }
 
+    fn ingest_json(&mut self, json: String) -> usize {
+        unimplemented!()
+    }
 }
 
 pub struct Shard {

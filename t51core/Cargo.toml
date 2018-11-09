@@ -5,10 +5,11 @@ authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
 
 [dependencies]
-anymap = "0.12.1"
-hashbrown = "0.1"
-indexmap = "1.0.1"
-lazy_static = "1.1.0"
+anymap = "*"
+hashbrown = "*"
+indexmap = "*"
+lazy_static = "*"
+sequence_trie = "*"
 
 [dev-dependencies]
 criterion = "0.2"

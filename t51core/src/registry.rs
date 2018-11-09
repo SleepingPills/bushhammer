@@ -100,7 +100,7 @@ where
             // Duplicate the pointer to the root object into a new box
             unsafe {
                 // Extract root pointer
-                let ptr_root = root.get_ptr();
+                let ptr_root = root.get_ptr_raw();
                 // Make new "unique" box
                 let val = Box::new(ptr_root.read());
                 // Create trait object

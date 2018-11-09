@@ -174,27 +174,54 @@ pub mod store {
 
     #[repr(transparent)]
     pub struct ReadQuery<'a, T> {
-        store: ReadGuard<ComponentStore<T>>,
+        store: *const ComponentStore<T>,
         _x: PhantomData<&'a T>,
     }
 
     #[repr(transparent)]
     pub struct WriteQuery<'a, T> {
-        store: RwGuard<ComponentStore<T>>,
+        store: *mut ComponentStore<T>,
         _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> ReadQuery<'a, T> {
         #[inline]
-        fn new(store: ReadGuard<ComponentStore<T>>) -> ReadQuery<'a, T> {
-            ReadQuery { store, _x: PhantomData }
+        fn new(store: &RwCell<ComponentStore<T>>) -> ReadQuery<'a, T> {
+            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
+            unsafe {
+                ReadQuery { store: store.get_ptr_raw(), _x: PhantomData }
+            }
+        }
+
+        #[inline]
+        fn store_ref(&self) -> &ComponentStore<T> {
+            unsafe {
+                &*self.store
+            }
         }
     }
 
     impl<'a, T> WriteQuery<'a, T> {
         #[inline]
-        fn new(store: RwGuard<ComponentStore<T>>) -> WriteQuery<'a, T> {
-            WriteQuery { store, _x: PhantomData }
+        fn new(store: &RwCell<ComponentStore<T>>) -> WriteQuery<'a, T> {
+            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
+            unsafe {
+                WriteQuery { store: store.get_ptr_raw(), _x: PhantomData }
+            }
+        }
+
+        #[inline]
+        fn store_ref(&self) -> &ComponentStore<T> {
+            unsafe {
+                &*self.store
+            }
+        }
+
+        #[inline]
+        fn store_mut_ref(&mut self) -> &mut ComponentStore<T> {
+            unsafe {
+                &mut *self.store
+            }
         }
     }
 
@@ -204,13 +231,13 @@ pub mod store {
 
         #[inline]
         fn len(&self, section: usize) -> usize {
-            self.store.section_len(section)
+            self.store_ref().section_len(section)
         }
 
         #[inline]
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
             let (section, loc) = coords;
-            let ptr = self.store.get_data_ptr(section);
+            let ptr = self.store_ref().get_data_ptr(section);
             unsafe { &*ptr.add(loc) }
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
@@ -219,7 +246,7 @@ pub mod store {
 
         #[inline]
         fn unwrap(&mut self, section: usize) -> SharedConst<'a, T> {
-            SharedConst::new(self.store.get_data_ptr(section))
+            SharedConst::new(self.store_ref().get_data_ptr(section))
         }
 
         #[inline]
@@ -234,13 +261,13 @@ pub mod store {
 
         #[inline]
         fn len(&self, section: usize) -> usize {
-            self.store.section_len(section)
+            self.store_ref().section_len(section)
         }
 
         #[inline]
         fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
             let (section, loc) = coords;
-            let ptr = self.store.get_data_ptr(section);
+            let ptr = self.store_ref().get_data_ptr(section);
             unsafe { &mut *(ptr.add(loc) as *mut _) }
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
@@ -249,7 +276,7 @@ pub mod store {
 
         #[inline]
         fn unwrap(&mut self, section: usize) -> SharedMut<'a, T> {
-            SharedMut::new(self.store.get_data_mut_ptr(section))
+            SharedMut::new(self.store_mut_ref().get_data_mut_ptr(section))
         }
 
         #[inline]
@@ -269,7 +296,7 @@ pub mod store {
 
         #[inline]
         fn get_query(&self) -> ReadQuery<'a, T> {
-            ReadQuery::new(self.store.read())
+            ReadQuery::new(&self.store)
         }
     }
 
@@ -284,7 +311,7 @@ pub mod store {
 
         #[inline]
         fn get_query(&self) -> WriteQuery<'a, T> {
-            WriteQuery::new(self.store.write())
+            WriteQuery::new(&self.store)
         }
     }
 }

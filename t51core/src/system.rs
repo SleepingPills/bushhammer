@@ -1,7 +1,8 @@
 use crate::component;
-use crate::component::ComponentCoords;
+use crate::component::{ComponentCoords, ComponentStore};
 use crate::entity::{Entity, EntityStore, Transaction};
 use crate::object::{BundleId, ComponentId, EntityId};
+use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -26,7 +27,7 @@ pub trait SystemRuntime {
     fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
     fn add_bundle(&mut self, bundle: &component::Bundle);
     fn remove_bundle(&mut self, id: BundleId);
-    fn get_required_components(&self) -> Vec<ComponentId>;
+    fn get_required_components(&self) -> &Vec<ComponentId>;
 }
 
 pub struct SystemData<T>
@@ -42,6 +43,15 @@ impl<T> SystemData<T>
 where
     T: SystemDef,
 {
+    #[inline]
+    pub(crate) fn new(components: &Registry<ComponentId>) -> SystemData<T> {
+        SystemData {
+            stores: T::new(components),
+            bundles: IndexMap::new(),
+            components: T::get_comp_ids()
+        }
+    }
+
     #[inline]
     pub fn context<'a, 'b>(&'a self, entity_map: &'b HashMap<EntityId, Entity>) -> context::Context<<T as SystemDef>::JoinItem>
     where
@@ -70,6 +80,20 @@ where
     transactions: Vec<Transaction>,
 }
 
+impl<T> SystemEntry<T>
+where
+    T: System,
+{
+    #[inline]
+    pub(crate) fn new(system: T, components: &Registry<ComponentId>) -> SystemEntry<T> {
+        SystemEntry {
+            system,
+            data: SystemData::new(components),
+            transactions: Vec::new()
+        }
+    }
+}
+
 impl<T> SystemRuntime for SystemEntry<T>
 where
     T: System,
@@ -93,8 +117,8 @@ where
     }
 
     #[inline]
-    fn get_required_components(&self) -> Vec<ComponentId> {
-        T::Data::get_comp_ids()
+    fn get_required_components(&self) -> &Vec<ComponentId> {
+        &self.data.components
     }
 }
 
@@ -118,6 +142,7 @@ pub trait Store {
     type QueryItem: Query;
     type DataType;
 
+    fn new(store: Arc<RwCell<ComponentStore<Self::DataType>>>) -> Self;
     fn get_query(&self) -> Self::QueryItem;
 }
 
@@ -128,9 +153,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Arc, ComponentCoords, Indexable, Query, RwCell, Store};
-    use crate::component::ComponentStore;
-    use crate::sync::{ReadGuard, RwGuard};
+    use super::{Arc, ComponentCoords, ComponentStore, Indexable, Query, RwCell, Store};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -189,15 +212,16 @@ pub mod store {
         fn new(store: &RwCell<ComponentStore<T>>) -> ReadQuery<'a, T> {
             // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             unsafe {
-                ReadQuery { store: store.get_ptr_raw(), _x: PhantomData }
+                ReadQuery {
+                    store: store.get_ptr_raw(),
+                    _x: PhantomData,
+                }
             }
         }
 
         #[inline]
         fn store_ref(&self) -> &ComponentStore<T> {
-            unsafe {
-                &*self.store
-            }
+            unsafe { &*self.store }
         }
     }
 
@@ -206,22 +230,21 @@ pub mod store {
         fn new(store: &RwCell<ComponentStore<T>>) -> WriteQuery<'a, T> {
             // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             unsafe {
-                WriteQuery { store: store.get_ptr_raw(), _x: PhantomData }
+                WriteQuery {
+                    store: store.get_ptr_raw(),
+                    _x: PhantomData,
+                }
             }
         }
 
         #[inline]
         fn store_ref(&self) -> &ComponentStore<T> {
-            unsafe {
-                &*self.store
-            }
+            unsafe { &*self.store }
         }
 
         #[inline]
         fn store_mut_ref(&mut self) -> &mut ComponentStore<T> {
-            unsafe {
-                &mut *self.store
-            }
+            unsafe { &mut *self.store }
         }
     }
 
@@ -295,6 +318,11 @@ pub mod store {
         type DataType = T;
 
         #[inline]
+        fn new(store: Arc<RwCell<ComponentStore<T>>>) -> Self {
+            Read { store, _x: PhantomData }
+        }
+
+        #[inline]
         fn get_query(&self) -> ReadQuery<'a, T> {
             ReadQuery::new(&self.store)
         }
@@ -308,6 +336,11 @@ pub mod store {
     impl<'a, T> Store for Write<'a, T> {
         type QueryItem = WriteQuery<'a, T>;
         type DataType = T;
+
+        #[inline]
+        fn new(store: Arc<RwCell<ComponentStore<T>>>) -> Self {
+            Write { store, _x: PhantomData }
+        }
 
         #[inline]
         fn get_query(&self) -> WriteQuery<'a, T> {
@@ -332,10 +365,11 @@ pub trait SystemDef {
     fn as_joined(&self) -> Self::JoinItem;
     fn reify_bundle(sys_comps: &Vec<ComponentId>, bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer;
     fn get_comp_ids() -> Vec<ComponentId>;
+    fn new(components: &Registry<ComponentId>) -> Self;
 }
 
 pub mod join {
-    use super::{ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Store, SystemDef};
+    use super::{ComponentId, ComponentStore, Entity, Indexable, IndexablePtrTup, Joined, Query, Registry, Store, SystemDef};
     use crate::component;
 
     macro_rules! _decl_system_replace_expr {
@@ -429,6 +463,12 @@ pub mod join {
                 #[inline]
                 fn get_comp_ids() -> Vec<ComponentId> {
                     vec![$(ComponentId::new::<$field_type::DataType>()),*]
+                }
+
+                #[inline]
+                fn new(components: &Registry<ComponentId>) -> Self {
+                    let comp_ids = Self::get_comp_ids();
+                    ($($field_type::new(components.get::<ComponentStore<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
                 }
             }
         };

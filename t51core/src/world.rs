@@ -2,32 +2,33 @@ use crate::entity;
 use crate::object::{ComponentId, EntityId, SystemId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
+use crate::system::System;
+use crate::system::SystemEntry;
 use crate::system::SystemRuntime;
 use hashbrown::HashMap;
+use hashbrown::HashSet;
 use indexmap::IndexMap;
 use std::sync::Arc;
-use hashbrown::HashSet;
 
 pub struct World {
-    components: Registry<ComponentId>,
-    entities: HashMap<EntityId, entity::Entity>,
-    systems: IndexMap<SystemId, Box<SystemRuntime>>,
-    //    transactions: Vec<entity::Transaction>,
+    component_registry: Registry<ComponentId>,
+    entity_registry: HashMap<EntityId, entity::Entity>,
+    system_registry: IndexMap<SystemId, Box<SystemRuntime>>,
+    transactions: Vec<entity::Transaction>,
 }
 
 impl World {
     #[inline]
-    pub fn create_entity(&mut self) -> entity::Builder {
-        unimplemented!()
+    pub fn entities(&mut self) -> entity::EntityStore {
+        entity::EntityStore::new(&self.entity_registry, &mut self.transactions)
     }
 
-//    pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
-//        unimplemented!()
-//    }
-
     #[inline]
-    pub fn remove_entity(&mut self, id: usize) {
-        unimplemented!()
+    pub fn create_runtime<T>(&self, system: T) -> SystemEntry<T>
+    where
+        T: System,
+    {
+        SystemEntry::new(system, &self.component_registry)
     }
 }
 
@@ -174,29 +175,6 @@ impl World {
     }
 }
 
-impl World {
-    #[inline]
-    pub fn create_entity(&mut self) -> entity::Builder {
-        entity::Builder::new(&self.comp_sys, &self.sys_comp, &mut self.main_queue)
-    }
-
-    pub fn edit_entity(&mut self, id: usize) -> Result<entity::Editor, entity::TransactionError> {
-        match self.entities.get(id) {
-            Some(entity) => Ok(entity::Editor::new(
-                entity,
-                &self.comp_sys,
-                &self.sys_comp,
-                &mut self.main_queue,
-            )),
-            _ => Err(entity::TransactionError::EntityNotFound(id)),
-        }
-    }
-
-    #[inline]
-    pub fn remove_entity(&mut self, id: usize) {
-        self.main_queue.push(entity::Transaction::RemoveEnt(id));
-    }
-}
 
 impl World {
     #[allow(unused_variables)]

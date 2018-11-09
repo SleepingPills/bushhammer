@@ -1,5 +1,5 @@
 use crate::component::ComponentCoords;
-use crate::object::{BundleId, ComponentId, EntityId};
+use crate::object::{ShardId, ComponentId, EntityId};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::any::Any;
@@ -9,7 +9,7 @@ use std::any::Any;
 #[derive(Debug)]
 pub struct Entity {
     pub id: EntityId,
-    pub bundle_id: BundleId,
+    pub bundle_id: ShardId,
     pub components: HashMap<ComponentId, ComponentCoords>,
 }
 
@@ -151,7 +151,7 @@ impl<'a> Editor<'a> {
     }
 
     #[inline]
-    pub fn build(mut self) {
+    pub fn build(self) {
         self.builder.queue.push(Transaction::EditEnt(self.id, self.builder.ent_def));
     }
 }

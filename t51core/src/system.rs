@@ -1,7 +1,7 @@
 use crate::component;
-use crate::component::{ComponentCoords, ComponentStore};
+use crate::component::{ComponentCoords, ShardedColumn};
 use crate::entity::{Entity, EntityStore, Transaction};
-use crate::object::{BundleId, ComponentId, EntityId};
+use crate::object::{ShardId, ComponentId, EntityId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
@@ -25,9 +25,10 @@ pub trait System {
 
 pub trait SystemRuntime {
     fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
-    fn add_bundle(&mut self, bundle: &component::Bundle);
-    fn remove_bundle(&mut self, id: BundleId);
+    fn add_shard(&mut self, shard: &component::Shard);
+    fn remove_shard(&mut self, id: ShardId);
     fn get_required_components(&self) -> &Vec<ComponentId>;
+    fn get_transactions(&mut self) -> &mut Vec<Transaction>;
 }
 
 pub struct SystemData<T>
@@ -35,7 +36,7 @@ where
     T: SystemDef,
 {
     stores: T,
-    bundles: IndexMap<BundleId, <T::JoinItem as Joined>::Indexer>,
+    shards: IndexMap<ShardId, <T::JoinItem as Joined>::Indexer>,
     components: Vec<ComponentId>,
 }
 
@@ -47,7 +48,7 @@ where
     pub(crate) fn new(components: &Registry<ComponentId>) -> SystemData<T> {
         SystemData {
             stores: T::new(components),
-            bundles: IndexMap::new(),
+            shards: IndexMap::new(),
             components: T::get_comp_ids()
         }
     }
@@ -57,17 +58,17 @@ where
     where
         'b: 'a,
     {
-        context::Context::new(self.stores.as_joined(), &self.bundles, entity_map, &self.components)
+        context::Context::new(self.stores.as_joined(), &self.shards, entity_map, &self.components)
     }
 
     #[inline]
-    fn add_bundle(&mut self, bundle: &component::Bundle) {
-        self.bundles.insert(bundle.id, T::reify_bundle(&self.components, bundle));
+    fn add_shard(&mut self, shard: &component::Shard) {
+        self.shards.insert(shard.id, T::reify_shard(&self.components, shard));
     }
 
     #[inline]
-    fn remove_bundle(&mut self, id: BundleId) {
-        self.bundles.remove(&id);
+    fn remove_shard(&mut self, id: ShardId) {
+        self.shards.remove(&id);
     }
 }
 
@@ -107,18 +108,23 @@ where
     }
 
     #[inline]
-    fn add_bundle(&mut self, bundle: &component::Bundle) {
-        self.data.add_bundle(bundle);
+    fn add_shard(&mut self, bundle: &component::Shard) {
+        self.data.add_shard(bundle);
     }
 
     #[inline]
-    fn remove_bundle(&mut self, id: BundleId) {
-        self.data.remove_bundle(id);
+    fn remove_shard(&mut self, id: ShardId) {
+        self.data.remove_shard(id);
     }
 
     #[inline]
     fn get_required_components(&self) -> &Vec<ComponentId> {
         &self.data.components
+    }
+
+    #[inline]
+    fn get_transactions(&mut self) -> &mut Vec<Transaction> {
+        &mut self.transactions
     }
 }
 
@@ -138,11 +144,11 @@ pub trait Query {
     fn null() -> Self::DataPtr;
 }
 
-pub trait Store {
+pub trait Queryable {
     type QueryItem: Query;
     type DataType;
 
-    fn new(store: Arc<RwCell<ComponentStore<Self::DataType>>>) -> Self;
+    fn new(store: Arc<RwCell<ShardedColumn<Self::DataType>>>) -> Self;
     fn get_query(&self) -> Self::QueryItem;
 }
 
@@ -153,31 +159,31 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Arc, ComponentCoords, ComponentStore, Indexable, Query, RwCell, Store};
+    use super::{Arc, ComponentCoords, ShardedColumn, Indexable, Query, RwCell, Queryable};
     use std::marker::PhantomData;
     use std::ptr;
 
     #[repr(transparent)]
-    pub struct SharedConst<'a, T>(*const T, PhantomData<&'a ()>);
+    pub struct ReadPtr<'a, T>(*const T, PhantomData<&'a ()>);
 
-    impl<'a, T> SharedConst<'a, T> {
+    impl<'a, T> ReadPtr<'a, T> {
         #[inline]
-        fn new(ptr: *const T) -> SharedConst<'a, T> {
-            SharedConst(ptr, PhantomData)
+        fn new(ptr: *const T) -> ReadPtr<'a, T> {
+            ReadPtr(ptr, PhantomData)
         }
     }
 
     #[repr(transparent)]
-    pub struct SharedMut<'a, T>(*mut T, PhantomData<&'a ()>);
+    pub struct RwPtr<'a, T>(*mut T, PhantomData<&'a ()>);
 
-    impl<'a, T> SharedMut<'a, T> {
+    impl<'a, T> RwPtr<'a, T> {
         #[inline]
-        fn new(ptr: *mut T) -> SharedMut<'a, T> {
-            SharedMut(ptr, PhantomData)
+        fn new(ptr: *mut T) -> RwPtr<'a, T> {
+            RwPtr(ptr, PhantomData)
         }
     }
 
-    impl<'a, T: 'a> Indexable for SharedConst<'a, T> {
+    impl<'a, T: 'a> Indexable for ReadPtr<'a, T> {
         type Item = &'a T;
 
         #[inline]
@@ -186,7 +192,7 @@ pub mod store {
         }
     }
 
-    impl<'a, T: 'a> Indexable for SharedMut<'a, T> {
+    impl<'a, T: 'a> Indexable for RwPtr<'a, T> {
         type Item = &'a mut T;
 
         #[inline]
@@ -197,19 +203,19 @@ pub mod store {
 
     #[repr(transparent)]
     pub struct ReadQuery<'a, T> {
-        store: *const ComponentStore<T>,
+        store: *const ShardedColumn<T>,
         _x: PhantomData<&'a T>,
     }
 
     #[repr(transparent)]
     pub struct WriteQuery<'a, T> {
-        store: *mut ComponentStore<T>,
+        store: *mut ShardedColumn<T>,
         _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> ReadQuery<'a, T> {
         #[inline]
-        fn new(store: &RwCell<ComponentStore<T>>) -> ReadQuery<'a, T> {
+        fn new(store: &RwCell<ShardedColumn<T>>) -> ReadQuery<'a, T> {
             // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             unsafe {
                 ReadQuery {
@@ -220,14 +226,14 @@ pub mod store {
         }
 
         #[inline]
-        fn store_ref(&self) -> &ComponentStore<T> {
+        fn store_ref(&self) -> &ShardedColumn<T> {
             unsafe { &*self.store }
         }
     }
 
     impl<'a, T> WriteQuery<'a, T> {
         #[inline]
-        fn new(store: &RwCell<ComponentStore<T>>) -> WriteQuery<'a, T> {
+        fn new(store: &RwCell<ShardedColumn<T>>) -> WriteQuery<'a, T> {
             // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             unsafe {
                 WriteQuery {
@@ -238,18 +244,18 @@ pub mod store {
         }
 
         #[inline]
-        fn store_ref(&self) -> &ComponentStore<T> {
+        fn store_ref(&self) -> &ShardedColumn<T> {
             unsafe { &*self.store }
         }
 
         #[inline]
-        fn store_mut_ref(&mut self) -> &mut ComponentStore<T> {
+        fn store_mut_ref(&mut self) -> &mut ShardedColumn<T> {
             unsafe { &mut *self.store }
         }
     }
 
     impl<'a, T: 'a> Query for ReadQuery<'a, T> {
-        type DataPtr = SharedConst<'a, T>;
+        type DataPtr = ReadPtr<'a, T>;
         type Item = &'a T;
 
         #[inline]
@@ -268,18 +274,18 @@ pub mod store {
         }
 
         #[inline]
-        fn unwrap(&mut self, section: usize) -> SharedConst<'a, T> {
-            SharedConst::new(self.store_ref().get_data_ptr(section))
+        fn unwrap(&mut self, section: usize) -> ReadPtr<'a, T> {
+            ReadPtr::new(self.store_ref().get_data_ptr(section))
         }
 
         #[inline]
-        fn null() -> SharedConst<'a, T> {
-            SharedConst::new(ptr::null())
+        fn null() -> ReadPtr<'a, T> {
+            ReadPtr::new(ptr::null())
         }
     }
 
     impl<'a, T: 'a> Query for WriteQuery<'a, T> {
-        type DataPtr = SharedMut<'a, T>;
+        type DataPtr = RwPtr<'a, T>;
         type Item = &'a mut T;
 
         #[inline]
@@ -298,27 +304,27 @@ pub mod store {
         }
 
         #[inline]
-        fn unwrap(&mut self, section: usize) -> SharedMut<'a, T> {
-            SharedMut::new(self.store_mut_ref().get_data_mut_ptr(section))
+        fn unwrap(&mut self, section: usize) -> RwPtr<'a, T> {
+            RwPtr::new(self.store_mut_ref().get_data_mut_ptr(section))
         }
 
         #[inline]
-        fn null() -> SharedMut<'a, T> {
-            SharedMut::new(ptr::null_mut())
+        fn null() -> RwPtr<'a, T> {
+            RwPtr::new(ptr::null_mut())
         }
     }
 
     pub struct Read<'a, T> {
-        store: Arc<RwCell<ComponentStore<T>>>,
+        store: Arc<RwCell<ShardedColumn<T>>>,
         _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Store for Read<'a, T> {
+    impl<'a, T> Queryable for Read<'a, T> {
         type QueryItem = ReadQuery<'a, T>;
         type DataType = T;
 
         #[inline]
-        fn new(store: Arc<RwCell<ComponentStore<T>>>) -> Self {
+        fn new(store: Arc<RwCell<ShardedColumn<T>>>) -> Self {
             Read { store, _x: PhantomData }
         }
 
@@ -329,16 +335,16 @@ pub mod store {
     }
 
     pub struct Write<'a, T> {
-        store: Arc<RwCell<ComponentStore<T>>>,
+        store: Arc<RwCell<ShardedColumn<T>>>,
         _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Store for Write<'a, T> {
+    impl<'a, T> Queryable for Write<'a, T> {
         type QueryItem = WriteQuery<'a, T>;
         type DataType = T;
 
         #[inline]
-        fn new(store: Arc<RwCell<ComponentStore<T>>>) -> Self {
+        fn new(store: Arc<RwCell<ShardedColumn<T>>>) -> Self {
             Write { store, _x: PhantomData }
         }
 
@@ -363,13 +369,13 @@ pub trait SystemDef {
     type JoinItem: Joined;
 
     fn as_joined(&self) -> Self::JoinItem;
-    fn reify_bundle(sys_comps: &Vec<ComponentId>, bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer;
+    fn reify_shard(sys_comps: &Vec<ComponentId>, shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer;
     fn get_comp_ids() -> Vec<ComponentId>;
     fn new(components: &Registry<ComponentId>) -> Self;
 }
 
 pub mod join {
-    use super::{ComponentId, ComponentStore, Entity, Indexable, IndexablePtrTup, Joined, Query, Registry, Store, SystemDef};
+    use super::{ComponentId, ShardedColumn, Entity, Indexable, IndexablePtrTup, Joined, Query, Registry, Queryable, SystemDef};
     use crate::component;
 
     macro_rules! _decl_system_replace_expr {
@@ -444,7 +450,7 @@ pub mod join {
         ($( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> SystemDef for ($($field_type),*,)
             where
-                $($field_type: Store),*,
+                $($field_type: Queryable),*,
                 $($field_type::DataType: 'static),*
             {
                 type JoinItem = ($($field_type::QueryItem),*,);
@@ -455,9 +461,9 @@ pub mod join {
                 }
 
                 #[inline]
-                fn reify_bundle(sys_comps: &Vec<ComponentId>,
-                                bundle: &component::Bundle) -> <Self::JoinItem as Joined>::Indexer {
-                    ($(bundle.get_loc(sys_comps[$field_seq])),*,)
+                fn reify_shard(sys_comps: &Vec<ComponentId>,
+                                shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer {
+                    ($(shard.get_loc(sys_comps[$field_seq])),*,)
                 }
 
                 #[inline]
@@ -468,7 +474,7 @@ pub mod join {
                 #[inline]
                 fn new(components: &Registry<ComponentId>) -> Self {
                     let comp_ids = Self::get_comp_ids();
-                    ($($field_type::new(components.get::<ComponentStore<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
+                    ($($field_type::new(components.get::<ShardedColumn<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
                 }
             }
         };
@@ -485,7 +491,7 @@ pub mod join {
 }
 
 pub mod context {
-    use super::{BundleId, ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
+    use super::{ShardId, ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
     use indexmap::map::Values;
 
     pub struct Context<'a, T>
@@ -493,7 +499,7 @@ pub mod context {
         T: Joined,
     {
         stores: T,
-        bundles: &'a IndexMap<BundleId, T::Indexer>,
+        shards: &'a IndexMap<ShardId, T::Indexer>,
         entity_map: &'a HashMap<EntityId, Entity>,
         components: &'a Vec<ComponentId>,
     }
@@ -505,13 +511,13 @@ pub mod context {
         #[inline]
         pub fn new(
             stores: T,
-            bundles: &'a IndexMap<BundleId, T::Indexer>,
+            shards: &'a IndexMap<ShardId, T::Indexer>,
             entity_map: &'a HashMap<EntityId, Entity>,
             components: &'a Vec<ComponentId>,
         ) -> Context<'a, T> {
             Context {
                 stores,
-                bundles,
+                shards,
                 entity_map,
                 components,
             }
@@ -528,10 +534,10 @@ pub mod context {
 
         #[inline]
         pub fn iter(&mut self) -> ComponentIterator<T> {
-            let mut stream = self.bundles.values();
+            let mut stream = self.shards.values();
 
             unsafe {
-                let (size, bundle) = match stream.next() {
+                let (size, shard) = match stream.next() {
                     Some(item) => self.stores.get_ptr_tup(item),
                     _ => (0usize, T::get_zero_ptr_tup()),
                 };
@@ -539,7 +545,7 @@ pub mod context {
                 ComponentIterator {
                     stores: &mut self.stores,
                     stream,
-                    bundle,
+                    shard,
                     size,
                     counter: 0,
                 }
@@ -552,8 +558,8 @@ pub mod context {
         T: Joined,
     {
         stores: &'a mut T,
-        stream: Values<'a, BundleId, T::Indexer>,
-        bundle: T::PtrTup,
+        stream: Values<'a, ShardId, T::Indexer>,
+        shard: T::PtrTup,
         size: usize,
         counter: usize,
     }
@@ -570,12 +576,12 @@ pub mod context {
                 if self.counter < self.size {
                     let idx = self.counter;
                     self.counter += 1;
-                    return Some(self.bundle.index(idx));
+                    return Some(self.shard.index(idx));
                 }
 
                 if let Some(item) = self.stream.next() {
-                    let (size, bundle) = self.stores.get_ptr_tup(item);
-                    self.bundle = bundle;
+                    let (size, shard) = self.stores.get_ptr_tup(item);
+                    self.shard = shard;
                     self.size = size;
                     self.counter = 0;
                 } else {

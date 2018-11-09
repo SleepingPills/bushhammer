@@ -1,34 +1,106 @@
+use crate::component;
 use crate::entity;
-use crate::object::{ComponentId, EntityId, SystemId};
+use crate::object::{ShardId, ComponentId, EntityId, SystemId};
 use crate::registry::Registry;
-use crate::sync::RwCell;
-use crate::system::System;
-use crate::system::SystemEntry;
-use crate::system::SystemRuntime;
+use crate::system;
 use hashbrown::HashMap;
-use hashbrown::HashSet;
 use indexmap::IndexMap;
-use std::sync::Arc;
 
 pub struct World {
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
-    system_registry: IndexMap<SystemId, Box<SystemRuntime>>,
-    transactions: Vec<entity::Transaction>,
+    system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
+    shards: HashMap<ShardId, component::Shard>,
+    transactions: Option<Vec<entity::Transaction>>,
 }
 
 impl World {
     #[inline]
     pub fn entities(&mut self) -> entity::EntityStore {
-        entity::EntityStore::new(&self.entity_registry, &mut self.transactions)
+        entity::EntityStore::new(&self.entity_registry, self.transactions.as_mut().unwrap())
+    }
+}
+
+impl World {
+    pub fn run(&mut self) {
+        self.process_transactions();
+        self.process_systems();
+    }
+}
+
+impl World {
+    /// Drains all the system transactions into the common transaction queue
+    fn collect_transactions(&mut self) {
+        let transactions = self.transactions.as_mut().unwrap();
+
+        for (_, system) in self.system_registry.iter_mut() {
+            transactions.append(system.get_transactions());
+        }
     }
 
+    fn process_transactions(&mut self) {
+        self.collect_transactions();
+
+        // Take the transactions out
+        let mut transactions = self.transactions.take().unwrap();
+
+        for transaction in transactions.drain(..) {
+            match transaction {
+                entity::Transaction::AddEnt(ent_def) => self.apply_add(ent_def),
+                entity::Transaction::EditEnt(id, ent_def) => self.apply_edit(id, ent_def),
+                entity::Transaction::RemoveEnt(id) => self.apply_remove(id),
+            }
+        }
+
+        self.transactions = transactions.into();
+    }
+
+    fn apply_add(&mut self, ent_def: entity::EntityDef) {
+
+    }
+
+    fn apply_edit(&mut self, id: EntityId, ent_def: entity::EntityDef) {
+
+    }
+
+    fn apply_remove(&mut self, id: EntityId) {
+
+    }
+}
+
+impl World {
     #[inline]
-    pub fn create_runtime<T>(&self, system: T) -> SystemEntry<T>
+    pub fn create_runtime<T>(&self, system: T) -> system::SystemEntry<T>
     where
-        T: System,
+        T: system::System,
     {
-        SystemEntry::new(system, &self.component_registry)
+        system::SystemEntry::new(system, &self.component_registry)
+    }
+
+    pub fn register_system<T>(&mut self, system: T)
+    where
+        T: 'static + system::System,
+    {
+        let id = SystemId::new::<T>();
+        let runtime = self.create_runtime(system);
+
+        self.system_registry.insert(id, Box::new(runtime));
+    }
+
+    pub fn process_systems(&mut self) {
+        unimplemented!()
+    }
+}
+
+impl World {
+    pub fn register_component<T>(&mut self)
+    where
+        T: 'static,
+    {
+        let id = ComponentId::new::<T>();
+        let store = component::ShardedColumn::<T>::new();
+
+        self.component_registry.register(id, store);
     }
 }
 
@@ -173,39 +245,5 @@ impl World {
         let id = self.entities.peek_index();
         self.entities.push(entity::Entity::new(id))
     }
-}
-
-
-impl World {
-    #[allow(unused_variables)]
-    pub fn register_component<T>(&mut self, id: ComponentId) {
-        /*
-        Creates an instance of a componentstore and registers it in the registry
-        */
-unimplemented!()
-}
-
-#[allow(unused_variables)]
-pub fn register_system<T>(&mut self, id: SystemId) {
-let sys_id = SystemId::new::<T>();
-
-// Build the system and run the init callback
-let mut system = T::new(&self.components);
-system.init(&self.components, &self.systems);
-
-// Register the system and core trait
-self.systems.register(sys_id, system);
-self.systems.register_trait::<T, ManagedSystem>(&sys_id);
-
-// Add system dependencies
-let required_components = T::required_components();
-
-for &component_id in required_components.iter() {
-let entry = self.comp_sys.entry(component_id).or_insert_with(HashSet::new);
-entry.insert(sys_id);
-}
-
-self.sys_comp.insert(sys_id, HashSet::from_iter(required_components));
-}
 }
 */

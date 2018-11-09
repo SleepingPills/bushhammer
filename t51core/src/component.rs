@@ -1,19 +1,18 @@
 use crate::alloc::VecPool;
-use crate::entity::Entity;
-use crate::object::EntityId;
-use crate::object::{BundleId, ComponentId};
-use crate::registry::Registry;
-use crate::sync::RwCell;
+use crate::object::{ShardId, ComponentId};
 use hashbrown::HashMap;
-use std::sync::Arc;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
-pub struct ComponentStore<T> {
+pub struct ShardedColumn<T> {
     data: VecPool<Vec<T>>,
 }
 
-impl<T> ComponentStore<T> {
+impl<T> ShardedColumn<T> {
+    #[inline]
+    pub(crate) fn new() -> ShardedColumn<T> {
+        ShardedColumn { data: VecPool::new() }
+    }
     #[allow(dead_code)]
     #[inline]
     pub(crate) fn get_item(&self, (section, loc): ComponentCoords) -> &T {
@@ -42,12 +41,20 @@ impl<T> ComponentStore<T> {
     }
 }
 
-pub struct Bundle {
-    pub(crate) id: BundleId,
+trait Column {
+
+}
+
+impl<T> Column for ShardedColumn<T> {
+
+}
+
+pub struct Shard {
+    pub(crate) id: ShardId,
     sections: HashMap<ComponentId, usize>,
 }
 
-impl Bundle {
+impl Shard {
     #[inline]
     pub(crate) fn get_loc(&self, id: ComponentId) -> usize {
         self.sections[&id]

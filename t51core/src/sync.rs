@@ -1,7 +1,6 @@
 use std::cell::UnsafeCell;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::ptr::NonNull;
 use std::sync::atomic::{AtomicI64, Ordering};
 use std::sync::Arc;
 
@@ -78,11 +77,6 @@ impl<T> RwCell<T> {
     #[inline]
     pub(crate) unsafe fn get_ptr_raw(&self) -> *mut T {
         self.item.get()
-    }
-
-    #[inline]
-    pub(crate) unsafe fn get_ptr(&self) -> NonNull<T> {
-        NonNull::new_unchecked(self.item.get())
     }
 }
 

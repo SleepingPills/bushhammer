@@ -51,7 +51,7 @@ where
 
     /// Get a trait object associated with the given key. The trait has to be registered
     /// first. The registry does not attempt to discover all traits an object implements.
-    pub fn try_get_trait<T>(&self, key: &K) -> Option<Arc<RwCell<WeakBox<T>>>>
+    pub fn try_get_trait<T>(&self, key: &K) -> Option<TraitBox<T>>
     where
         T: 'static + ?Sized,
     {
@@ -65,7 +65,7 @@ where
         }
     }
 
-    pub fn get_trait<T>(&self, key: &K) -> Arc<RwCell<WeakBox<T>>>
+    pub fn get_trait<T>(&self, key: &K) -> TraitBox<T>
     where
         T: 'static + ?Sized,
     {
@@ -121,7 +121,7 @@ where
     {
         self.data
             .iter()
-            .filter_map(|(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+            .filter_map(|(key, bundle)| match bundle.get::<TraitBox<T>>() {
                 Some(item) => Some((key, item.read())),
                 _ => None,
             })
@@ -134,12 +134,14 @@ where
     {
         self.data
             .iter()
-            .filter_map(|(key, bundle)| match bundle.get::<Arc<RwCell<WeakBox<T>>>>() {
+            .filter_map(|(key, bundle)| match bundle.get::<TraitBox<T>>() {
                 Some(item) => Some((key, item.write())),
                 _ => None,
             })
     }
 }
+
+pub type TraitBox<T> = Arc<RwCell<WeakBox<T>>>;
 
 /// Umbrella object for a single "instance" in a registry. The instance may be accessed
 /// using the root object itself, or the various traits it implements that have been registered.

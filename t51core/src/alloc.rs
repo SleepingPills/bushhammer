@@ -38,6 +38,11 @@ impl<T> VecPool<T> {
     }
 
     #[inline]
+    pub fn len(&self) -> usize {
+        self.store.len()
+    }
+
+    #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
         self.store.get_unchecked(index)
     }

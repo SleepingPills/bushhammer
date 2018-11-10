@@ -1,7 +1,6 @@
 use crate::component::ComponentCoords;
 use crate::object::{ShardId, ComponentId, EntityId};
 use hashbrown::HashMap;
-use indexmap::IndexMap;
 use std::any::Any;
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
@@ -31,13 +30,13 @@ pub enum CompDef {
 
 #[derive(Debug)]
 pub struct EntityDef {
-    pub components: IndexMap<ComponentId, CompDef>,
+    pub components: HashMap<ComponentId, CompDef>,
 }
 
 impl EntityDef {
     pub fn new() -> Self {
         EntityDef {
-            components: IndexMap::new(),
+            components: HashMap::new(),
         }
     }
 }
@@ -117,25 +116,43 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
+        let comp_id = ComponentId::new::<T>();
+        if comp_id == ComponentId::new::<EntityId>() {
+            panic!("Can't edit Entity Id component")
+        }
+
         self.builder
-            .record_component(ComponentId::new::<T>(), CompDef::Boxed(Box::new(instance)));
+            .record_component(comp_id, CompDef::Boxed(Box::new(instance)));
         self
     }
 
     #[inline]
     pub fn with_json(mut self, comp_id: ComponentId, json: String) -> Self {
+        if comp_id == ComponentId::new::<EntityId>() {
+            panic!("Can't edit Entity Id component")
+        }
+
         self.builder.record_component(comp_id, CompDef::Json(json));
         self
     }
 
     #[inline]
     pub fn remove<T: 'static>(mut self) -> Self {
-        self.builder.ent_def.components.remove(&ComponentId::new::<T>());
+        let comp_id = ComponentId::new::<T>();
+        if comp_id == ComponentId::new::<EntityId>() {
+            panic!("Can't delete Entity Id component")
+        }
+
+        self.builder.ent_def.components.remove(&comp_id);
         self
     }
 
     #[inline]
     pub fn remove_id(mut self, comp_id: ComponentId) -> Self {
+        if comp_id == ComponentId::new::<EntityId>() {
+            panic!("Can't delete Entity Id component")
+        }
+
         self.builder.ent_def.components.remove(&comp_id);
         self
     }

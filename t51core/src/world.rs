@@ -2,6 +2,7 @@ use crate::component;
 use crate::entity;
 use crate::object::{ComponentId, EntityId, ShardId, SystemId};
 use crate::registry::Registry;
+use crate::registry::TraitBox;
 use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -24,6 +25,7 @@ impl World {
 }
 
 impl World {
+    #[inline]
     pub fn run(&mut self) {
         self.process_transactions();
         self.process_systems();
@@ -60,6 +62,13 @@ impl World {
 
     /// Add a new entity to the world.
     fn apply_add(&mut self, mut ent_def: entity::EntityDef) {
+        let id = self.next_entity_id();
+
+        // Add the id as a mandatory extra component
+        ent_def
+            .components
+            .insert(ComponentId::new::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
+
         // Prepare a sorted list of components defined on the new entity
         let mut shard_comp: Vec<ComponentId> = ent_def.components.keys().cloned().collect();
         shard_comp.sort();
@@ -75,8 +84,8 @@ impl World {
 
         // Ingest all components and stash away the coordinates
         let mut components = HashMap::new();
-        for (comp_id, comp_def) in ent_def.components.drain(..) {
-            let column = &mut self.component_registry.get_trait::<component::Column>(&comp_id).write();
+        for (comp_id, comp_def) in ent_def.components.drain() {
+            let column = &mut self.get_column(comp_id).write();
 
             let section = shard.get_loc(comp_id);
 
@@ -90,7 +99,7 @@ impl World {
         }
 
         let entity = entity::Entity {
-            id: self.next_entity_id(),
+            id,
             shard_id: shard.id,
             components,
         };
@@ -100,7 +109,31 @@ impl World {
 
     /// Edit an existing entity.
     fn apply_edit(&mut self, id: EntityId, ent_def: entity::EntityDef) {
-        unimplemented!()
+        // Retrieve current entity
+        // Compare set of components on entity and the new definition
+        // If they are the same, just apply the transactions as it is clearly just an update
+        //
+        // If they are different, the existing component entries need to be removed
+        // Get/create new shard
+        // We get the id of the last entry in the array (it will be swapped in)
+        // We retrieve the last entity entry
+        // Iterate entries of the old entity:
+        // For each entry, we pop the new definition out of the indexmap
+        // If it's a Nop, we transfer over to the new shard
+        // If it's a component def, we add the new one and drop the old one
+        // If it is missing, we simply delete the old one.
+        // In each case, we update the last entry entity to the swapped in index
+        // We go over any remaining entries in the entity definition and add them
+        if let Some(current_ent) = self.entity_registry.remove(&id) {
+            // Check if the new definition has the same set of components
+            if current_ent.components.len() == ent_def.components.len()
+                && (current_ent.components.keys().all(|cid| ent_def.components.contains_key(cid)))
+            {
+
+            } else {
+
+            }
+        }
     }
 
     /// Remove an existing entity from the world.
@@ -110,12 +143,26 @@ impl World {
 
     /// Create a new shard based on the supplied component combination and return it's ID.
     fn create_shard(&mut self, components: &Vec<ComponentId>) -> ShardId {
-        unimplemented!()
+        let sections: HashMap<_, _> = components
+            .iter()
+            .map(|&cid| (cid, self.get_column(cid).write().new_section()))
+            .collect();
+
+        let id = self.shards.len();
+        let shard = component::Shard::new(id, sections);
+        self.shards.insert(id, shard);
+        id
     }
 
     /// Get the next entity id.
+    #[inline]
     fn next_entity_id(&self) -> EntityId {
         return self.entity_registry.len();
+    }
+
+    #[inline]
+    fn get_column(&self, comp_id: ComponentId) -> TraitBox<component::Column> {
+        self.component_registry.get_trait::<component::Column>(&comp_id)
     }
 }
 

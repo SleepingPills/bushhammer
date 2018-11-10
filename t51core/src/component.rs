@@ -2,6 +2,8 @@ use crate::alloc::VecPool;
 use crate::object::{ComponentId, ShardId};
 use hashbrown::HashMap;
 use std::any::Any;
+use serde_json;
+use serde::de::DeserializeOwned;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -27,6 +29,16 @@ impl<T> ShardedColumn<T> {
     }
 
     #[inline]
+    pub(crate) fn push_to_section(&mut self, instance: T, section: usize) -> usize {
+        unsafe {
+            let storage = self.data.get_unchecked_mut(section);
+            let loc = storage.len();
+            storage.push(instance);
+            loc
+        }
+    }
+
+    #[inline]
     pub(crate) fn section_len(&self, section: usize) -> usize {
         unsafe { self.data.get_unchecked(section).len() }
     }
@@ -43,17 +55,17 @@ impl<T> ShardedColumn<T> {
 }
 
 pub trait Column {
-    fn ingest_box(&mut self, boxed: Box<Any>) -> usize;
-    fn ingest_json(&mut self, json: String) -> usize;
+    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
+    fn ingest_json(&mut self, json: String, section: usize) -> usize;
 }
 
-impl<T> Column for ShardedColumn<T> {
-    fn ingest_box(&mut self, boxed: Box<Any>) -> usize {
-        unimplemented!()
+impl<T> Column for ShardedColumn<T> where T:'static + DeserializeOwned {
+    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize {
+        self.push_to_section(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
     }
 
-    fn ingest_json(&mut self, json: String) -> usize {
-        unimplemented!()
+    fn ingest_json(&mut self, json: String, section: usize) -> usize {
+        self.push_to_section(serde_json::from_str(&json).expect("Error deserializing component"), section)
     }
 }
 

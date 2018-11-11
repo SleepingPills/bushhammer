@@ -1,11 +1,12 @@
 use crate::component;
 use crate::component::{ComponentCoords, ShardedColumn};
 use crate::entity::{Entity, EntityStore, Transaction};
-use crate::object::{ShardId, ComponentId, EntityId};
+use crate::object::{ComponentId, EntityId, ShardId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use std::any::TypeId;
 use std::sync::Arc;
 
 #[macro_export]
@@ -24,7 +25,7 @@ pub trait System {
 }
 
 pub trait SystemRuntime {
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>);
     fn add_shard(&mut self, shard: &component::Shard);
     fn remove_shard(&mut self, id: ShardId);
     fn get_required_components(&self) -> &Vec<ComponentId>;
@@ -45,11 +46,12 @@ where
     T: SystemDef,
 {
     #[inline]
-    pub(crate) fn new(components: &Registry<ComponentId>) -> SystemData<T> {
+    pub(crate) fn new(comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemData<T> {
+        let comp_ids = T::get_comp_ids(comp_id_map);
         SystemData {
-            stores: T::new(components),
+            stores: T::new(&comp_ids, comp_map),
             shards: IndexMap::new(),
-            components: T::get_comp_ids()
+            components: comp_ids,
         }
     }
 
@@ -86,11 +88,11 @@ where
     T: System,
 {
     #[inline]
-    pub(crate) fn new(system: T, components: &Registry<ComponentId>) -> SystemEntry<T> {
+    pub(crate) fn new(system: T, comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemEntry<T> {
         SystemEntry {
             system,
-            data: SystemData::new(components),
-            transactions: Vec::new()
+            data: SystemData::new(comp_map, comp_id_map),
+            transactions: Vec::new(),
         }
     }
 }
@@ -100,10 +102,10 @@ where
     T: System,
 {
     #[inline]
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>) {
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>) {
         self.system.run(
             self.data.context(entity_map),
-            EntityStore::new(entity_map, &mut self.transactions),
+            EntityStore::new(entity_map, comp_id_map,&mut self.transactions),
         );
     }
 
@@ -159,7 +161,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Arc, ComponentCoords, ShardedColumn, Indexable, Query, RwCell, Queryable};
+    use super::{Arc, ComponentCoords, Indexable, Query, Queryable, RwCell, ShardedColumn};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -370,12 +372,15 @@ pub trait SystemDef {
 
     fn as_joined(&self) -> Self::JoinItem;
     fn reify_shard(sys_comps: &Vec<ComponentId>, shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer;
-    fn get_comp_ids() -> Vec<ComponentId>;
-    fn new(components: &Registry<ComponentId>) -> Self;
+    fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId>;
+    fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self;
 }
 
 pub mod join {
-    use super::{ComponentId, ShardedColumn, Entity, Indexable, IndexablePtrTup, Joined, Query, Registry, Queryable, SystemDef};
+    use super::{
+        ComponentId, Entity, HashMap, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, ShardedColumn, SystemDef,
+        TypeId,
+    };
     use crate::component;
 
     macro_rules! _decl_system_replace_expr {
@@ -467,14 +472,13 @@ pub mod join {
                 }
 
                 #[inline]
-                fn get_comp_ids() -> Vec<ComponentId> {
-                    vec![$(ComponentId::from::<$field_type::DataType>()),*]
+                fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId> {
+                    vec![$(comp_ids[&TypeId::of::<$field_type::DataType>()]),*]
                 }
 
                 #[inline]
-                fn new(components: &Registry<ComponentId>) -> Self {
-                    let comp_ids = Self::get_comp_ids();
-                    ($($field_type::new(components.get::<ShardedColumn<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
+                fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self {
+                    ($($field_type::new(comp_map.get::<ShardedColumn<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
                 }
             }
         };
@@ -491,7 +495,7 @@ pub mod join {
 }
 
 pub mod context {
-    use super::{ShardId, ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined};
+    use super::{ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined, ShardId};
     use indexmap::map::Values;
 
     pub struct Context<'a, T>

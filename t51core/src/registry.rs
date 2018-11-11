@@ -139,6 +139,11 @@ where
                 _ => None,
             })
     }
+
+    /// Get the number of registered instances
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
 }
 
 pub type TraitBox<T> = Arc<RwCell<WeakBox<T>>>;

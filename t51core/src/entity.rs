@@ -1,7 +1,8 @@
 use crate::component::ComponentCoords;
-use crate::object::{ShardId, ComponentId, EntityId};
+use crate::object::{ComponentId, EntityId, ShardId};
 use hashbrown::HashMap;
 use std::any::Any;
+use std::any::TypeId;
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.
@@ -64,21 +65,23 @@ pub enum Transaction {
 #[derive(Debug)]
 pub struct Builder<'a> {
     ent_def: EntityDef,
+    component_ids: &'a HashMap<TypeId, ComponentId>,
     queue: &'a mut Vec<Transaction>,
 }
 
 impl<'a> Builder<'a> {
     #[inline]
-    pub fn new(queue: &'a mut Vec<Transaction>) -> Self {
+    pub fn new(component_ids: &'a HashMap<TypeId, ComponentId>, queue: &'a mut Vec<Transaction>) -> Self {
         Builder {
             ent_def: EntityDef::new(),
+            component_ids,
             queue,
         }
     }
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
-        self.record_component(ComponentId::from::<T>(), CompDef::Boxed(Box::new(instance)));
+        self.record_component(self.get_component_id::<T>(), CompDef::Boxed(Box::new(instance)));
         self
     }
 
@@ -96,6 +99,10 @@ impl<'a> Builder<'a> {
     pub(crate) fn record_component(&mut self, type_id: ComponentId, def: CompDef) {
         self.ent_def.components.insert(type_id, def);
     }
+
+    fn get_component_id<T:'static>(&self) -> ComponentId {
+        self.component_ids[&TypeId::of::<T>()]
+    }
 }
 
 #[derive(Debug)]
@@ -105,9 +112,10 @@ pub struct Editor<'a> {
 }
 
 impl<'a> Editor<'a> {
-    pub fn new(entity: &Entity, queue: &'a mut Vec<Transaction>) -> Self {
+    pub fn new(entity: &Entity, component_ids: &'a HashMap<TypeId, ComponentId>, queue: &'a mut Vec<Transaction>) -> Self {
         let builder = Builder {
             ent_def: entity.into(),
+            component_ids,
             queue,
         };
 
@@ -116,19 +124,18 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
-        let comp_id = ComponentId::from::<T>();
-        if comp_id == ComponentId::from::<EntityId>() {
+        let comp_id = self.builder.get_component_id::<T>();
+        if comp_id == self.builder.get_component_id::<EntityId>() {
             panic!("Can't edit Entity Id component")
         }
 
-        self.builder
-            .record_component(comp_id, CompDef::Boxed(Box::new(instance)));
+        self.builder.record_component(comp_id, CompDef::Boxed(Box::new(instance)));
         self
     }
 
     #[inline]
     pub fn with_json(mut self, comp_id: ComponentId, json: String) -> Self {
-        if comp_id == ComponentId::from::<EntityId>() {
+        if comp_id == self.builder.get_component_id::<EntityId>() {
             panic!("Can't edit Entity Id component")
         }
 
@@ -138,9 +145,9 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn remove<T: 'static>(mut self) -> Self {
-        let comp_id = ComponentId::from::<T>();
-        if comp_id == ComponentId::from::<EntityId>() {
-            panic!("Can't delete Entity Id component")
+        let comp_id = self.builder.get_component_id::<T>();
+        if comp_id == self.builder.get_component_id::<EntityId>() {
+            panic!("Can't edit Entity Id component")
         }
 
         self.builder.ent_def.components.remove(&comp_id);
@@ -149,7 +156,7 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn remove_id(mut self, comp_id: ComponentId) -> Self {
-        if comp_id == ComponentId::from::<EntityId>() {
+        if comp_id == self.builder.get_component_id::<EntityId>() {
             panic!("Can't delete Entity Id component")
         }
 
@@ -165,24 +172,29 @@ impl<'a> Editor<'a> {
 
 pub struct EntityStore<'a> {
     entity_map: &'a HashMap<EntityId, Entity>,
+    component_ids: &'a HashMap<TypeId, ComponentId>,
     queue: &'a mut Vec<Transaction>,
 }
 
 impl<'a> EntityStore<'a> {
     #[inline]
-    pub fn new(entity_map: &'a HashMap<EntityId, Entity>, queue: &'a mut Vec<Transaction>) -> EntityStore<'a> {
-        EntityStore { entity_map, queue }
+    pub fn new(
+        entity_map: &'a HashMap<EntityId, Entity>,
+        component_ids: &'a HashMap<TypeId, ComponentId>,
+        queue: &'a mut Vec<Transaction>,
+    ) -> EntityStore<'a> {
+        EntityStore { entity_map, component_ids, queue }
     }
 
     #[inline]
     pub fn create(&mut self) -> Builder {
-        Builder::new(self.queue)
+        Builder::new(self.component_ids, self.queue)
     }
 
     #[inline]
     pub fn edit(&mut self, id: EntityId) -> Result<Editor, TransactionError> {
         match self.entity_map.get(&id) {
-            Some(entity) => Ok(Editor::new(entity, self.queue)),
+            Some(entity) => Ok(Editor::new(entity, self.component_ids, self.queue)),
             _ => Err(TransactionError::EntityNotFound(id)),
         }
     }

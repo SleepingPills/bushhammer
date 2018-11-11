@@ -1,25 +1,35 @@
+use std::mem;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::intrinsics::{type_id, type_name};
+use std::intrinsics::type_name;
 use std::cmp::Ordering;
 
 #[macro_export]
 macro_rules! object_id {
-    ($name: ident) => {
+    ($name: ident, $type: ty) => {
         #[derive(Copy, Clone, Debug)]
         pub struct $name {
-            pub id: u64,
+            pub id: $type,
             pub name: &'static str,
         }
 
         impl $name {
             #[inline(always)]
-            pub fn from<T: 'static>() -> $name {
-                unsafe {
-                    $name {
-                        id: type_id::<T>(),
-                        name: type_name::<T>(),
-                    }
+            pub fn new<T:'static>(cur_count: usize) -> $name {
+                let name = unsafe { type_name::<T>() };
+
+                let limit = mem::size_of::<IdType>() * 8;
+                let power = cur_count;
+
+                if (power + 1) >= limit {
+                    panic!("{} limit {} exceeded", name, limit)
+                }
+
+                let id = 2u64.pow(power as u32);
+
+                $name {
+                    id,
+                    name,
                 }
             }
         }
@@ -65,5 +75,8 @@ macro_rules! object_id {
 
 pub type EntityId = usize;
 pub type ShardId = usize;
-object_id!(SystemId);
-object_id!(ComponentId);
+
+pub(crate) type IdType = u64;
+
+object_id!(SystemId, IdType);
+object_id!(ComponentId, IdType);

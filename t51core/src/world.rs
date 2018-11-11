@@ -1,26 +1,31 @@
 use crate::component;
 use crate::entity;
-use crate::object::{ComponentId, EntityId, ShardId, SystemId};
+use crate::object::{ComponentId, EntityId, IdType, ShardId, SystemId};
 use crate::registry::Registry;
 use crate::registry::TraitBox;
 use crate::sentinel;
 use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use std::any::TypeId;
+
+type ShardCombo = IdType;
 
 pub struct World {
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
     system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
     shards: HashMap<ShardId, component::Shard>,
-    shards_map: HashMap<u64, ShardId>,
+    shards_map: HashMap<ShardCombo, ShardId>,
     transactions: sentinel::Take<Vec<entity::Transaction>>,
+    component_ids: HashMap<TypeId, ComponentId>,
+    system_ids: HashMap<TypeId, SystemId>,
 }
 
 impl World {
     #[inline]
     pub fn entities(&mut self) -> entity::EntityStore {
-        entity::EntityStore::new(&self.entity_registry, &mut self.transactions)
+        entity::EntityStore::new(&self.entity_registry, &self.component_ids, &mut self.transactions)
     }
 }
 
@@ -65,9 +70,10 @@ impl World {
         let id = self.next_entity_id();
 
         // Add the id as a mandatory extra component
-        ent_def
-            .components
-            .insert(ComponentId::from::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
+        ent_def.components.insert(
+            self.get_component_id::<EntityId>(),
+            entity::CompDef::Boxed(Box::new(id)),
+        );
 
         let shard_components: Vec<_> = ent_def.components.keys().cloned().collect();
         let shard_key = World::get_shard_composite_key(&shard_components);
@@ -166,8 +172,12 @@ impl World {
         self.component_registry.get_trait::<component::Column>(&comp_id)
     }
 
-    fn get_shard_composite_key<'a>(keys: &[ComponentId]) -> u64 {
-        keys.iter().fold(0u64, |acc, cid| {acc ^ cid.id})
+    fn get_shard_composite_key<'a>(keys: &[ComponentId]) -> ShardCombo {
+        keys.iter().fold(0u64, |acc, cid| acc + cid.id)
+    }
+
+    fn get_component_id<T:'static>(&self) -> ComponentId {
+        self.component_ids[&TypeId::of::<EntityId>()]
     }
 }
 
@@ -179,7 +189,7 @@ impl World {
     where
         T: system::System,
     {
-        system::SystemEntry::new(system, &self.component_registry)
+        system::SystemEntry::new(system, &self.component_registry, &self.component_ids)
     }
 
     /// Register the supplied system with the world.
@@ -187,16 +197,16 @@ impl World {
     where
         T: 'static + system::System,
     {
-        let id = SystemId::from::<T>();
+        let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
-
         self.system_registry.insert(id, Box::new(runtime));
+        self.system_ids.insert(TypeId::of::<T>(), id);
     }
 
     /// Process all currently registered systems.
     pub fn process_systems(&mut self) {
         for (_, system) in self.system_registry.iter_mut() {
-            system.run(&self.entity_registry);
+            system.run(&self.entity_registry, &self.component_ids);
         }
     }
 }
@@ -207,9 +217,10 @@ impl World {
     where
         T: 'static,
     {
-        let id = ComponentId::from::<T>();
+        let id = ComponentId::new::<T>(self.component_registry.len());
         let store = component::ShardedColumn::<T>::new();
 
         self.component_registry.register(id, store);
+        self.component_ids.insert(TypeId::of::<T>(), id);
     }
 }

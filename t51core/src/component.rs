@@ -1,11 +1,17 @@
 use crate::alloc::VecPool;
-use crate::object::{ComponentId, ShardId};
+use crate::object::{ComponentId, IdType, ShardId};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
 use std::any::Any;
 
+pub(crate) type ShardKey = IdType;
 pub(crate) type ComponentCoords = (usize, usize);
+
+#[inline]
+pub(crate) fn composite_key<'a>(keys: impl Iterator<Item=&'a ComponentId>) -> ShardKey {
+    keys.fold(0 as ShardKey, |acc, cid| acc + cid.id)
+}
 
 pub struct ShardedColumn<T> {
     data: VecPool<Vec<T>>,
@@ -95,25 +101,3 @@ impl Shard {
         self.sections[&id]
     }
 }
-
-//pub trait Store {
-//    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr) -> usize;
-//    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize;;
-//}
-//
-//impl<T: 'static> Store for ComponentStore<T> {
-//    #[inline]
-//    fn add_component(&mut self, id: ComponentId, ptr: VoidPtr) -> usize {
-//        unsafe {
-//            let instance = *Box::from_raw(ptr.cast::<T>().as_ptr());
-//            let index = self.data.len();
-//            self.data.push(instance);
-//            index
-//        }
-//    }
-//
-//    #[inline]
-//    fn add_component_json(&mut self, id: ComponentId, json: String) -> usize {
-//        unimplemented!()
-//    }
-//}

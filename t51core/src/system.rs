@@ -28,6 +28,7 @@ pub trait SystemRuntime {
     fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>);
     fn add_shard(&mut self, shard: &component::Shard);
     fn remove_shard(&mut self, id: ShardId);
+    fn check_shard(&self, shard_key: component::ShardKey) -> bool;
     fn get_required_components(&self) -> &Vec<ComponentId>;
     fn get_transactions(&mut self) -> &mut Vec<Transaction>;
 }
@@ -38,7 +39,7 @@ where
 {
     stores: T,
     shards: IndexMap<ShardId, <T::JoinItem as Joined>::Indexer>,
-    components: Vec<ComponentId>,
+    comp_ids: Vec<ComponentId>,
 }
 
 impl<T> SystemData<T>
@@ -46,12 +47,11 @@ where
     T: SystemDef,
 {
     #[inline]
-    pub(crate) fn new(comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemData<T> {
-        let comp_ids = T::get_comp_ids(comp_id_map);
+    pub(crate) fn new(comp_map: &Registry<ComponentId>, comp_ids: Vec<ComponentId>) -> SystemData<T> {
         SystemData {
             stores: T::new(&comp_ids, comp_map),
             shards: IndexMap::new(),
-            components: comp_ids,
+            comp_ids,
         }
     }
 
@@ -60,12 +60,12 @@ where
     where
         'b: 'a,
     {
-        context::Context::new(self.stores.as_joined(), &self.shards, entity_map, &self.components)
+        context::Context::new(self.stores.as_joined(), &self.shards, entity_map, &self.comp_ids)
     }
 
     #[inline]
     fn add_shard(&mut self, shard: &component::Shard) {
-        self.shards.insert(shard.id, T::reify_shard(&self.components, shard));
+        self.shards.insert(shard.id, T::reify_shard(&self.comp_ids, shard));
     }
 
     #[inline]
@@ -79,6 +79,7 @@ where
     T: System,
 {
     system: T,
+    shard_key: component::ShardKey,
     data: SystemData<T::Data>,
     transactions: Vec<Transaction>,
 }
@@ -89,9 +90,11 @@ where
 {
     #[inline]
     pub(crate) fn new(system: T, comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemEntry<T> {
+        let comp_ids = T::Data::get_comp_ids(comp_id_map);
         SystemEntry {
             system,
-            data: SystemData::new(comp_map, comp_id_map),
+            shard_key: component::composite_key(comp_ids.iter()),
+            data: SystemData::new(comp_map, comp_ids),
             transactions: Vec::new(),
         }
     }
@@ -105,7 +108,7 @@ where
     fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>) {
         self.system.run(
             self.data.context(entity_map),
-            EntityStore::new(entity_map, comp_id_map,&mut self.transactions),
+            EntityStore::new(entity_map, comp_id_map, &mut self.transactions),
         );
     }
 
@@ -120,8 +123,13 @@ where
     }
 
     #[inline]
+    fn check_shard(&self, shard_key: component::ShardKey) -> bool {
+        (self.shard_key & shard_key) == shard_key
+    }
+
+    #[inline]
     fn get_required_components(&self) -> &Vec<ComponentId> {
-        &self.data.components
+        &self.data.comp_ids
     }
 
     #[inline]

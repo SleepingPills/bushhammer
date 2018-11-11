@@ -1,6 +1,7 @@
 use crate::component::ComponentCoords;
 use crate::object::{ComponentId, EntityId, ShardId};
 use hashbrown::HashMap;
+use indexmap::IndexMap;
 use std::any::Any;
 use std::any::TypeId;
 
@@ -31,13 +32,13 @@ pub enum CompDef {
 
 #[derive(Debug)]
 pub struct EntityDef {
-    pub components: HashMap<ComponentId, CompDef>,
+    pub components: IndexMap<ComponentId, CompDef>,
 }
 
 impl EntityDef {
     pub fn new() -> Self {
         EntityDef {
-            components: HashMap::new(),
+            components: IndexMap::new(),
         }
     }
 }
@@ -100,7 +101,7 @@ impl<'a> Builder<'a> {
         self.ent_def.components.insert(type_id, def);
     }
 
-    fn get_component_id<T:'static>(&self) -> ComponentId {
+    fn get_component_id<T: 'static>(&self) -> ComponentId {
         self.component_ids[&TypeId::of::<T>()]
     }
 }
@@ -183,7 +184,11 @@ impl<'a> EntityStore<'a> {
         component_ids: &'a HashMap<TypeId, ComponentId>,
         queue: &'a mut Vec<Transaction>,
     ) -> EntityStore<'a> {
-        EntityStore { entity_map, component_ids, queue }
+        EntityStore {
+            entity_map,
+            component_ids,
+            queue,
+        }
     }
 
     #[inline]

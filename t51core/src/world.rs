@@ -1,6 +1,6 @@
 use crate::component;
 use crate::entity;
-use crate::object::{ComponentId, EntityId, IdType, ShardId, SystemId};
+use crate::object::{ComponentId, EntityId, ShardId, SystemId};
 use crate::registry::Registry;
 use crate::registry::TraitBox;
 use crate::sentinel;
@@ -9,14 +9,12 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::any::TypeId;
 
-type ShardCombo = IdType;
-
 pub struct World {
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
     system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
     shards: HashMap<ShardId, component::Shard>,
-    shards_map: HashMap<ShardCombo, ShardId>,
+    shards_map: HashMap<component::ShardKey, ShardId>,
     transactions: sentinel::Take<Vec<entity::Transaction>>,
     component_ids: HashMap<TypeId, ComponentId>,
     system_ids: HashMap<TypeId, SystemId>,
@@ -34,6 +32,23 @@ impl World {
     pub fn run(&mut self) {
         self.process_transactions();
         self.process_systems();
+    }
+
+    #[inline]
+    pub fn new() -> Self {
+        let mut world = World {
+            component_registry: Registry::new(),
+            entity_registry: HashMap::new(),
+            system_registry: IndexMap::new(),
+            shards: HashMap::new(),
+            shards_map: HashMap::new(),
+            transactions: sentinel::Take::new(Vec::new()),
+            component_ids: HashMap::new(),
+            system_ids: HashMap::new(),
+        };
+        // Entity ID is always a registered component
+        world.register_component::<EntityId>();
+        world
     }
 }
 
@@ -70,26 +85,16 @@ impl World {
         let id = self.next_entity_id();
 
         // Add the id as a mandatory extra component
-        ent_def.components.insert(
-            self.get_component_id::<EntityId>(),
-            entity::CompDef::Boxed(Box::new(id)),
-        );
+        ent_def
+            .components
+            .insert(self.get_component_id::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
 
-        let shard_components: Vec<_> = ent_def.components.keys().cloned().collect();
-        let shard_key = World::get_shard_composite_key(&shard_components);
-
-        // Check if a shard exists with the component combination
-        let shard = match self.shards_map.get(&shard_key) {
-            Some(shard_id) => &self.shards[shard_id],
-            _ => {
-                let shard_id = self.create_shard(&shard_components);
-                &self.shards[&shard_id]
-            }
-        };
+        let shard_id = self.get_shard_id(&ent_def);
+        let shard = &self.shards[&shard_id];
 
         // Ingest all components and stash away the coordinates
         let mut components = HashMap::new();
-        for (comp_id, comp_def) in ent_def.components.drain() {
+        for (comp_id, comp_def) in ent_def.components.drain(..) {
             let column = &mut self.get_column(comp_id).write();
 
             let section = shard.get_loc(comp_id);
@@ -112,6 +117,15 @@ impl World {
         self.entity_registry.insert(entity.id, entity);
     }
 
+    fn get_shard_id(&mut self, ent_def: &entity::EntityDef) -> ShardId {
+        let shard_key = component::composite_key(ent_def.components.keys());
+
+        match self.shards_map.get(&shard_key) {
+            Some(&id) => id,
+            _ => self.create_shard(ent_def.components.keys(), shard_key),
+        }
+    }
+
     /// Edit an existing entity.
     fn apply_edit(&mut self, id: EntityId, ent_def: entity::EntityDef) {
         // Retrieve current entity
@@ -129,6 +143,8 @@ impl World {
         // If it is missing, we simply delete the old one.
         // In each case, we update the last entry entity to the swapped in index
         // We go over any remaining entries in the entity definition and add them
+        // TODO: This might be just an apply_remove followed by an apply_add?!? It isn't because Nops have
+        // to be handled - the new entity def doesn't have all the components of the old one.
         if let Some(current_ent) = self.entity_registry.remove(&id) {
             // Check if the new definition has the same set of components
             if current_ent.components.len() == ent_def.components.len()
@@ -143,20 +159,20 @@ impl World {
 
     /// Remove an existing entity from the world.
     fn apply_remove(&mut self, id: EntityId) {
-        unimplemented!()
+        if let Some(entity) = self.entity_registry.remove(&id) {
+
+        }
     }
 
     /// Create a new shard based on the supplied component combination and return it's ID.
-    fn create_shard(&mut self, components: &[ComponentId]) -> ShardId {
-        // TODO: This should notify all systems interested in this component set!!
-        // TODO: Check if we actually need shards to be in a trie? Why?f`
+    fn create_shard<'a>(&mut self, components: impl Iterator<Item = &'a ComponentId>, shard_key: component::ShardKey) -> ShardId {
         let sections: HashMap<_, _> = components
-            .iter()
             .map(|&cid| (cid, self.get_column(cid).write().new_section()))
             .collect();
 
         let id = self.shards.len() as ShardId;
         let shard = component::Shard::new(id, sections);
+        self.notify_systems_add_shard(&shard, shard_key);
         self.shards.insert(id, shard);
         id
     }
@@ -172,12 +188,9 @@ impl World {
         self.component_registry.get_trait::<component::Column>(&comp_id)
     }
 
-    fn get_shard_composite_key<'a>(keys: &[ComponentId]) -> ShardCombo {
-        keys.iter().fold(0 as ShardCombo, |acc, cid| acc + cid.id)
-    }
-
-    fn get_component_id<T:'static>(&self) -> ComponentId {
-        self.component_ids[&TypeId::of::<EntityId>()]
+    #[inline]
+    fn get_component_id<T: 'static>(&self) -> ComponentId {
+        self.component_ids[&TypeId::of::<T>()]
     }
 }
 
@@ -204,10 +217,27 @@ impl World {
     }
 
     /// Process all currently registered systems.
+    #[inline]
     pub fn process_systems(&mut self) {
         for (_, system) in self.system_registry.iter_mut() {
             system.run(&self.entity_registry, &self.component_ids);
         }
+    }
+
+    /// Notify each relevant system that a shard was added
+    fn notify_systems_add_shard(&mut self, shard: &component::Shard, shard_key: component::ShardKey) {
+        self.system_registry
+            .values_mut()
+            .filter(|sys| sys.check_shard(shard_key))
+            .for_each(|sys| sys.add_shard(shard));
+    }
+
+    /// Notify each relevant system that a shard was added
+    fn notify_systems_remove_shard(&mut self, shard_id: ShardId, shard_key: component::ShardKey) {
+        self.system_registry
+            .values_mut()
+            .filter(|sys| sys.check_shard(shard_key))
+            .for_each(|sys| sys.remove_shard(shard_id));
     }
 }
 

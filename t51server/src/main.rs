@@ -27,4 +27,6 @@ impl<'a> System for Goof<'a> {
     }
 }
 
-fn main() {}
+fn main() {
+    println!("*** YO YO YO ***");
+}

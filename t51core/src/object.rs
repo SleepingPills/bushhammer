@@ -52,18 +52,21 @@ macro_rules! object_id {
         }
 
         impl PartialOrd for $name {
+            #[inline(always)]
             fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
                 self.id.partial_cmp(&other.id)
             }
         }
 
         impl Ord for $name {
+            #[inline(always)]
             fn cmp(&self, other: &Self) -> Ordering {
                 self.id.cmp(&other.id)
             }
         }
 
         impl fmt::Display for $name {
+            #[inline(always)]
             fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
                 write!(f, "{}({:?}, {})", stringify!($name), self.id, self.name)
             }

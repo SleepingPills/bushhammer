@@ -7,15 +7,13 @@ use crate::sentinel;
 use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
-use sequence_trie::SequenceTrie;
-use std::hash::{Hash, BuildHasher, BuildHasherDefault};
 
 pub struct World {
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
     system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
     shards: HashMap<ShardId, component::Shard>,
-    shard_trie: SequenceTrie<ComponentId, ShardId>,
+    shards_map: HashMap<u64, ShardId>,
     transactions: sentinel::Take<Vec<entity::Transaction>>,
 }
 
@@ -71,15 +69,14 @@ impl World {
             .components
             .insert(ComponentId::from::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
 
-        // Prepare a sorted list of components defined on the new entity
-        let mut shard_comp: Vec<ComponentId> = ent_def.components.keys().cloned().collect();
-        shard_comp.sort();
+        let shard_components: Vec<_> = ent_def.components.keys().cloned().collect();
+        let shard_key = World::get_shard_composite_key(&shard_components);
 
         // Check if a shard exists with the component combination
-        let shard = match self.shard_trie.get(&shard_comp) {
+        let shard = match self.shards_map.get(&shard_key) {
             Some(shard_id) => &self.shards[shard_id],
             _ => {
-                let shard_id = self.create_shard(&shard_comp);
+                let shard_id = self.create_shard(&shard_components);
                 &self.shards[&shard_id]
             }
         };
@@ -144,7 +141,7 @@ impl World {
     }
 
     /// Create a new shard based on the supplied component combination and return it's ID.
-    fn create_shard(&mut self, components: &Vec<ComponentId>) -> ShardId {
+    fn create_shard(&mut self, components: &[ComponentId]) -> ShardId {
         // TODO: This should notify all systems interested in this component set!!
         // TODO: Check if we actually need shards to be in a trie? Why?f`
         let sections: HashMap<_, _> = components
@@ -169,8 +166,8 @@ impl World {
         self.component_registry.get_trait::<component::Column>(&comp_id)
     }
 
-    fn get_shard_composite_key(&self, iterable: impl Iterator<Item=ComponentId>) -> usize {
-        unimplemented!()
+    fn get_shard_composite_key<'a>(keys: &[ComponentId]) -> u64 {
+        keys.iter().fold(0u64, |acc, cid| {acc ^ cid.id})
     }
 }
 

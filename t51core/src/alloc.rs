@@ -1,7 +1,3 @@
-use std::ptr::NonNull;
-
-pub type VoidPtr = NonNull<()>;
-
 /// A pool allocator that keeps all items in an efficient dense vector. New elements will be
 /// used to fill up holes created by previous reclamation.
 #[derive(Debug)]
@@ -182,7 +178,7 @@ mod tests {
     }
 
     #[test]
-    fn test_slot_pool_peen_index() {
+    fn test_slot_pool_peek_index() {
         let mut pool: SlotPool<i32> = SlotPool::new();
 
         // Add some items to the pool.

@@ -3,6 +3,7 @@ use crate::entity;
 use crate::object::{ComponentId, EntityId, ShardId, SystemId};
 use crate::registry::Registry;
 use crate::registry::TraitBox;
+use crate::sentinel;
 use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -14,13 +15,13 @@ pub struct World {
     system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
     shards: HashMap<ShardId, component::Shard>,
     shard_trie: SequenceTrie<ComponentId, ShardId>,
-    transactions: Option<Vec<entity::Transaction>>,
+    transactions: sentinel::Take<Vec<entity::Transaction>>,
 }
 
 impl World {
     #[inline]
     pub fn entities(&mut self) -> entity::EntityStore {
-        entity::EntityStore::new(&self.entity_registry, self.transactions.as_mut().unwrap())
+        entity::EntityStore::new(&self.entity_registry, &mut self.transactions)
     }
 }
 
@@ -35,7 +36,7 @@ impl World {
 impl World {
     /// Drain all the system transactions into the common transaction queue.
     fn collect_transactions(&mut self) {
-        let transactions = self.transactions.as_mut().unwrap();
+        let transactions = &mut self.transactions;
 
         for (_, system) in self.system_registry.iter_mut() {
             transactions.append(system.get_transactions());
@@ -47,7 +48,7 @@ impl World {
         self.collect_transactions();
 
         // Take the transactions out
-        let mut transactions = self.transactions.take().unwrap();
+        let mut transactions = self.transactions.take();
 
         for transaction in transactions.drain(..) {
             match transaction {
@@ -57,7 +58,7 @@ impl World {
             }
         }
 
-        self.transactions = transactions.into();
+        self.transactions.put(transactions)
     }
 
     /// Add a new entity to the world.
@@ -143,6 +144,8 @@ impl World {
 
     /// Create a new shard based on the supplied component combination and return it's ID.
     fn create_shard(&mut self, components: &Vec<ComponentId>) -> ShardId {
+        // TODO: This should notify all systems interested in this component set!!
+        // TODO: Check if we actually need shards to be in a trie? Why?f`
         let sections: HashMap<_, _> = components
             .iter()
             .map(|&cid| (cid, self.get_column(cid).write().new_section()))

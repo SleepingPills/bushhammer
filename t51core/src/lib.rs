@@ -4,6 +4,7 @@
 #![feature(core_intrinsics)]
 
 pub mod alloc;
+pub mod sentinel;
 pub mod component;
 pub mod entity;
 pub mod object;

@@ -8,6 +8,7 @@ use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use sequence_trie::SequenceTrie;
+use std::hash::{Hash, BuildHasher, BuildHasherDefault};
 
 pub struct World {
     component_registry: Registry<ComponentId>,
@@ -68,7 +69,7 @@ impl World {
         // Add the id as a mandatory extra component
         ent_def
             .components
-            .insert(ComponentId::new::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
+            .insert(ComponentId::from::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
 
         // Prepare a sorted list of components defined on the new entity
         let mut shard_comp: Vec<ComponentId> = ent_def.components.keys().cloned().collect();
@@ -167,6 +168,10 @@ impl World {
     fn get_column(&self, comp_id: ComponentId) -> TraitBox<component::Column> {
         self.component_registry.get_trait::<component::Column>(&comp_id)
     }
+
+    fn get_shard_composite_key(&self, iterable: impl Iterator<Item=ComponentId>) -> usize {
+        unimplemented!()
+    }
 }
 
 impl World {
@@ -185,7 +190,7 @@ impl World {
     where
         T: 'static + system::System,
     {
-        let id = SystemId::new::<T>();
+        let id = SystemId::from::<T>();
         let runtime = self.create_runtime(system);
 
         self.system_registry.insert(id, Box::new(runtime));
@@ -205,7 +210,7 @@ impl World {
     where
         T: 'static,
     {
-        let id = ComponentId::new::<T>();
+        let id = ComponentId::from::<T>();
         let store = component::ShardedColumn::<T>::new();
 
         self.component_registry.register(id, store);

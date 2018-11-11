@@ -1,7 +1,6 @@
-use std::any::TypeId;
 use std::fmt;
 use std::hash::{Hash, Hasher};
-use std::intrinsics::type_name;
+use std::intrinsics::{type_id, type_name};
 use std::cmp::Ordering;
 
 #[macro_export]
@@ -9,26 +8,16 @@ macro_rules! object_id {
     ($name: ident) => {
         #[derive(Copy, Clone, Debug)]
         pub struct $name {
-            id: TypeId,
+            pub id: u64,
             pub name: &'static str,
         }
 
         impl $name {
             #[inline(always)]
-            pub fn get_id(&self) -> TypeId {
-                self.id
-            }
-
-            #[inline(always)]
-            pub fn new_type(id: TypeId, name: &'static str) -> $name {
-                $name { id, name }
-            }
-
-            #[inline(always)]
-            pub fn new<T: 'static>() -> $name {
+            pub fn from<T: 'static>() -> $name {
                 unsafe {
                     $name {
-                        id: TypeId::of::<T>(),
+                        id: type_id::<T>(),
                         name: type_name::<T>(),
                     }
                 }

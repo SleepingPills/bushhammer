@@ -78,7 +78,7 @@ impl<'a> Builder<'a> {
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
-        self.record_component(ComponentId::new::<T>(), CompDef::Boxed(Box::new(instance)));
+        self.record_component(ComponentId::from::<T>(), CompDef::Boxed(Box::new(instance)));
         self
     }
 
@@ -116,8 +116,8 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
-        let comp_id = ComponentId::new::<T>();
-        if comp_id == ComponentId::new::<EntityId>() {
+        let comp_id = ComponentId::from::<T>();
+        if comp_id == ComponentId::from::<EntityId>() {
             panic!("Can't edit Entity Id component")
         }
 
@@ -128,7 +128,7 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn with_json(mut self, comp_id: ComponentId, json: String) -> Self {
-        if comp_id == ComponentId::new::<EntityId>() {
+        if comp_id == ComponentId::from::<EntityId>() {
             panic!("Can't edit Entity Id component")
         }
 
@@ -138,8 +138,8 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn remove<T: 'static>(mut self) -> Self {
-        let comp_id = ComponentId::new::<T>();
-        if comp_id == ComponentId::new::<EntityId>() {
+        let comp_id = ComponentId::from::<T>();
+        if comp_id == ComponentId::from::<EntityId>() {
             panic!("Can't delete Entity Id component")
         }
 
@@ -149,7 +149,7 @@ impl<'a> Editor<'a> {
 
     #[inline]
     pub fn remove_id(mut self, comp_id: ComponentId) -> Self {
-        if comp_id == ComponentId::new::<EntityId>() {
+        if comp_id == ComponentId::from::<EntityId>() {
             panic!("Can't delete Entity Id component")
         }
 

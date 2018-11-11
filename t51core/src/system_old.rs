@@ -338,7 +338,7 @@ pub mod join {
 
                 #[inline]
                 fn get_comp_ids() -> Vec<ComponentId> {
-                    vec![$(ComponentId::new::<$field_type::DataType>()),*]
+                    vec![$(ComponentId::from::<$field_type::DataType>()),*]
                 }
 
                 #[inline]

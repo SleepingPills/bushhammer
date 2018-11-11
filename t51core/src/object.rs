@@ -14,6 +14,10 @@ macro_rules! object_id {
         }
 
         impl $name {
+            /// Creates a new instance. Unique ids are distinguished by a bitmask, there is thus a limit to the
+            /// total number of unique ids. E.g. in case of `u64`, it is 64. Trying to go over this limit will
+            /// cause the method to panic. This is to enable efficient set operations and membership tests on
+            /// groups of ids.
             #[inline(always)]
             pub fn new<T:'static>(cur_count: usize) -> $name {
                 let name = unsafe { type_name::<T>() };
@@ -25,10 +29,8 @@ macro_rules! object_id {
                     panic!("{} limit {} exceeded", name, limit)
                 }
 
-                let id = 2u64.pow(power as u32);
-
                 $name {
-                    id,
+                    id: (1 as IdType) << power,
                     name,
                 }
             }

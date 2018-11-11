@@ -73,10 +73,10 @@ macro_rules! object_id {
     };
 }
 
-pub type EntityId = usize;
-pub type ShardId = usize;
-
 pub(crate) type IdType = u64;
+
+pub type EntityId = IdType;
+pub type ShardId = IdType;
 
 object_id!(SystemId, IdType);
 object_id!(ComponentId, IdType);

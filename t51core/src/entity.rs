@@ -200,7 +200,7 @@ impl<'a> EntityStore<'a> {
     }
 
     #[inline]
-    pub fn remove(&mut self, id: usize) {
+    pub fn remove(&mut self, id: EntityId) {
         self.queue.push(Transaction::RemoveEnt(id));
     }
 }

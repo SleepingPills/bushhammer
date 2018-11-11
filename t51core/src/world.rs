@@ -155,7 +155,7 @@ impl World {
             .map(|&cid| (cid, self.get_column(cid).write().new_section()))
             .collect();
 
-        let id = self.shards.len();
+        let id = self.shards.len() as ShardId;
         let shard = component::Shard::new(id, sections);
         self.shards.insert(id, shard);
         id
@@ -164,7 +164,7 @@ impl World {
     /// Get the next entity id.
     #[inline]
     fn next_entity_id(&self) -> EntityId {
-        return self.entity_registry.len();
+        return self.entity_registry.len() as EntityId;
     }
 
     #[inline]
@@ -173,7 +173,7 @@ impl World {
     }
 
     fn get_shard_composite_key<'a>(keys: &[ComponentId]) -> ShardCombo {
-        keys.iter().fold(0u64, |acc, cid| acc + cid.id)
+        keys.iter().fold(0 as ShardCombo, |acc, cid| acc + cid.id)
     }
 
     fn get_component_id<T:'static>(&self) -> ComponentId {

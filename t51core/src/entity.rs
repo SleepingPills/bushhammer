@@ -19,6 +19,11 @@ impl Entity {
     pub(crate) fn get_coords(&self, comp_id: &ComponentId) -> ComponentCoords {
         self.components[comp_id]
     }
+
+    #[inline]
+    pub(crate) fn set_coords(&mut self, comp_id: ComponentId, coords: ComponentCoords) {
+        self.components.insert(comp_id, coords);
+    }
 }
 
 /// Handles boxed, json and no-op components. No-op is a special case placeholder for components

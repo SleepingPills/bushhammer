@@ -536,12 +536,14 @@ pub mod context {
         }
 
         #[inline]
-        pub fn get_entity(&mut self, id: EntityId) -> Option<T::ItemTup> {
-            if let Some(entity) = self.entity_map.get(&id) {
-                Some(self.stores.get_entity(&entity, self.components))
-            } else {
-                None
-            }
+        pub fn for_each<F>(&mut self, entities: &[EntityId], f: F) where F: FnMut(T::ItemTup) {
+            entities.iter().filter_map(move |eid| {
+                if let Some(entity) = self.entity_map.get(eid) {
+                    Some(self.stores.get_entity(&entity, self.components))
+                } else {
+                    None
+                }
+            }).for_each(f);
         }
 
         #[inline]

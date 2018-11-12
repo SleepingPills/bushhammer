@@ -9,7 +9,7 @@ pub(crate) type ShardKey = IdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
 #[inline]
-pub(crate) fn composite_key<'a>(keys: impl Iterator<Item=&'a ComponentId>) -> ShardKey {
+pub(crate) fn composite_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
     keys.fold(0 as ShardKey, |acc, cid| acc + cid.id)
 }
 
@@ -22,16 +22,17 @@ impl<T> ShardedColumn<T> {
     pub(crate) fn new() -> ShardedColumn<T> {
         ShardedColumn { data: VecPool::new() }
     }
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn get_item(&self, (section, loc): ComponentCoords) -> &T {
-        unsafe { self.data.get_unchecked(section).get_unchecked(loc) }
-    }
 
-    #[allow(dead_code)]
     #[inline]
-    pub(crate) fn get_item_mut(&mut self, (section, loc): ComponentCoords) -> &mut T {
-        unsafe { self.data.get_unchecked_mut(section).get_unchecked_mut(loc) }
+    pub(crate) fn get_last_item(&self, section: usize) -> Option<&T> {
+        unsafe {
+            if self.data.len() < 1 {
+                return None;
+            }
+
+            let data = self.data.get_unchecked(section);
+            Some(data.get_unchecked(data.len() - 1))
+        }
     }
 
     #[inline]
@@ -63,6 +64,7 @@ impl<T> ShardedColumn<T> {
 pub trait Column {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
     fn ingest_json(&mut self, json: String, section: usize) -> usize;
+    fn remove_item(&mut self, section: usize, loc: usize);
     fn new_section(&mut self) -> usize;
 }
 
@@ -78,6 +80,13 @@ where
         self.push_to_section(serde_json::from_str(&json).expect("Error deserializing component"), section)
     }
 
+    fn remove_item(&mut self, section: usize, loc: usize) {
+        unsafe {
+            let storage = self.data.get_unchecked_mut(section);
+            storage.swap_remove(loc);
+        }
+    }
+
     fn new_section(&mut self) -> usize {
         let section = self.data.len();
         self.data.push(Vec::new());
@@ -87,13 +96,14 @@ where
 
 pub struct Shard {
     pub(crate) id: ShardId,
+    pub(crate) shard_key: ShardKey,
     sections: HashMap<ComponentId, usize>,
 }
 
 impl Shard {
     #[inline]
-    pub(crate) fn new(id: ShardId, sections: HashMap<ComponentId, usize>) -> Shard {
-        Shard { id, sections }
+    pub(crate) fn new(id: ShardId, shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
+        Shard { id, shard_key, sections }
     }
 
     #[inline]

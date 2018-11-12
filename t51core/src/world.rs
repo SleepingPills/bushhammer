@@ -157,10 +157,35 @@ impl World {
         }
     }
 
+    // TODO: Move section in the entity to the root entity level from the componentcoords.
     /// Remove an existing entity from the world.
     fn apply_remove(&mut self, id: EntityId) {
         if let Some(entity) = self.entity_registry.remove(&id) {
+            for (component_id, &(section, loc)) in entity.components.iter() {
+                let mut column = self.component_registry.get_trait::<component::Column>(component_id).write();
+                column.remove_item(section, loc);
+            }
 
+            let shard = &self.shards[&entity.shard_id];
+
+            let component_id = self.get_component_id::<EntityId>();
+            let id_section = shard.get_loc(component_id);
+            let column = self
+                .component_registry
+                .get::<component::ShardedColumn<EntityId>>(&component_id)
+                .read();
+
+            match column.get_last_item(id_section) {
+                Some(id) => {
+                    let swapped_entity = self.entity_registry.get_mut(id).unwrap();
+                    for (component_id, &(section, loc)) in entity.components.iter() {
+                        let mut column = self.component_registry.get_trait::<component::Column>(component_id).write();
+                        column.remove_item(section, loc);
+                        swapped_entity.set_coords(*component_id, (section, loc));
+                    }
+                }
+                _ => self.notify_systems_remove_shard(entity.shard_id, shard.shard_key)
+            }
         }
     }
 
@@ -171,7 +196,7 @@ impl World {
             .collect();
 
         let id = self.shards.len() as ShardId;
-        let shard = component::Shard::new(id, sections);
+        let shard = component::Shard::new(id, shard_key, sections);
         self.notify_systems_add_shard(&shard, shard_key);
         self.shards.insert(id, shard);
         id

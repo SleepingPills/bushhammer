@@ -6,7 +6,7 @@ use crate::registry::TraitBox;
 use crate::sentinel;
 use crate::system;
 use hashbrown::HashMap;
-use indexmap::IndexMap;
+use indexmap::{IndexMap, IndexSet};
 use std::any::TypeId;
 
 pub struct World {
@@ -93,11 +93,11 @@ impl World {
         let shard = &self.shards[&shard_id];
 
         // Ingest all components and stash away the coordinates
-        let mut components = HashMap::new();
+        let mut components = IndexMap::new();
         for (comp_id, comp_def) in ent_def.components.drain(..) {
             let column = &mut self.get_column(comp_id).write();
 
-            let section = shard.get_loc(comp_id);
+            let section = shard.get_section(comp_id);
 
             let loc = match comp_def {
                 entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
@@ -105,16 +105,16 @@ impl World {
                 _ => panic!("No-op component definition on a new entity"),
             };
 
-            components.insert(comp_id, (section, loc));
+            components.insert(comp_id, section);
         }
 
-        let entity = entity::Entity {
-            id,
-            shard_id: shard.id,
-            components,
-        };
+//        let entity = entity::Entity {
+//            id,
+//            shard_id: shard.id,
+//            comp_sections: components,
+//        };
 
-        self.entity_registry.insert(entity.id, entity);
+//        self.entity_registry.insert(entity.id, entity);
     }
 
     fn get_shard_id(&mut self, ent_def: &entity::EntityDef) -> ShardId {
@@ -145,47 +145,44 @@ impl World {
         // We go over any remaining entries in the entity definition and add them
         // TODO: This might be just an apply_remove followed by an apply_add?!? It isn't because Nops have
         // to be handled - the new entity def doesn't have all the components of the old one.
-        if let Some(current_ent) = self.entity_registry.remove(&id) {
-            // Check if the new definition has the same set of components
-            if current_ent.components.len() == ent_def.components.len()
-                && (current_ent.components.keys().all(|cid| ent_def.components.contains_key(cid)))
-            {
-
-            } else {
-
-            }
-        }
+        //        if let Some(current_ent) = self.entity_registry.remove(&id) {
+        //            // Check if the new definition has the same set of components
+        //            if current_ent.components.len() == ent_def.components.len()
+        //                && (current_ent.components.keys().all(|cid| ent_def.components.contains_key(cid)))
+        //            {
+        //
+        //            } else {
+        //
+        //            }
+        //        }
     }
 
     // TODO: Move section in the entity to the root entity level from the componentcoords.
     /// Remove an existing entity from the world.
     fn apply_remove(&mut self, id: EntityId) {
         if let Some(entity) = self.entity_registry.remove(&id) {
-            for (component_id, &(section, loc)) in entity.components.iter() {
+            // Remove all the components assigned to the entity, swapping in the last entry into the now vacant slot
+            for (component_id, section) in entity.comp_sections.iter() {
                 let mut column = self.component_registry.get_trait::<component::Column>(component_id).write();
-                column.remove_item(section, loc);
+                column.swap_remove(*section, entity.shard_loc);
             }
 
-            let shard = &self.shards[&entity.shard_id];
-
-            let component_id = self.get_component_id::<EntityId>();
-            let id_section = shard.get_loc(component_id);
+            let entity_id_comp = self.get_component_id::<EntityId>();
             let column = self
                 .component_registry
-                .get::<component::ShardedColumn<EntityId>>(&component_id)
+                .get::<component::ShardedColumn<EntityId>>(&entity_id_comp)
                 .read();
 
-            match column.get_last_item(id_section) {
-                Some(id) => {
-                    let swapped_entity = self.entity_registry.get_mut(id).unwrap();
-                    for (component_id, &(section, loc)) in entity.components.iter() {
-                        let mut column = self.component_registry.get_trait::<component::Column>(component_id).write();
-                        column.remove_item(section, loc);
-                        swapped_entity.set_coords(*component_id, (section, loc));
-                    }
-                }
-                _ => self.notify_systems_remove_shard(entity.shard_id, shard.shard_key)
-            }
+//            if column.section_len(entity.shard_section) > 0 {
+//                // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
+//                // entity was the tail of the array, there is nothing to swap.
+//                if let Some(id) = column.get(entity.shard_section, entity.shard_loc) {
+//                    let swapped_entity = self.entity_registry.get_mut(id).unwrap();
+//                    swapped_entity.set_loc(entity.shard_loc);
+//                }
+//            } else {
+//                self.notify_systems_remove_shard(entity.shard_id, self.shards[&entity.shard_id].shard_key)
+//            }
         }
     }
 

@@ -476,7 +476,7 @@ pub mod join {
                 #[inline]
                 fn reify_shard(sys_comps: &Vec<ComponentId>,
                                 shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer {
-                    ($(shard.get_loc(sys_comps[$field_seq])),*,)
+                    ($(shard.get_section(sys_comps[$field_seq])),*,)
                 }
 
                 #[inline]
@@ -536,14 +536,20 @@ pub mod context {
         }
 
         #[inline]
-        pub fn for_each<F>(&mut self, entities: &[EntityId], f: F) where F: FnMut(T::ItemTup) {
-            entities.iter().filter_map(move |eid| {
-                if let Some(entity) = self.entity_map.get(eid) {
-                    Some(self.stores.get_entity(&entity, self.components))
-                } else {
-                    None
-                }
-            }).for_each(f);
+        pub fn for_each<F>(&mut self, entities: &[EntityId], f: F)
+        where
+            F: FnMut(T::ItemTup),
+        {
+            entities
+                .iter()
+                .filter_map(move |eid| {
+                    if let Some(entity) = self.entity_map.get(eid) {
+                        Some(self.stores.get_entity(&entity, self.components))
+                    } else {
+                        None
+                    }
+                })
+                .for_each(f);
         }
 
         #[inline]

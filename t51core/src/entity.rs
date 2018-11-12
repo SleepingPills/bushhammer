@@ -11,18 +11,24 @@ use std::any::TypeId;
 pub struct Entity {
     pub id: EntityId,
     pub shard_id: ShardId,
-    pub components: HashMap<ComponentId, ComponentCoords>,
+    pub shard_loc: usize,
+    pub comp_sections: IndexMap<ComponentId, usize>,
 }
 
 impl Entity {
     #[inline]
     pub(crate) fn get_coords(&self, comp_id: &ComponentId) -> ComponentCoords {
-        self.components[comp_id]
+        (self.comp_sections[comp_id], self.shard_loc)
     }
 
     #[inline]
-    pub(crate) fn set_coords(&mut self, comp_id: ComponentId, coords: ComponentCoords) {
-        self.components.insert(comp_id, coords);
+    pub(crate) fn set_section(&mut self, comp_id: ComponentId, section: usize) {
+        self.comp_sections.insert(comp_id, section);
+    }
+
+    #[inline]
+    pub(crate) fn set_loc(&mut self, loc: usize) {
+        self.shard_loc = loc;
     }
 }
 
@@ -51,7 +57,7 @@ impl EntityDef {
 impl From<&Entity> for EntityDef {
     fn from(entity: &Entity) -> Self {
         EntityDef {
-            components: entity.components.keys().map(|cid| (*cid, CompDef::Nop())).collect(),
+            components: entity.comp_sections.keys().map(|cid| (*cid, CompDef::Nop())).collect(),
         }
     }
 }

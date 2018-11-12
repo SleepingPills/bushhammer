@@ -24,14 +24,10 @@ impl<T> ShardedColumn<T> {
     }
 
     #[inline]
-    pub(crate) fn get_last_item(&self, section: usize) -> Option<&T> {
+    pub(crate) fn get(&self, section: usize, loc: usize) -> Option<&T> {
         unsafe {
-            if self.data.len() < 1 {
-                return None;
-            }
-
             let data = self.data.get_unchecked(section);
-            Some(data.get_unchecked(data.len() - 1))
+            data.get(loc)
         }
     }
 
@@ -64,8 +60,9 @@ impl<T> ShardedColumn<T> {
 pub trait Column {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
     fn ingest_json(&mut self, json: String, section: usize) -> usize;
-    fn remove_item(&mut self, section: usize, loc: usize);
+    fn swap_remove(&mut self, section: usize, loc: usize);
     fn new_section(&mut self) -> usize;
+    fn section_len(&self, section: usize) -> usize;
 }
 
 impl<T> Column for ShardedColumn<T>
@@ -80,7 +77,7 @@ where
         self.push_to_section(serde_json::from_str(&json).expect("Error deserializing component"), section)
     }
 
-    fn remove_item(&mut self, section: usize, loc: usize) {
+    fn swap_remove(&mut self, section: usize, loc: usize) {
         unsafe {
             let storage = self.data.get_unchecked_mut(section);
             storage.swap_remove(loc);
@@ -91,6 +88,10 @@ where
         let section = self.data.len();
         self.data.push(Vec::new());
         section
+    }
+
+    fn section_len(&self, section: usize) -> usize {
+        ShardedColumn::<T>::section_len(self, section)
     }
 }
 
@@ -107,7 +108,7 @@ impl Shard {
     }
 
     #[inline]
-    pub(crate) fn get_loc(&self, id: ComponentId) -> usize {
+    pub(crate) fn get_section(&self, id: ComponentId) -> usize {
         self.sections[&id]
     }
 }

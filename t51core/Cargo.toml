@@ -9,7 +9,7 @@ anymap = "*"
 hashbrown = "*"
 indexmap = "*"
 lazy_static = "*"
-sequence_trie = "*"
+itertools = "*"
 serde = "*"
 serde_json = "*"
 

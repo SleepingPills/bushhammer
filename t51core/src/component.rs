@@ -25,42 +25,45 @@ impl<T> ShardedColumn<T> {
 
     #[inline]
     pub(crate) fn get(&self, section: usize, loc: usize) -> Option<&T> {
-        unsafe {
-            let data = self.data.get_unchecked(section);
-            data.get(loc)
-        }
+        self.data.get(section).get(loc)
     }
 
     #[inline]
-    pub(crate) fn push_to_section(&mut self, instance: T, section: usize) -> usize {
-        unsafe {
-            let storage = self.data.get_unchecked_mut(section);
-            let loc = storage.len();
-            storage.push(instance);
-            loc
-        }
+    pub(crate) fn push(&mut self, instance: T, section: usize) -> usize {
+        let storage = self.data.get_mut(section);
+        let loc = storage.len();
+        storage.push(instance);
+        loc
+    }
+
+    #[inline]
+    pub(crate) fn update(&mut self, instance: T, section: usize, loc: usize) {
+        self.data.get_mut(section)[loc] = instance;
     }
 
     #[inline]
     pub(crate) fn section_len(&self, section: usize) -> usize {
-        unsafe { self.data.get_unchecked(section).len() }
+        self.data.get(section).len()
     }
 
     #[inline]
     pub(crate) fn get_data_ptr(&self, section: usize) -> *const T {
-        unsafe { self.data.get_unchecked(section).as_ptr() }
+        self.data.get(section).as_ptr()
     }
 
     #[inline]
     pub(crate) fn get_data_mut_ptr(&mut self, section: usize) -> *mut T {
-        unsafe { self.data.get_unchecked_mut(section).as_mut_ptr() }
+        self.data.get_mut(section).as_mut_ptr()
     }
 }
 
 pub trait Column {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
     fn ingest_json(&mut self, json: String, section: usize) -> usize;
+    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize);
+    fn update_json(&mut self, json: String, section: usize, loc: usize);
     fn swap_remove(&mut self, section: usize, loc: usize);
+    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any>;
     fn new_section(&mut self) -> usize;
     fn section_len(&self, section: usize) -> usize;
 }
@@ -70,17 +73,33 @@ where
     T: 'static + DeserializeOwned,
 {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize {
-        self.push_to_section(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
+        self.push(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
     }
 
     fn ingest_json(&mut self, json: String, section: usize) -> usize {
-        self.push_to_section(serde_json::from_str(&json).expect("Error deserializing component"), section)
+        self.push(serde_json::from_str(&json).expect("Error deserializing component"), section)
+    }
+
+    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize) {
+        self.update(*boxed.downcast::<T>().expect("Incorrect boxed component"), section, loc)
+    }
+
+    fn update_json(&mut self, json: String, section: usize, loc: usize) {
+        self.update(serde_json::from_str(&json).expect("Error deserializing component"), section, loc)
     }
 
     fn swap_remove(&mut self, section: usize, loc: usize) {
         unsafe {
             let storage = self.data.get_unchecked_mut(section);
             storage.swap_remove(loc);
+        }
+    }
+
+    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any> {
+        unsafe {
+            let storage = self.data.get_unchecked_mut(section);
+            let instance = storage.swap_remove(loc);
+            Box::new(instance)
         }
     }
 

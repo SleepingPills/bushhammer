@@ -22,11 +22,6 @@ impl Entity {
     }
 
     #[inline]
-    pub(crate) fn set_section(&mut self, comp_id: ComponentId, section: usize) {
-        self.comp_sections.insert(comp_id, section);
-    }
-
-    #[inline]
     pub(crate) fn set_loc(&mut self, loc: usize) {
         self.shard_loc = loc;
     }
@@ -93,13 +88,22 @@ impl<'a> Builder<'a> {
 
     #[inline]
     pub fn with<T: 'static>(mut self, instance: T) -> Self {
+        let comp_id = self.get_component_id::<T>();
+        if comp_id == self.get_component_id::<EntityId>() {
+            panic!("Can't add Entity Id component")
+        }
+
         self.record_component(self.get_component_id::<T>(), CompDef::Boxed(Box::new(instance)));
         self
     }
 
     #[inline]
-    pub fn with_json(mut self, type_id: ComponentId, json: String) -> Self {
-        self.record_component(type_id, CompDef::Json(json));
+    pub fn with_json(mut self, comp_id: ComponentId, json: String) -> Self {
+        if comp_id == self.get_component_id::<EntityId>() {
+            panic!("Can't add Entity Id component")
+        }
+
+        self.record_component(comp_id, CompDef::Json(json));
         self
     }
 
@@ -159,7 +163,7 @@ impl<'a> Editor<'a> {
     pub fn remove<T: 'static>(mut self) -> Self {
         let comp_id = self.builder.get_component_id::<T>();
         if comp_id == self.builder.get_component_id::<EntityId>() {
-            panic!("Can't edit Entity Id component")
+            panic!("Can't remove Entity Id component")
         }
 
         self.builder.ent_def.components.remove(&comp_id);
@@ -169,7 +173,7 @@ impl<'a> Editor<'a> {
     #[inline]
     pub fn remove_id(mut self, comp_id: ComponentId) -> Self {
         if comp_id == self.builder.get_component_id::<EntityId>() {
-            panic!("Can't delete Entity Id component")
+            panic!("Can't remove Entity Id component")
         }
 
         self.builder.ent_def.components.remove(&comp_id);

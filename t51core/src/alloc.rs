@@ -39,6 +39,16 @@ impl<T> VecPool<T> {
     }
 
     #[inline]
+    pub fn get(&self, index: usize) -> &T {
+        &self.store[index]
+    }
+
+    #[inline]
+    pub fn get_mut(&mut self, index: usize) -> &mut T {
+        &mut self.store[index]
+    }
+
+    #[inline]
     pub unsafe fn get_unchecked(&self, index: usize) -> &T {
         self.store.get_unchecked(index)
     }

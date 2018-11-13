@@ -6,7 +6,7 @@ use crate::registry::TraitBox;
 use crate::sentinel;
 use crate::system;
 use hashbrown::HashMap;
-use indexmap::{IndexMap, IndexSet};
+use indexmap::IndexMap;
 use std::any::TypeId;
 
 pub struct World {
@@ -85,45 +85,36 @@ impl World {
         let id = self.next_entity_id();
 
         // Add the id as a mandatory extra component
+        let entity_id_comp = self.get_component_id::<EntityId>();
         ent_def
             .components
-            .insert(self.get_component_id::<EntityId>(), entity::CompDef::Boxed(Box::new(id)));
+            .insert(entity_id_comp, entity::CompDef::Boxed(Box::new(id)));
 
         let shard_id = self.get_shard_id(&ent_def);
         let shard = &self.shards[&shard_id];
 
         // Ingest all components and stash away the coordinates
         let mut components = IndexMap::new();
-        for (comp_id, comp_def) in ent_def.components.drain(..) {
+        let shard_loc = ent_def.components.drain(..).map(|(comp_id, comp_def)| {
             let column = &mut self.get_column(comp_id).write();
-
             let section = shard.get_section(comp_id);
+            components.insert(comp_id, section);
 
-            let loc = match comp_def {
+            match comp_def {
                 entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
                 entity::CompDef::Json(json) => column.ingest_json(json, section),
                 _ => panic!("No-op component definition on a new entity"),
-            };
+            }
+        }).last().unwrap();
 
-            components.insert(comp_id, section);
-        }
+        let entity = entity::Entity {
+            id,
+            shard_id: shard.id,
+            shard_loc,
+            comp_sections: components,
+        };
 
-//        let entity = entity::Entity {
-//            id,
-//            shard_id: shard.id,
-//            comp_sections: components,
-//        };
-
-//        self.entity_registry.insert(entity.id, entity);
-    }
-
-    fn get_shard_id(&mut self, ent_def: &entity::EntityDef) -> ShardId {
-        let shard_key = component::composite_key(ent_def.components.keys());
-
-        match self.shards_map.get(&shard_key) {
-            Some(&id) => id,
-            _ => self.create_shard(ent_def.components.keys(), shard_key),
-        }
+        self.entity_registry.insert(entity.id, entity);
     }
 
     /// Edit an existing entity.
@@ -157,7 +148,6 @@ impl World {
         //        }
     }
 
-    // TODO: Move section in the entity to the root entity level from the componentcoords.
     /// Remove an existing entity from the world.
     fn apply_remove(&mut self, id: EntityId) {
         if let Some(entity) = self.entity_registry.remove(&id) {
@@ -173,16 +163,27 @@ impl World {
                 .get::<component::ShardedColumn<EntityId>>(&entity_id_comp)
                 .read();
 
-//            if column.section_len(entity.shard_section) > 0 {
-//                // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
-//                // entity was the tail of the array, there is nothing to swap.
-//                if let Some(id) = column.get(entity.shard_section, entity.shard_loc) {
-//                    let swapped_entity = self.entity_registry.get_mut(id).unwrap();
-//                    swapped_entity.set_loc(entity.shard_loc);
-//                }
-//            } else {
-//                self.notify_systems_remove_shard(entity.shard_id, self.shards[&entity.shard_id].shard_key)
-//            }
+            let entity_id_section = entity.comp_sections[&entity_id_comp];
+
+            if column.section_len(entity_id_section) > 0 {
+                // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
+                // entity was the tail of the array, there is nothing to swap.
+                if let Some(id) = column.get(entity_id_section, entity.shard_loc) {
+                    let swapped_entity = self.entity_registry.get_mut(id).unwrap();
+                    swapped_entity.set_loc(entity.shard_loc);
+                }
+            } else {
+                self.notify_systems_remove_shard(entity.shard_id, self.shards[&entity.shard_id].shard_key)
+            }
+        }
+    }
+
+    fn get_shard_id(&mut self, ent_def: &entity::EntityDef) -> ShardId {
+        let shard_key = component::composite_key(ent_def.components.keys());
+
+        match self.shards_map.get(&shard_key) {
+            Some(&id) => id,
+            _ => self.create_shard(ent_def.components.keys(), shard_key),
         }
     }
 

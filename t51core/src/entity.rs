@@ -181,7 +181,7 @@ impl<'a> Editor<'a> {
     }
 
     #[inline]
-    pub fn build(self) {
+    pub fn commit(self) {
         self.builder.queue.push(Transaction::EditEnt(self.id, self.builder.ent_def));
     }
 }

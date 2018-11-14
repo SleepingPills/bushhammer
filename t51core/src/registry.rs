@@ -102,7 +102,7 @@ where
                 // Extract root pointer
                 let ptr_root = root.get_ptr_raw();
                 // Make new "unique" box
-                let val = Box::new(ptr_root.read());
+                let val = Box::from_raw(ptr_root);
                 // Create trait object
                 let boxed: Box<T> = val;
                 // Pass into WeakBox
@@ -289,6 +289,11 @@ mod tests {
             foo_trait.add_one();
 
             assert_eq!(foo_trait.get_x_times_two(), 6);
+        }
+
+        {
+            let foo = registry.get::<Foo>(&123).read();
+            assert_eq!(foo.get_x(), 3);
         }
     }
 

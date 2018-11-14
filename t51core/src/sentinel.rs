@@ -87,7 +87,7 @@ mod tests {
     fn test_panic_deref_when_taken() {
         let mut sentinel = Take::new(5);
         sentinel.take();
-        let result = *sentinel;
+        let _result = *sentinel;
     }
 
     #[test]

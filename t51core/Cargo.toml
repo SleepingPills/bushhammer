@@ -11,6 +11,7 @@ indexmap = "*"
 lazy_static = "*"
 itertools = "*"
 serde = "*"
+serde_derive = "*"
 serde_json = "*"
 
 [dev-dependencies]

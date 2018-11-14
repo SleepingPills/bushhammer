@@ -620,9 +620,11 @@ mod tests {
     fn test_iter_one_shard() {
     }
 
+    #[test]
     fn test_iter_multi_shards() {
     }
 
+    #[test]
     fn test_for_each() {
     }
 }

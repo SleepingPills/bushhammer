@@ -13,8 +13,9 @@ pub(crate) fn composite_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> 
     keys.fold(0 as ShardKey, |acc, cid| acc + cid.id)
 }
 
+#[derive(Debug)]
 pub struct ShardedColumn<T> {
-    data: VecPool<Vec<T>>,
+    pub(crate) data: VecPool<Vec<T>>,
 }
 
 impl<T> ShardedColumn<T> {
@@ -114,10 +115,11 @@ where
     }
 }
 
+#[derive(Debug)]
 pub struct Shard {
     pub(crate) id: ShardId,
     pub(crate) shard_key: ShardKey,
-    sections: HashMap<ComponentId, usize>,
+    pub(crate) sections: HashMap<ComponentId, usize>,
 }
 
 impl Shard {

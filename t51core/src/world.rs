@@ -13,7 +13,7 @@ use std::any::TypeId;
 pub struct World {
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
-    system_registry: IndexMap<SystemId, Box<system::SystemRuntime>>,
+    system_registry: Registry<SystemId>,
     shards: HashMap<ShardId, component::Shard>,
     shards_map: HashMap<component::ShardKey, ShardId>,
     transactions: sentinel::Take<Vec<entity::Transaction>>,
@@ -40,7 +40,7 @@ impl World {
         let mut world = World {
             component_registry: Registry::new(),
             entity_registry: HashMap::new(),
-            system_registry: IndexMap::new(),
+            system_registry: Registry::new(),
             shards: HashMap::new(),
             shards_map: HashMap::new(),
             transactions: sentinel::Take::new(Vec::new()),
@@ -58,7 +58,7 @@ impl World {
     fn collect_transactions(&mut self) {
         let transactions = &mut self.transactions;
 
-        for (_, system) in self.system_registry.iter_mut() {
+        for (_, mut system) in self.system_registry.iter_mut::<system::SystemRuntime>() {
             transactions.append(system.get_transactions());
         }
     }
@@ -241,16 +241,6 @@ impl World {
     fn next_entity_id(&self) -> EntityId {
         return self.entity_registry.len() as EntityId;
     }
-
-    #[inline]
-    fn get_column(&self, comp_id: ComponentId) -> TraitBox<component::Column> {
-        self.component_registry.get_trait::<component::Column>(&comp_id)
-    }
-
-    #[inline]
-    fn get_component_id<T: 'static>(&self) -> ComponentId {
-        self.component_ids[&TypeId::of::<T>()]
-    }
 }
 
 impl World {
@@ -271,14 +261,15 @@ impl World {
     {
         let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
-        self.system_registry.insert(id, Box::new(runtime));
+        self.system_registry.register(id, runtime);
+        self.system_registry.register_trait::<system::SystemEntry<T>, system::SystemRuntime>(&id);
         self.system_ids.insert(TypeId::of::<T>(), id);
     }
 
     /// Process all currently registered systems.
     #[inline]
     pub fn process_systems(&mut self) {
-        for (_, system) in self.system_registry.iter_mut() {
+        for (_, mut system) in self.system_registry.iter_mut::<system::SystemRuntime>() {
             system.run(&self.entity_registry, &self.component_ids);
         }
     }
@@ -286,17 +277,17 @@ impl World {
     /// Notify each relevant system that a shard was added
     fn notify_systems_add_shard(&mut self, shard: &component::Shard, shard_key: component::ShardKey) {
         self.system_registry
-            .values_mut()
-            .filter(|sys| sys.check_shard(shard_key))
-            .for_each(|sys| sys.add_shard(shard));
+            .iter_mut::<system::SystemRuntime>()
+            .filter(|(_, sys)| sys.check_shard(shard_key))
+            .for_each(|(_, mut sys)| sys.add_shard(shard));
     }
 
     /// Notify each relevant system that a shard was added
     fn notify_systems_remove_shard(&mut self, shard_id: ShardId, shard_key: component::ShardKey) {
         self.system_registry
-            .values_mut()
-            .filter(|sys| sys.check_shard(shard_key))
-            .for_each(|sys| sys.remove_shard(shard_id));
+            .iter_mut::<system::SystemRuntime>()
+            .filter(|(_, sys)| sys.check_shard(shard_key))
+            .for_each(|(_, mut sys)| sys.remove_shard(shard_id));
     }
 }
 
@@ -312,4 +303,78 @@ impl World {
         self.component_registry.register(id, store);
         self.component_ids.insert(TypeId::of::<T>(), id);
     }
+
+    #[inline]
+    fn get_column(&self, comp_id: ComponentId) -> TraitBox<component::Column> {
+        self.component_registry.get_trait::<component::Column>(&comp_id)
+    }
+
+    #[inline]
+    fn get_component_id<T: 'static>(&self) -> ComponentId {
+        self.component_ids[&TypeId::of::<T>()]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::prelude::*;
+    use std::marker::PhantomData;
+
+    #[derive(Clone)]
+    struct SomeComponent {
+        x: i32,
+        y: i32,
+    }
+
+    #[test]
+    fn test_add_entity() {
+        let mut world = World::new();
+
+        struct TestSystem<'a> {
+            called_with: Vec<EntityId>,
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'a> System for TestSystem<'a> {
+            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, SomeComponent>);
+
+            fn run(&mut self, mut ctx: Context<Self::JoinItem>, entities: entity::EntityStore) {
+                for (id, a, mut b) in ctx.iter() {
+                    b.x += *a;
+                    b.y -= *a;
+
+                    self.called_with.push(*id);
+                }
+            }
+        }
+
+        world.register_component::<SomeComponent>();
+        world.register_component::<i32>();
+        world.register_component::<f32>();
+
+        world.register_system(TestSystem { called_with: Vec::new(), _p: PhantomData });
+
+        world.entities().create().with(SomeComponent { x: 0, y: 0 }).with(1).build();
+        world.entities().create().with(SomeComponent { x: 0, y: 0 }).with(2).build();
+        world.entities().create().with(SomeComponent { x: 0, y: 0 }).with(3).build();
+        world
+            .entities()
+            .create()
+            .with(SomeComponent { x: 0, y: 0 })
+            .with(4)
+            .with(5f32)
+            .build();
+    }
+    fn test_edit_entity() {}
+    fn test_remove_entity() {
+        // Test removing entity in the middle
+        // Test removing last entity in the column
+    }
+
+    fn test_ingest_system_transactions() {
+        // Ensure system transactions are drained and processsed
+    }
+
+    fn test_run_systems() {}
 }

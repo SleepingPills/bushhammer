@@ -21,7 +21,7 @@ pub trait System {
     type Data: SystemDef;
     type JoinItem: Joined;
 
-    fn run(&mut self, data: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: EntityStore);
+    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: EntityStore);
 }
 
 pub trait SystemRuntime {
@@ -124,7 +124,7 @@ where
 
     #[inline]
     fn check_shard(&self, shard_key: component::ShardKey) -> bool {
-        (self.shard_key & shard_key) == shard_key
+        (self.shard_key & shard_key) == self.shard_key
     }
 
     #[inline]
@@ -609,5 +609,20 @@ pub mod context {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_iter_one_shard() {
+    }
+
+    fn test_iter_multi_shards() {
+    }
+
+    fn test_for_each() {
     }
 }

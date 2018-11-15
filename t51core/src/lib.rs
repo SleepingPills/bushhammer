@@ -7,7 +7,7 @@ pub mod alloc;
 pub mod sentinel;
 pub mod component;
 pub mod entity;
-pub mod object;
+pub mod identity;
 pub mod registry;
 pub mod sync;
 

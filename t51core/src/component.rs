@@ -1,5 +1,5 @@
 use crate::alloc::VecPool;
-use crate::object::{ComponentId, IdType, ShardId};
+use crate::identity::{ComponentId, IdType, ShardId};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;

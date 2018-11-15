@@ -1,7 +1,7 @@
 use crate::component;
 use crate::component::{ComponentCoords, ShardedColumn};
 use crate::entity::{Entity, EntityStore, Transaction};
-use crate::object::{ComponentId, EntityId, ShardId};
+use crate::identity::{ComponentId, EntityId, ShardId};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;

@@ -1,5 +1,5 @@
 use crate::component::ComponentCoords;
-use crate::object::{ComponentId, EntityId, ShardId};
+use crate::identity::{ComponentId, EntityId, ShardId};
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::any::Any;

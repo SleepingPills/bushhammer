@@ -2,7 +2,7 @@
 #[macro_use]
 extern crate t51core;
 
-use t51core::object::EntityId;
+use t51core::identity::EntityId;
 use t51core::prelude::*;
 use t51core::system::context::Context;
 use t51core::system::SystemDef;

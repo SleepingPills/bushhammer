@@ -1,6 +1,6 @@
 use crate::component;
 use crate::entity;
-use crate::object::{ComponentId, EntityId, ShardId, SystemId};
+use crate::identity::{ComponentId, EntityId, ShardId, SystemId};
 use crate::registry::Registry;
 use crate::registry::TraitBox;
 use crate::sentinel;

@@ -3,6 +3,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::cmp::Ordering;
+use serde_derive::{Deserialize, Serialize};
 
 #[macro_export]
 macro_rules! object_id {
@@ -77,7 +78,52 @@ macro_rules! object_id {
 
 pub(crate) type IdType = u64;
 
-pub type EntityId = IdType;
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct EntityId(IdType);
+
+impl From<u64> for EntityId {
+    #[inline]
+    fn from(id: u64) -> Self {
+        EntityId(id)
+    }
+}
+
+impl Into<u64> for EntityId {
+    #[inline]
+    fn into(self) -> u64 {
+        self.0
+    }
+}
+
+impl From<usize> for EntityId {
+    #[inline]
+    fn from(id: usize) -> Self {
+        if mem::size_of::<usize>() > 8 {
+            panic!("Casting `usize` to `Id` will lead to precision loss.")
+        }
+        EntityId(id as u64)
+    }
+}
+
+impl Into<usize> for EntityId {
+    #[inline]
+    fn into(self) -> usize {
+        if mem::size_of::<usize>() < 8 {
+            panic!("Casting `Id` to `usize` will lead to precision loss.")
+        }
+
+        self.0 as usize
+    }
+}
+
+impl From<i32> for EntityId {
+    #[inline]
+    fn from(id: i32) -> Self {
+        EntityId(id as IdType)
+    }
+}
+
 pub type ShardId = IdType;
 
 object_id!(SystemId, IdType);

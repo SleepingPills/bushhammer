@@ -256,7 +256,7 @@ impl World {
     /// Get the next entity id.
     #[inline]
     fn next_entity_id(&self) -> EntityId {
-        return self.entity_registry.len() as EntityId;
+        return self.entity_registry.len().into();
     }
 }
 
@@ -386,7 +386,7 @@ mod tests {
         assert_eq!(world.shards.len(), 1);
 
         // Add a new component to an existing entity, resulting in a new shard
-        world.entities().edit(1).expect("Entity must exist").with(5f32).commit();
+        world.entities().edit(1.into()).expect("Entity must exist").with(5f32).commit();
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 4);
@@ -394,7 +394,7 @@ mod tests {
         assert_eq!(world.shards.len(), 2);
 
         // Move an additional entity to the new shard
-        world.entities().edit(0).expect("Entity must exist").with(5f32).commit();
+        world.entities().edit(0.into()).expect("Entity must exist").with(5f32).commit();
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 4);
@@ -404,7 +404,7 @@ mod tests {
         // Edit entity in-place, not resulting in a new shard
         world
             .entities()
-            .edit(2)
+            .edit(2.into())
             .expect("Entity must exist")
             .with(SomeComponent { x: 1, y: 1 })
             .commit();
@@ -433,7 +433,7 @@ mod tests {
         assert_eq!(world.shards.len(), 2);
 
         // Test removing entity in the middle
-        world.entities().remove(1);
+        world.entities().remove(1.into());
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 3);
@@ -441,8 +441,8 @@ mod tests {
         assert_eq!(world.shards.len(), 2);
 
         // Test removing all entities
-        world.entities().remove(0);
-        world.entities().remove(2);
+        world.entities().remove(0.into());
+        world.entities().remove(2.into());
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 3);
@@ -461,7 +461,7 @@ mod tests {
             require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, SomeComponent>);
 
             fn run(&mut self, _ctx: Context<Self::JoinItem>, mut entities: entity::EntityStore) {
-                entities.edit(0).expect("Entity must exist").with(5f32).commit();
+                entities.edit(0.into()).expect("Entity must exist").with(5f32).commit();
                 entities.create().with(SomeComponent { x: 2, y: 2 }).with(2).build();
                 entities.create().with(SomeComponent { x: 3, y: 3 }).with(3).build();
             }
@@ -555,14 +555,14 @@ mod tests {
         let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (1, 1, SomeComponent { x: 1, y: 1 }));
-        assert_eq!(state[2], (2, 2, SomeComponent { x: 2, y: 2 }));
-        assert_eq!(state[3], (3, 3, SomeComponent { x: 3, y: 3 }));
+        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (1.into(), 1, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(state[2], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
+        assert_eq!(state[3], (3.into(), 3, SomeComponent { x: 3, y: 3 }));
         state.clear();
 
         // Remove the entity that was in it's own shard
-        world.entities().remove(3);
+        world.entities().remove(3.into());
 
         // Run the system
         world.run();
@@ -571,15 +571,15 @@ mod tests {
         let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (1, 1, SomeComponent { x: 1, y: 1 }));
-        assert_eq!(state[2], (2, 2, SomeComponent { x: 2, y: 2 }));
+        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (1.into(), 1, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(state[2], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
         state.clear();
 
         // Edit entity, requiring a remove/add
         world
             .entities()
-            .edit(1)
+            .edit(1.into())
             .expect("Entity must exist")
             .with(5f32)
             .with(5i32)
@@ -592,8 +592,8 @@ mod tests {
         let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (2, 2, SomeComponent { x: 2, y: 2 }));
-        assert_eq!(state[2], (1, 5, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
+        assert_eq!(state[2], (1.into(), 5, SomeComponent { x: 1, y: 1 }));
     }
 }

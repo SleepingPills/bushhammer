@@ -634,7 +634,7 @@ mod tests {
             require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, f32>);
 
             fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
-                let entity_ids: Vec<_> = (0..4).collect();
+                let entity_ids: Vec<_> = (0..4).map(|id| id.into()).collect();
                 ctx.for_each(&entity_ids, |(id, a, b)| {
                     self.collector.push((*id, *a, *b));
                 });
@@ -663,9 +663,9 @@ mod tests {
         let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0, 0, 0f32));
-        assert_eq!(state[1], (1, 1, 1f32));
-        assert_eq!(state[2], (2, 2, 2f32));
-        assert_eq!(state[3], (3, 3, 3f32));
+        assert_eq!(state[0], (0.into(), 0, 0f32));
+        assert_eq!(state[1], (1.into(), 1, 1f32));
+        assert_eq!(state[2], (2.into(), 2, 2f32));
+        assert_eq!(state[3], (3.into(), 3, 3f32));
     }
 }

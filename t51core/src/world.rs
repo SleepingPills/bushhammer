@@ -14,6 +14,7 @@ use std::any::TypeId;
 use std::sync::Arc;
 
 pub struct World {
+    entity_id_counter: u32,
     component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
     system_registry: Registry<SystemId>,
@@ -41,6 +42,7 @@ impl World {
     #[inline]
     pub fn new() -> Self {
         let mut world = World {
+            entity_id_counter: 0,
             component_registry: Registry::new(),
             entity_registry: HashMap::new(),
             system_registry: Registry::new(),
@@ -86,7 +88,8 @@ impl World {
 
     /// Add a new entity to the world.
     fn apply_add(&mut self, ent_def: entity::EntityDef) {
-        self.add_entity_core(self.next_entity_id(), ent_def);
+        let id = self.next_entity_id();
+        self.add_entity_core(id, ent_def);
     }
 
     /// Edit an existing entity.
@@ -255,8 +258,10 @@ impl World {
 
     /// Get the next entity id.
     #[inline]
-    fn next_entity_id(&self) -> EntityId {
-        return self.entity_registry.len().into();
+    fn next_entity_id(&mut self) -> EntityId {
+        let count = self.entity_id_counter;
+        self.entity_id_counter += 1;
+        count.into()
     }
 }
 

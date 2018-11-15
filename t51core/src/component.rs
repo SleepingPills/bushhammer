@@ -1,11 +1,11 @@
 use crate::alloc::VecPool;
-use crate::identity::{ComponentId, IdType, ShardId};
+use crate::identity::{ComponentId, BitSetIdType, ShardId};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
 use std::any::Any;
 
-pub(crate) type ShardKey = IdType;
+pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
 #[inline]

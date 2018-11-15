@@ -1,9 +1,9 @@
-use std::mem;
+use serde_derive::{Deserialize, Serialize};
+use std::cmp::Ordering;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
-use std::cmp::Ordering;
-use serde_derive::{Deserialize, Serialize};
+use std::mem;
 
 #[macro_export]
 macro_rules! object_id {
@@ -20,10 +20,10 @@ macro_rules! object_id {
             /// cause the method to panic. This is to enable efficient set operations and membership tests on
             /// groups of ids.
             #[inline(always)]
-            pub fn new<T:'static>(cur_count: usize) -> $name {
+            pub fn new<T: 'static>(cur_count: usize) -> $name {
                 let name = unsafe { type_name::<T>() };
 
-                let limit = mem::size_of::<IdType>() * 8;
+                let limit = mem::size_of::<$type>() * 8;
                 let power = cur_count;
 
                 if (power + 1) >= limit {
@@ -31,7 +31,7 @@ macro_rules! object_id {
                 }
 
                 $name {
-                    id: (1 as IdType) << power,
+                    id: (1 as $type) << power,
                     name,
                 }
             }
@@ -76,35 +76,9 @@ macro_rules! object_id {
     };
 }
 
-pub(crate) type IdType = u64;
-
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct EntityId(IdType);
-
-impl From<u64> for EntityId {
-    #[inline]
-    fn from(id: u64) -> Self {
-        EntityId(id)
-    }
-}
-
-impl Into<u64> for EntityId {
-    #[inline]
-    fn into(self) -> u64 {
-        self.0
-    }
-}
-
-impl From<usize> for EntityId {
-    #[inline]
-    fn from(id: usize) -> Self {
-        if mem::size_of::<usize>() > 8 {
-            panic!("Casting `usize` to `Id` will lead to precision loss.")
-        }
-        EntityId(id as u64)
-    }
-}
+pub struct EntityId(u32);
 
 impl Into<usize> for EntityId {
     #[inline]
@@ -117,14 +91,36 @@ impl Into<usize> for EntityId {
     }
 }
 
-impl From<i32> for EntityId {
+impl From<u32> for EntityId {
     #[inline]
-    fn from(id: i32) -> Self {
-        EntityId(id as IdType)
+    fn from(id: u32) -> Self {
+        EntityId(id)
     }
 }
 
-pub type ShardId = IdType;
+impl Into<u32> for EntityId {
+    #[inline]
+    fn into(self) -> u32 {
+        self.0
+    }
+}
 
-object_id!(SystemId, IdType);
-object_id!(ComponentId, IdType);
+impl From<i32> for EntityId {
+    #[inline]
+    fn from(id: i32) -> Self {
+        EntityId(id as u32)
+    }
+}
+
+impl Into<i32> for EntityId {
+    #[inline]
+    fn into(self) -> i32 {
+        self.0 as i32
+    }
+}
+
+pub(crate) type BitSetIdType = u64;
+pub type ShardId = BitSetIdType;
+
+object_id!(SystemId, BitSetIdType);
+object_id!(ComponentId, BitSetIdType);

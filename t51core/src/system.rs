@@ -98,6 +98,11 @@ where
             transactions: Vec::new(),
         }
     }
+
+    #[inline]
+    pub fn get_system_mut(&mut self) -> &mut T {
+        &mut self.system
+    }
 }
 
 impl<T> SystemRuntime for SystemEntry<T>
@@ -620,11 +625,9 @@ mod tests {
     fn test_iter_one_shard() {
     }
 
-    #[test]
     fn test_iter_multi_shards() {
     }
 
-    #[test]
     fn test_for_each() {
     }
 }

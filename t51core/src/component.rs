@@ -15,7 +15,7 @@ pub(crate) fn composite_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> 
 
 #[derive(Debug)]
 pub struct ShardedColumn<T> {
-    pub(crate) data: VecPool<Vec<T>>,
+    data: VecPool<Vec<T>>,
 }
 
 impl<T> ShardedColumn<T> {

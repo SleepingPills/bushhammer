@@ -4,12 +4,14 @@ use crate::object::{ComponentId, EntityId, ShardId, SystemId};
 use crate::registry::Registry;
 use crate::registry::TraitBox;
 use crate::sentinel;
+use crate::sync::RwCell;
 use crate::system;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use std::any::TypeId;
+use std::sync::Arc;
 
 pub struct World {
     component_registry: Registry<ComponentId>,
@@ -166,7 +168,7 @@ impl World {
             .components
             .drain(..)
             .map(|(comp_id, comp_def)| {
-                self.get_column(comp_id).apply_mut(|column|{
+                self.get_column(comp_id).apply_mut(|column| {
                     let section = shard.get_section(comp_id);
                     components.insert(comp_id, section);
 
@@ -290,6 +292,15 @@ impl World {
             system.run(&self.entity_registry, &self.component_ids);
         }
     }
+
+    #[allow(dead_code)]
+    #[inline]
+    pub(crate) fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<system::SystemEntry<T>>>
+    where
+        T: 'static + system::System,
+    {
+        self.system_registry.get::<system::SystemEntry<T>>(&id)
+    }
 }
 
 impl World {
@@ -320,7 +331,7 @@ impl World {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use super::entity;
     use crate::prelude::*;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
@@ -509,7 +520,7 @@ mod tests {
             collector: Vec::new(),
             _p: PhantomData,
         });
-        let system = world.system_registry.get::<system::SystemEntry<TestSystem>>(&system_id);
+        let system = world.get_system::<TestSystem>(system_id);
 
         world
             .entities()

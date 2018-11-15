@@ -619,15 +619,53 @@ pub mod context {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::entity;
+    use crate::prelude::*;
+    use std::marker::PhantomData;
 
     #[test]
-    fn test_iter_one_shard() {
-    }
-
-    fn test_iter_multi_shards() {
-    }
-
     fn test_for_each() {
+        struct TestSystem<'a> {
+            collector: Vec<(EntityId, i32, f32)>,
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'a> System for TestSystem<'a> {
+            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, f32>);
+
+            fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
+                let entity_ids: Vec<_> = (0..4).collect();
+                ctx.for_each(&entity_ids, |(id, a, b)| {
+                    self.collector.push((*id, *a, *b));
+                });
+            }
+        }
+
+        let mut world = World::new();
+
+        world.register_component::<i32>();
+        world.register_component::<f32>();
+        world.register_component::<f64>();
+
+        let system_id = world.register_system(TestSystem {
+            collector: Vec::new(),
+            _p: PhantomData,
+        });
+        let system = world.get_system::<TestSystem>(system_id);
+
+        world.entities().create().with(0i32).with(0f32).build();
+        world.entities().create().with(1i32).with(1f32).build();
+        world.entities().create().with(2i32).with(2f32).build();
+        world.entities().create().with(3i32).with(3f32).with(5f64).build();
+
+        world.run();
+
+        let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
+
+        assert_eq!(state.len(), 4);
+        assert_eq!(state[0], (0, 0, 0f32));
+        assert_eq!(state[1], (1, 1, 1f32));
+        assert_eq!(state[2], (2, 2, 2f32));
+        assert_eq!(state[3], (3, 3, 3f32));
     }
 }

@@ -39,37 +39,69 @@ impl<T> RwCell<T> {
         }
     }
 
+    /// Apply a function to an immutable reference of the guarded value. Slightly faster than acquiring
+    /// a guard.
+    #[inline]
+    pub fn apply<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&T) -> R,
+    {
+        self.acquire_read();
+        let result = f(unsafe { &*self.item.get() });
+        self.guard.fetch_sub(1, Ordering::Relaxed);
+        result
+    }
+
+    /// Apply a function to a mutable reference of the guarded value. Slightly faster than acquiring
+    /// a guard.
+    #[inline]
+    pub fn apply_mut<F, R>(&self, f: F) -> R
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        self.acquire_write();
+        let result = f(unsafe { &mut *self.item.get() });
+        self.guard.store(0, Ordering::SeqCst);
+        result
+    }
+
     /// Get read-only access to the cell. There can be multiple readers, but no concurrent writer.
     pub fn read(&self) -> ReadGuard<T> {
-        loop {
-            let value = self.guard.load(Ordering::Acquire);
-
-            let new = self.guard.compare_and_swap(value, value + 1, Ordering::Release);
-
-            if new == -1 {
-                panic!("Attempted to acquire read lock when a write lock is already in effect")
-            } else if new == value {
-                break ReadGuard {
-                    ptr: self.item.get(),
-                    guard: self.guard.clone(),
-                };
-            }
+        self.acquire_read();
+        ReadGuard {
+            ptr: self.item.get(),
+            guard: self.guard.clone(),
         }
     }
 
     /// Get read-write access to the cell. Note that there can only be one writer and no readers
     /// at a time.
     pub fn write(&self) -> RwGuard<T> {
-        let value = self.guard.load(Ordering::Acquire);
+        self.acquire_write();
 
-        let new = self.guard.compare_and_swap(value, -1, Ordering::Release);
+        RwGuard {
+            ptr: self.item.get(),
+            guard: self.guard.clone(),
+        }
+    }
 
-        if new == 0 {
-            return RwGuard {
-                ptr: self.item.get(),
-                guard: self.guard.clone(),
-            };
-        } else {
+    #[inline]
+    fn acquire_read(&self) {
+        loop {
+            let value = self.guard.load(Ordering::Acquire);
+            let new = self.guard.compare_and_swap(value, value + 1, Ordering::Release);
+
+            if new == -1 {
+                panic!("Attempted to acquire read lock when a write lock is already in effect");
+            } else if new == value {
+                break;
+            }
+        }
+    }
+
+    #[inline]
+    fn acquire_write(&self) {
+        if self.guard.compare_and_swap(0, -1, Ordering::AcqRel) != 0 {
             panic!("Attempted to acquire a write lock while another lock is already in effect")
         }
     }
@@ -211,9 +243,11 @@ mod tests {
             assert_eq!(*d, 10);
         }
 
-        let e = lock.read();
+        lock.apply_mut(|e| *e = 15);
+        lock.apply(|e| assert_eq!(*e, 15));
 
-        assert_eq!(*e, 10);
+        let e = lock.read();
+        assert_eq!(*e, 15);
     }
 
     #[test]

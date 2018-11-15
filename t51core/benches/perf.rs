@@ -366,8 +366,9 @@ fn rwcell(c: &mut Criterion) {
 
     c.bench_function("rwcell", move |b| {
         b.iter(|| {
-            let guard = cell.read();
-            black_box(guard);
+            cell.apply(|value| {
+                black_box(value);
+            });
         })
     });
 }

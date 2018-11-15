@@ -95,7 +95,7 @@ impl World {
                 let shard = &self.shards[&ent.shard_id];
 
                 for (comp_id, comp_def) in ent_def.components.drain(..) {
-                    let column = &mut self.get_column(comp_id).write();
+                    let mut column = self.get_column(comp_id).write();
                     let section = shard.get_section(comp_id);
 
                     if let entity::CompDef::Boxed(boxed) = comp_def {
@@ -110,16 +110,15 @@ impl World {
                 // Remove all the components from the entity, stashing away those that need to be transferred
                 // due to Nops on the new definition
                 let mut transfer = Vec::new();
-                for (comp_id, &section) in ent.comp_sections.iter() {
-                    let mut column = self.component_registry.get_trait::<component::Column>(&comp_id).write();
-
-                    match ent_def.components.get(comp_id) {
-                        Some(entity::CompDef::Nop()) => {
-                            let boxed = column.swap_remove_return(section, ent.shard_loc);
-                            transfer.push((*comp_id, entity::CompDef::Boxed(boxed)))
-                        }
-                        _ => column.swap_remove(section, ent.shard_loc),
-                    }
+                for (&comp_id, &section) in ent.comp_sections.iter() {
+                    self.get_column(comp_id)
+                        .apply_mut(|col| match ent_def.components.get(&comp_id) {
+                            Some(entity::CompDef::Nop()) => {
+                                let boxed = col.swap_remove_return(section, ent.shard_loc);
+                                transfer.push((comp_id, entity::CompDef::Boxed(boxed)))
+                            }
+                            _ => col.swap_remove(section, ent.shard_loc),
+                        })
                 }
                 ent_def.components.extend(transfer);
 
@@ -136,9 +135,9 @@ impl World {
     fn apply_remove(&mut self, id: EntityId) {
         if let Some(ent) = self.entity_registry.remove(&id) {
             // Remove all the components assigned to the entity, swapping in the last entry into the now vacant slot
-            for (comp_id, section) in ent.comp_sections.iter() {
-                let mut column = self.component_registry.get_trait::<component::Column>(comp_id).write();
-                column.swap_remove(*section, ent.shard_loc);
+            for (&comp_id, section) in ent.comp_sections.iter() {
+                self.get_column(comp_id)
+                    .apply_mut(|col| col.swap_remove(*section, ent.shard_loc));
             }
 
             self.handle_swapped(&ent)
@@ -167,15 +166,16 @@ impl World {
             .components
             .drain(..)
             .map(|(comp_id, comp_def)| {
-                let column = &mut self.get_column(comp_id).write();
-                let section = shard.get_section(comp_id);
-                components.insert(comp_id, section);
+                self.get_column(comp_id).apply_mut(|column|{
+                    let section = shard.get_section(comp_id);
+                    components.insert(comp_id, section);
 
-                match comp_def {
-                    entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
-                    entity::CompDef::Json(json) => column.ingest_json(json, section),
-                    _ => panic!("No-op component definition on a new entity"),
-                }
+                    match comp_def {
+                        entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
+                        entity::CompDef::Json(json) => column.ingest_json(json, section),
+                        _ => panic!("No-op component definition on a new entity"),
+                    }
+                })
             })
             .fold1(|acc, loc| {
                 if acc != loc {
@@ -208,26 +208,25 @@ impl World {
     /// Removing entries from columns can result in swaps, handle these by updating the affected entity.
     fn handle_swapped(&mut self, ent: &entity::Entity) -> () {
         let entity_id_comp = self.get_component_id::<EntityId>();
-        let column = self
-            .component_registry
+        self.component_registry
             .get::<component::ShardedColumn<EntityId>>(&entity_id_comp)
-            .read();
-
-        let entity_id_section = ent.comp_sections[&entity_id_comp];
-        if column.section_len(entity_id_section) > 0 {
-            // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
-            // entity was the tail of the array, there is nothing to swap.
-            if let Some(id) = column.get(entity_id_section, ent.shard_loc) {
-                let swapped_entity = self.entity_registry.get_mut(id).unwrap();
-                swapped_entity.set_loc(ent.shard_loc);
-            }
-        } else {
-            // Notify each relevant system that a shard was added
-            self.system_registry
-                .iter_mut::<system::SystemRuntime>()
-                .filter(|(_, sys)| sys.check_shard(self.shards[&ent.shard_id].shard_key))
-                .for_each(|(_, mut sys)| sys.remove_shard(ent.shard_id));
-        }
+            .apply(|col| {
+                let entity_id_section = ent.comp_sections[&entity_id_comp];
+                if col.section_len(entity_id_section) > 0 {
+                    // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
+                    // entity was the tail of the array, there is nothing to swap.
+                    if let Some(id) = col.get(entity_id_section, ent.shard_loc) {
+                        let swapped_entity = self.entity_registry.get_mut(id).unwrap();
+                        swapped_entity.set_loc(ent.shard_loc);
+                    }
+                } else {
+                    // Notify each relevant system that a shard was added
+                    self.system_registry
+                        .iter_mut::<system::SystemRuntime>()
+                        .filter(|(_, sys)| sys.check_shard(self.shards[&ent.shard_id].shard_key))
+                        .for_each(|(_, mut sys)| sys.remove_shard(ent.shard_id));
+                }
+            });
     }
 
     /// Gets the id of an existing shard (or creates a new one) based on the component
@@ -512,9 +511,24 @@ mod tests {
         });
         let system = world.system_registry.get::<system::SystemEntry<TestSystem>>(&system_id);
 
-        world.entities().create().with(SomeComponent { x: 0, y: 0 }).with(0i32).build();
-        world.entities().create().with(SomeComponent { x: 1, y: 1 }).with(1i32).build();
-        world.entities().create().with(SomeComponent { x: 2, y: 2 }).with(2i32).build();
+        world
+            .entities()
+            .create()
+            .with(SomeComponent { x: 0, y: 0 })
+            .with(0i32)
+            .build();
+        world
+            .entities()
+            .create()
+            .with(SomeComponent { x: 1, y: 1 })
+            .with(1i32)
+            .build();
+        world
+            .entities()
+            .create()
+            .with(SomeComponent { x: 2, y: 2 })
+            .with(2i32)
+            .build();
         world
             .entities()
             .create()
@@ -530,10 +544,10 @@ mod tests {
         let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0, 0, SomeComponent{x: 0, y:0}));
-        assert_eq!(state[1], (1, 1, SomeComponent{x: 1, y:1}));
-        assert_eq!(state[2], (2, 2, SomeComponent{x: 2, y:2}));
-        assert_eq!(state[3], (3, 3, SomeComponent{x: 3, y:3}));
+        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (1, 1, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(state[2], (2, 2, SomeComponent { x: 2, y: 2 }));
+        assert_eq!(state[3], (3, 3, SomeComponent { x: 3, y: 3 }));
         state.clear();
 
         // Remove the entity that was in it's own shard
@@ -546,13 +560,19 @@ mod tests {
         let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0, 0, SomeComponent{x: 0, y:0}));
-        assert_eq!(state[1], (1, 1, SomeComponent{x: 1, y:1}));
-        assert_eq!(state[2], (2, 2, SomeComponent{x: 2, y:2}));
+        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (1, 1, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(state[2], (2, 2, SomeComponent { x: 2, y: 2 }));
         state.clear();
 
         // Edit entity, requiring a remove/add
-        world.entities().edit(1).expect("Entity must exist").with(5f32).with(5i32).commit();
+        world
+            .entities()
+            .edit(1)
+            .expect("Entity must exist")
+            .with(5f32)
+            .with(5i32)
+            .commit();
 
         // Run the system
         world.run();
@@ -561,8 +581,8 @@ mod tests {
         let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
 
         assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0, 0, SomeComponent{x: 0, y:0}));
-        assert_eq!(state[1], (2, 2, SomeComponent{x: 2, y:2}));
-        assert_eq!(state[2], (1, 5, SomeComponent{x: 1, y:1}));
+        assert_eq!(state[0], (0, 0, SomeComponent { x: 0, y: 0 }));
+        assert_eq!(state[1], (2, 2, SomeComponent { x: 2, y: 2 }));
+        assert_eq!(state[2], (1, 5, SomeComponent { x: 1, y: 1 }));
     }
 }

@@ -98,7 +98,7 @@ impl World {
             if component::composite_key(ent.comp_sections.keys()) == component::composite_key(ent_def.components.keys()) {
                 let shard = &self.shards[&ent.shard_id];
 
-                for (comp_id, comp_def) in ent_def.components.drain(..) {
+                for (comp_id, comp_def) in ent_def.components.drain() {
                     let mut column = self.get_column(comp_id).write();
                     let section = shard.get_section(comp_id);
 
@@ -168,7 +168,7 @@ impl World {
 
         let shard_loc = ent_def
             .components
-            .drain(..)
+            .drain()
             .map(|(comp_id, comp_def)| {
                 self.get_column(comp_id).apply_mut(|column| {
                     let section = shard.get_section(comp_id);

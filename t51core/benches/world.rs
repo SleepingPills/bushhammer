@@ -3,9 +3,7 @@ extern crate criterion;
 #[macro_use]
 extern crate t51core;
 
-use criterion::black_box;
 use criterion::Criterion;
-use rand::prelude::*;
 use std::marker::PhantomData;
 use t51core::prelude::*;
 
@@ -18,7 +16,7 @@ fn add_ents(c: &mut Criterion) {
         require!(Read<'a, i8>, Write<'a, i16>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
+        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
     }
 
     // Create World
@@ -75,7 +73,7 @@ fn edit_ents(c: &mut Criterion) {
         require!(Read<'a, i8>, Write<'a, i16>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
+        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
     }
 
     // Create World
@@ -123,7 +121,7 @@ fn remove_ents(c: &mut Criterion) {
         require!(Read<'a, i8>, Write<'a, i16>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
+        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
     }
 
     // Create World

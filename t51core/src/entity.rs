@@ -1,7 +1,6 @@
 use crate::component::ComponentCoords;
 use crate::identity::{ComponentId, EntityId, ShardId};
 use hashbrown::HashMap;
-use indexmap::IndexMap;
 use std::any::Any;
 use std::any::TypeId;
 
@@ -38,13 +37,13 @@ pub enum CompDef {
 
 #[derive(Debug)]
 pub struct EntityDef {
-    pub components: IndexMap<ComponentId, CompDef>,
+    pub components: HashMap<ComponentId, CompDef>,
 }
 
 impl EntityDef {
     pub fn new() -> Self {
         EntityDef {
-            components: IndexMap::new(),
+            components: HashMap::new(),
         }
     }
 }

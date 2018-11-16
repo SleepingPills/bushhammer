@@ -21,3 +21,11 @@ rand = "0.5"
 [[bench]]
 name = "perf"
 harness = false
+
+[[bench]]
+name = "system"
+harness = false
+
+[[bench]]
+name = "world"
+harness = false

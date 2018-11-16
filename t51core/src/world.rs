@@ -7,7 +7,6 @@ use crate::sentinel;
 use crate::sync::RwCell;
 use crate::system;
 use hashbrown::HashMap;
-use indexmap::IndexMap;
 use itertools::Itertools;
 use serde::de::DeserializeOwned;
 use std::any::TypeId;
@@ -60,7 +59,7 @@ impl World {
 
 impl World {
     /// Drain all the system transactions into the common transaction queue.
-    fn collect_transactions(&mut self) {
+    pub fn collect_transactions(&mut self) {
         let transactions = &mut self.transactions;
 
         for (_, mut system) in self.system_registry.iter_mut::<system::SystemRuntime>() {
@@ -69,7 +68,7 @@ impl World {
     }
 
     /// Process all transactions in the queue.
-    fn process_transactions(&mut self) {
+    pub fn process_transactions(&mut self) {
         self.collect_transactions();
 
         // Take the transactions out
@@ -165,7 +164,7 @@ impl World {
         let shard = &self.shards[&shard_id];
 
         // Ingest all components and stash away the coordinates.
-        let mut components = IndexMap::new();
+        let mut components = HashMap::new();
 
         let shard_loc = ent_def
             .components
@@ -283,6 +282,9 @@ impl World {
     {
         let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
+
+        // TODO: Run through existing shards and add them as required to the system
+
         self.system_registry.register(id, runtime);
         self.system_registry
             .register_trait::<system::SystemEntry<T>, system::SystemRuntime>(&id);
@@ -300,7 +302,7 @@ impl World {
 
     #[allow(dead_code)]
     #[inline]
-    pub(crate) fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<system::SystemEntry<T>>>
+    pub fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<system::SystemEntry<T>>>
     where
         T: 'static + system::System,
     {

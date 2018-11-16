@@ -12,7 +12,7 @@ pub struct Entity {
     pub id: EntityId,
     pub shard_id: ShardId,
     pub shard_loc: usize,
-    pub comp_sections: IndexMap<ComponentId, usize>,
+    pub comp_sections: HashMap<ComponentId, usize>,
 }
 
 impl Entity {

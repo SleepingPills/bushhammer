@@ -83,10 +83,6 @@ pub struct EntityId(u32);
 impl Into<usize> for EntityId {
     #[inline]
     fn into(self) -> usize {
-        if mem::size_of::<usize>() < 8 {
-            panic!("Casting `Id` to `usize` will lead to precision loss.")
-        }
-
         self.0 as usize
     }
 }

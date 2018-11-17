@@ -113,18 +113,16 @@ impl World {
             } else {
                 // Remove all the components from the entity, stashing away those that need to be transferred
                 // due to Nops on the new definition
-                let mut transfer = Vec::new();
                 for (&comp_id, &section) in ent.comp_sections.iter() {
-                    self.get_column(comp_id)
-                        .apply_mut(|col| match ent_def.components.get(&comp_id) {
-                            Some(entity::CompDef::Nop()) => {
-                                let boxed = col.swap_remove_return(section, ent.shard_loc);
-                                transfer.push((comp_id, entity::CompDef::Boxed(boxed)))
-                            }
-                            _ => col.swap_remove(section, ent.shard_loc),
-                        })
+                    self.get_column(comp_id).apply_mut(|col| {
+                        if ent_def.is_nop(comp_id) {
+                            let boxed = col.swap_remove_return(section, ent.shard_loc);
+                            ent_def.components.insert(comp_id, entity::CompDef::Boxed(boxed));
+                        } else {
+                            col.swap_remove(section, ent.shard_loc)
+                        }
+                    })
                 }
-                ent_def.components.extend(transfer);
 
                 // Handle the swapped entity
                 self.handle_swapped(&ent);
@@ -393,7 +391,12 @@ mod tests {
         assert_eq!(world.shards.len(), 1);
 
         // Add a new component to an existing entity, resulting in a new shard
-        world.entities().edit(1.into()).expect("Entity must exist").with(5f32).commit();
+        world
+            .entities()
+            .edit(1.into())
+            .expect("Entity must exist")
+            .with(5f32)
+            .commit();
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 4);
@@ -401,7 +404,12 @@ mod tests {
         assert_eq!(world.shards.len(), 2);
 
         // Move an additional entity to the new shard
-        world.entities().edit(0.into()).expect("Entity must exist").with(5f32).commit();
+        world
+            .entities()
+            .edit(0.into())
+            .expect("Entity must exist")
+            .with(5f32)
+            .commit();
         world.process_transactions();
 
         assert_eq!(world.component_registry.len(), 4);

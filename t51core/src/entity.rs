@@ -46,6 +46,14 @@ impl EntityDef {
             components: HashMap::new(),
         }
     }
+
+    #[inline]
+    pub fn is_nop(&self, comp_id: ComponentId) -> bool {
+        match self.components.get(&comp_id) {
+            Some(CompDef::Nop()) => true,
+            _ => false
+        }
+    }
 }
 
 impl From<&Entity> for EntityDef {

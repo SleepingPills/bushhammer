@@ -22,6 +22,7 @@ pub struct World {
     transactions: sentinel::Take<Vec<entity::Transaction>>,
     component_ids: HashMap<TypeId, ComponentId>,
     system_ids: HashMap<TypeId, SystemId>,
+    finalized: bool
 }
 
 impl World {
@@ -50,6 +51,7 @@ impl World {
             transactions: sentinel::Take::new(Vec::new()),
             component_ids: HashMap::new(),
             system_ids: HashMap::new(),
+            finalized: false,
         };
         // Entity ID is always a registered component
         world.register_component::<EntityId>();
@@ -278,6 +280,10 @@ impl World {
     where
         T: 'static + system::System,
     {
+        if self.finalized {
+            panic!("This world instance is already finalized and cannot be extended")
+        }
+        
         let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
 
@@ -314,6 +320,10 @@ impl World {
     where
         T: 'static + DeserializeOwned,
     {
+        if self.finalized {
+            panic!("This world instance is already finalized and cannot be extended")
+        }
+
         let id = ComponentId::new::<T>(self.component_registry.len());
         let store = component::ShardedColumn::<T>::new();
 

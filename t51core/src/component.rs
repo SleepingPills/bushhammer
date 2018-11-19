@@ -1,5 +1,5 @@
 use crate::alloc::VecPool;
-use crate::identity::{ComponentId, BitSetIdType, ShardId};
+use crate::identity::{BitSetIdType, ComponentId, ShardId};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
@@ -8,9 +8,23 @@ use std::any::Any;
 pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
+/// Construct a composite bit-set shard key from the supplied component id's.
 #[inline]
 pub(crate) fn composite_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
-    keys.fold(0 as ShardKey, |acc, cid| acc + cid.id)
+    keys.fold(0 as ShardKey, |acc, cid| acc | cid.id)
+}
+
+/// Count the number of components set in the supplied shard key.
+#[inline]
+pub(crate) fn key_count(mut key: ShardKey) -> BitSetIdType {
+    let mut count = 0 as BitSetIdType;
+
+    while key > 0 {
+        count += key & 1;
+        key >>= 1
+    }
+
+    count
 }
 
 #[derive(Debug)]
@@ -86,7 +100,11 @@ where
     }
 
     fn update_json(&mut self, json: String, section: usize, loc: usize) {
-        self.update(serde_json::from_str(&json).expect("Error deserializing component"), section, loc)
+        self.update(
+            serde_json::from_str(&json).expect("Error deserializing component"),
+            section,
+            loc,
+        )
     }
 
     fn swap_remove(&mut self, section: usize, loc: usize) {

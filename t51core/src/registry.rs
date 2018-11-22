@@ -11,6 +11,7 @@ use std::marker::Unsize;
 use std::ops::Deref;
 use std::ops::DerefMut;
 use std::fmt::Display;
+use std::mem::ManuallyDrop;
 
 /// Dynamically typed registry for shared ownership access to objects and traits they implement.
 /// Vanilla trait objects in rust take full ownership of the underlying instance, making it
@@ -173,45 +174,28 @@ impl Bundle {
 /// the leak is acceptable since items in the registry are never meant to be deleted and live
 /// until the end of the program.
 pub struct WeakBox<T: ?Sized> {
-    item: Option<Box<T>>,
+    item: ManuallyDrop<Box<T>>,
 }
 
 impl<T: ?Sized> WeakBox<T> {
     pub fn new(boxed: Box<T>) -> WeakBox<T> {
-        WeakBox { item: Some(boxed) }
+        WeakBox { item: ManuallyDrop::new(boxed) }
     }
 }
 
 impl<T: ?Sized> Deref for WeakBox<T> {
-    type Target = Box<T>;
+    type Target = T;
 
     #[inline]
-    fn deref(&self) -> &Box<T> {
-        match self.item.as_ref() {
-            Some(item) => item,
-            _ => panic!("Attempted use after free"),
-        }
+    fn deref(&self) -> &T {
+        self.item.as_ref()
     }
 }
 
 impl<T: ?Sized> DerefMut for WeakBox<T> {
     #[inline]
-    fn deref_mut(&mut self) -> &mut Box<T> {
-        match self.item.as_mut() {
-            Some(item) => item,
-            _ => panic!("Attempted use after free"),
-        }
-    }
-}
-
-impl<T: ?Sized> Drop for WeakBox<T> {
-    fn drop(&mut self) {
-        // Leak the inner box since it does not actually own the data.
-        if let Some(item) = self.item.take() {
-            Box::leak(item);
-        } else {
-            panic!("Attempted double free")
-        }
+    fn deref_mut(&mut self) -> &mut T {
+        self.item.as_mut()
     }
 }
 

@@ -13,16 +13,25 @@ use std::any::TypeId;
 use std::sync::Arc;
 
 pub struct World {
+    // Entity Handling
     entity_id_counter: u32,
-    component_registry: Registry<ComponentId>,
     entity_registry: HashMap<EntityId, entity::Entity>,
+    entity_del_buffer: HashMap<ShardId, Vec<entity::Entity>>,
+
+    // Systems
     system_registry: Registry<SystemId>,
+
+    // Components & Shards
+    component_registry: Registry<ComponentId>,
     shards: HashMap<ShardId, component::Shard>,
     shards_map: HashMap<component::ShardKey, ShardId>,
+
     transactions: sentinel::Take<Vec<entity::Transaction>>,
+
+    // Reference Data
     component_ids: HashMap<TypeId, ComponentId>,
     system_ids: HashMap<TypeId, SystemId>,
-    finalized: bool
+    finalized: bool,
 }
 
 impl World {
@@ -43,6 +52,7 @@ impl World {
     pub fn new() -> Self {
         let mut world = World {
             entity_id_counter: 0,
+            entity_del_buffer: HashMap::new(),
             component_registry: Registry::new(),
             entity_registry: HashMap::new(),
             system_registry: Registry::new(),
@@ -56,6 +66,10 @@ impl World {
         // Entity ID is always a registered component
         world.register_component::<EntityId>();
         world
+    }
+
+    pub fn finalize(&mut self) {
+        self.finalized = true;
     }
 }
 
@@ -283,7 +297,7 @@ impl World {
         if self.finalized {
             panic!("This world instance is already finalized and cannot be extended")
         }
-        
+
         let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
 

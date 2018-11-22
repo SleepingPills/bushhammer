@@ -4,9 +4,12 @@ use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
 use std::any::Any;
+use std::fmt::Debug;
 
 pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
+
+pub trait Component: DeserializeOwned + Debug {}
 
 /// Construct a composite bit-set shard key from the supplied component id's.
 #[inline]

@@ -1,4 +1,4 @@
-use crate::component::{key_count, Component, ComponentCoords, ShardKey};
+use crate::component::{composite_key, key_count, Component, ComponentCoords, ShardKey};
 use crate::identity::{ComponentId, EntityId, ShardId};
 use hashbrown::HashMap;
 use serde_json;
@@ -22,8 +22,11 @@ impl Entity {
     }
 }
 
+/// Context for recording entity transactions. Prepared by the `World` after all components have been
+/// registered and the world is finalized.
 #[derive(Debug)]
 pub struct TransactionContext {
+    builders: HashMap<ComponentId, Box<dynamic::BuildAnyVec>>,
     added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
     deleted: Vec<EntityId>,
     component_ids: HashMap<TypeId, ComponentId>,
@@ -36,6 +39,19 @@ impl TransactionContext {
         T: BatchDef<'a>,
     {
         T::new_batch(self)
+    }
+
+    pub fn add_json<'a, T>(&'a mut self, comp_ids: &Vec<ComponentId>, json_str: &Vec<String>) {
+        if comp_ids.len() != json_str.len() {
+            panic!("Number of component Ids does not match the number of data inputs")
+        }
+
+        let shard_key = composite_key(comp_ids.iter());
+        let shard = self.added.get_mut(&shard_key).expect("Missing component");
+
+        for (id, json) in comp_ids.iter().zip(json_str) {
+            shard.get_mut(id).expect("Component not found").push_json(json);
+        }
     }
 
     #[inline]
@@ -179,6 +195,7 @@ comp_tup!(6, A:0, B:1, C:2, D:3, E:4, F:5);
 comp_tup!(7, A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_tup!(8, A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
+/// Trait for handling the ingress of a single data-tuple
 pub trait ComponentIngress<'a>: ComponentTuple<'a> {
     fn ingest(self, ctx: &mut TransactionContext);
 }
@@ -211,6 +228,25 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
 mod dynamic {
     use super::*;
+    use std::marker::PhantomData;
+
+    pub trait BuildAnyVec : Debug {
+        fn build(&self) -> Box<AnyVec>;
+    }
+
+    #[derive(Debug)]
+    pub struct AnyVecBuilder<T>(PhantomData<T>)
+    where
+        T: 'static + Component;
+
+    impl<T> BuildAnyVec for AnyVecBuilder<T>
+    where
+        T: 'static + Component,
+    {
+        fn build(&self) -> Box<AnyVec> {
+            Box::new(Vec::<T>::new())
+        }
+    }
 
     pub trait AnyVec: Debug {
         unsafe fn get_ptr(&mut self) -> *mut ();

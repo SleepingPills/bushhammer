@@ -4,8 +4,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::mem;
-use std::sync::atomic;
-use std::sync::atomic::{AtomicU64, ATOMIC_U64_INIT};
+use hashbrown::HashMap;
+use std::any::TypeId;
 
 #[macro_export]
 macro_rules! object_id {
@@ -123,34 +123,11 @@ pub type ShardId = BitSetIdType;
 object_id!(SystemId, BitSetIdType);
 object_id!(ComponentId, BitSetIdType);
 
-static mut COMP_ID_COUNTER: AtomicU64 = ATOMIC_U64_INIT;
-
-trait IdCounter {
-    fn next(&mut self) -> u64;
-}
-
-impl IdCounter for AtomicU64 {
-    fn next(&mut self) -> u64 {
-        unsafe {
-            COMP_ID_COUNTER.fetch_update(|val| {
-                Some(val + 1)
-            }, atomic::Ordering::Acquire, atomic::Ordering::Release).expect("ID Generation Failed")
-        }
-    }
-}
-
-trait CustomTypeId {
-    fn acquire_type_id();
-    fn get_type_id();
-}
-
-static mut SOME_ID: u64 = 0;
-
-fn set_comp_id() {
-    unsafe {
-        let new_id = COMP_ID_COUNTER.next();
-        SOME_ID = new_id;
-    }
+// TODO: Add these to the macro
+struct ComponentIdRegistry {
+    counter: BitSetIdType,
+    type_map: HashMap<TypeId, ComponentId>,
+    name_map: HashMap<ComponentId, String>
 }
 
 /*

@@ -29,32 +29,33 @@ impl Entity {
 pub struct TransactionContext {
     added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
     deleted: Vec<EntityId>,
-    builders: HashMap<ComponentId, Box<dynamic::BuildAnyVec>>,
+    builders: HashMap<ComponentId, Box<dynamic::BuildDynVec>>,
     component_ids: HashMap<TypeId, ComponentId>,
 }
 
 impl TransactionContext {
+    /// Create a batch entity builder optimized for rapidly adding entities with the same components.
     #[inline]
-    pub fn batch<'a, T>(&'a mut self) -> T::Batcher
+    pub fn batch<'a, T>(&'a mut self) -> T::Builder
     where
         T: BatchDef<'a>,
     {
-        T::new_batch(self)
+        T::new_batch_builder(self)
     }
 
-    pub fn add_json<'a, T>(&'a mut self, comp_ids: &Vec<ComponentId>, json_str: &Vec<String>) {
-        if comp_ids.len() != json_str.len() {
-            panic!("Number of component Ids does not match the number of data inputs")
-        }
-
+    pub fn batch_json<'i>(&'i mut self, comp_ids: &'i Vec<ComponentId>) -> JsonBatchBuilder<'i> {
         let shard_key = composite_key(comp_ids.iter());
-        let shard = self.added.get_mut(&shard_key).expect("Missing component");
 
-        for (id, json) in comp_ids.iter().zip(json_str) {
-            shard.get_mut(id).expect("Component not found").push_json(json);
-        }
+        let builders = &self.builders;
+        let shard: &mut HashMap<_, _> = self
+            .added
+            .entry(shard_key)
+            .or_insert_with(|| comp_ids.iter().map(|id| (*id, builders[id].build())).collect());
+
+        JsonBatchBuilder{comp_ids, shard}
     }
 
+    /// Add a single entity with the supplied tuple of components.
     #[inline]
     pub fn add<'a, T>(&'a mut self, tuple: T)
     where
@@ -63,26 +64,48 @@ impl TransactionContext {
         tuple.ingest(self);
     }
 
+    /// Delete the entity with the given id.
     #[inline]
     pub fn delete(&mut self, id: EntityId) {
         self.deleted.push(id);
     }
 
+    /// Add a vector builder for the given component type. This is required to be able to
+    /// create shards for collecting 'weakly' typed input like json strings.
     pub(crate) fn add_builder<T>(&mut self)
-        where
-            T: 'static + Component,
+    where
+        T: 'static + Component,
     {
         self.builders.insert(
             self.component_ids[&TypeId::of::<T>()],
-            Box::new(dynamic::AnyVecBuilder::<T>(PhantomData)),
+            Box::new(dynamic::DynVecFactory::<T>(PhantomData)),
         );
     }
 }
 
-pub trait BatchDef<'a>: ComponentTuple<'a> {
-    type Batcher;
+pub struct JsonBatchBuilder<'a> {
+    comp_ids: &'a Vec<ComponentId>,
+    shard: &'a mut HashMap<ComponentId, dynamic::DynVec>
+}
 
-    fn new_batch(ctx: &'a mut TransactionContext) -> Self::Batcher;
+impl<'a> JsonBatchBuilder<'a> {
+    #[inline]
+    pub fn add(&mut self, json_str: &Vec<String>) {
+        if self.comp_ids.len() != json_str.len() {
+            panic!("Number of component Ids does not match the number of data inputs")
+        }
+
+        for (id, json) in self.comp_ids.iter().zip(json_str) {
+            self.shard.get_mut(id).unwrap().push_json(json);
+        }
+    }
+}
+
+/// Tuple defining a batch builder that can efficiently add uniform entities.
+pub trait BatchDef<'a>: ComponentTuple<'a> {
+    type Builder;
+
+    fn new_batch_builder(ctx: &'a mut TransactionContext) -> Self::Builder;
 }
 
 macro_rules! batch_def_tup {
@@ -91,10 +114,10 @@ macro_rules! batch_def_tup {
         where
             $($field_type: 'static + Component),*,
         {
-            type Batcher = $tup_name<'a, $($field_type),*>;
+            type Builder = $tup_name<'a, $($field_type),*>;
 
             #[inline]
-            fn new_batch(ctx: &'a mut TransactionContext) -> Self::Batcher {
+            fn new_batch_builder(ctx: &'a mut TransactionContext) -> Self::Builder {
                 let ids = Self::get_ids(ctx);
                 let shard = Self::get_shard(&ids, ctx);
 
@@ -118,7 +141,7 @@ batch_def_tup!(B6, A:0, B:1, C:2, D:3, E:4, F:5);
 batch_def_tup!(B7, A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 batch_def_tup!(B8, A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-macro_rules! batch_tup {
+macro_rules! batch_builder_tup {
     ($tup_name:ident, $( $field_type:ident:$field_name:ident:$field_seq:tt ),*) => {
         pub struct $tup_name<'a, $($field_type),*>($(&'a mut Vec<$field_type>),*,)
         where
@@ -132,24 +155,21 @@ macro_rules! batch_tup {
             pub fn add(&mut self, $($field_name: $field_type),*) {
                 $(self.$field_seq.push($field_name));*;
             }
-
-            #[inline]
-            pub fn add_json(&mut self, $($field_name: &str),*) {
-                $(self.$field_seq.push(serde_json::from_str($field_name).expect("Error deserializing component")));*;
-            }
         }
     };
 }
 
-batch_tup!(B1, A:a:0);
-batch_tup!(B2, A:a:0, B:b:1);
-batch_tup!(B3, A:a:0, B:b:1, C:c:2);
-batch_tup!(B4, A:a:0, B:b:1, C:c:2, D:d:3);
-batch_tup!(B5, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4);
-batch_tup!(B6, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5);
-batch_tup!(B7, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6);
-batch_tup!(B8, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6, H:h:7);
+batch_builder_tup!(B1, A:a:0);
+batch_builder_tup!(B2, A:a:0, B:b:1);
+batch_builder_tup!(B3, A:a:0, B:b:1, C:c:2);
+batch_builder_tup!(B4, A:a:0, B:b:1, C:c:2, D:d:3);
+batch_builder_tup!(B5, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4);
+batch_builder_tup!(B6, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5);
+batch_builder_tup!(B7, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6);
+batch_builder_tup!(B8, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6, H:h:7);
 
+/// Utility functionality for tuples of components
+/// TODO: Move this to the component once the IDs are globalized since it will not be dependent on the context.
 pub trait ComponentTuple<'a> {
     type IdTuple;
 
@@ -240,21 +260,21 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 mod dynamic {
     use super::*;
 
-    pub trait BuildAnyVec: Debug {
-        fn build(&self) -> Box<AnyVec>;
+    pub trait BuildDynVec: Debug {
+        fn build(&self) -> DynVec;
     }
 
     #[derive(Debug)]
-    pub struct AnyVecBuilder<T>(pub PhantomData<T>)
+    pub struct DynVecFactory<T>(pub PhantomData<T>)
     where
         T: 'static + Component;
 
-    impl<T> BuildAnyVec for AnyVecBuilder<T>
+    impl<T> BuildDynVec for DynVecFactory<T>
     where
         T: 'static + Component,
     {
-        fn build(&self) -> Box<AnyVec> {
-            Box::new(Vec::<T>::new())
+        fn build(&self) -> DynVec {
+            DynVec::new(Vec::<T>::new())
         }
     }
 

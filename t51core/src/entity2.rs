@@ -4,6 +4,7 @@ use hashbrown::HashMap;
 use serde_json;
 use std::any::TypeId;
 use std::fmt::Debug;
+use std::marker::PhantomData;
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.
@@ -26,9 +27,9 @@ impl Entity {
 /// registered and the world is finalized.
 #[derive(Debug)]
 pub struct TransactionContext {
-    builders: HashMap<ComponentId, Box<dynamic::BuildAnyVec>>,
     added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
     deleted: Vec<EntityId>,
+    builders: HashMap<ComponentId, Box<dynamic::BuildAnyVec>>,
     component_ids: HashMap<TypeId, ComponentId>,
 }
 
@@ -65,6 +66,16 @@ impl TransactionContext {
     #[inline]
     pub fn delete(&mut self, id: EntityId) {
         self.deleted.push(id);
+    }
+
+    pub(crate) fn add_builder<T>(&mut self)
+        where
+            T: 'static + Component,
+    {
+        self.builders.insert(
+            self.component_ids[&TypeId::of::<T>()],
+            Box::new(dynamic::AnyVecBuilder::<T>(PhantomData)),
+        );
     }
 }
 
@@ -228,14 +239,13 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
 mod dynamic {
     use super::*;
-    use std::marker::PhantomData;
 
-    pub trait BuildAnyVec : Debug {
+    pub trait BuildAnyVec: Debug {
         fn build(&self) -> Box<AnyVec>;
     }
 
     #[derive(Debug)]
-    pub struct AnyVecBuilder<T>(PhantomData<T>)
+    pub struct AnyVecBuilder<T>(pub PhantomData<T>)
     where
         T: 'static + Component;
 

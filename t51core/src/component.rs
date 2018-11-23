@@ -9,7 +9,9 @@ use std::fmt::Debug;
 pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
-pub trait Component: DeserializeOwned + Debug {}
+pub trait Component: DeserializeOwned + Debug {
+    fn type_id() -> ComponentId;
+}
 
 /// Construct a composite bit-set shard key from the supplied component id's.
 #[inline]

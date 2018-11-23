@@ -2,6 +2,7 @@
 #![feature(unsize)]
 #![feature(integer_atomics)]
 #![feature(core_intrinsics)]
+#![feature(no_more_cas)]
 
 pub mod alloc;
 pub mod sentinel;

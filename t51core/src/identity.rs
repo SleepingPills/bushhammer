@@ -4,6 +4,8 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::mem;
+use std::sync::atomic;
+use std::sync::atomic::{AtomicU64, ATOMIC_U64_INIT};
 
 #[macro_export]
 macro_rules! object_id {
@@ -120,3 +122,57 @@ pub type ShardId = BitSetIdType;
 
 object_id!(SystemId, BitSetIdType);
 object_id!(ComponentId, BitSetIdType);
+
+static mut COMP_ID_COUNTER: AtomicU64 = ATOMIC_U64_INIT;
+
+trait IdCounter {
+    fn next(&mut self) -> u64;
+}
+
+impl IdCounter for AtomicU64 {
+    fn next(&mut self) -> u64 {
+        unsafe {
+            COMP_ID_COUNTER.fetch_update(|val| {
+                Some(val + 1)
+            }, atomic::Ordering::Acquire, atomic::Ordering::Release).expect("ID Generation Failed")
+        }
+    }
+}
+
+trait CustomTypeId {
+    fn acquire_type_id();
+    fn get_type_id();
+}
+
+static mut SOME_ID: u64 = 0;
+
+fn set_comp_id() {
+    unsafe {
+        let new_id = COMP_ID_COUNTER.next();
+        SOME_ID = new_id;
+    }
+}
+
+/*
+TODO
+
+- TypeIdRegistry struct
+    - Global ID Counter
+    - Global TypeId -> CustomTypeId map
+
+trait CustomTypeId {
+    fn acquire_type_id();
+    fn get_type_id();
+}
+
+- The trait will be implemented for each component by a proc macro.
+- A static variable will be added by the proc macro.
+- acquire_type_id() will be run by the world instances when registering components.
+    - It will acquire a mutex on the IdGenerator.
+    - It will then ask the IdGenerator for an Id, passing in it's own TypeId
+    - The IdGenerator will check if this type already has a type id, and if not, it will increment
+      the internal counter and return the id
+    - The function will then set the static custom id
+- get_type_id() will just return the id value
+
+*/

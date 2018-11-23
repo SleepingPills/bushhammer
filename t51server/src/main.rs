@@ -25,7 +25,7 @@ impl<'a> System for Goof<'a> {
         });
 
         entities.create().with(15).with("123").build();
-        entities.edit(15).unwrap().with(15).remove::<i32>().commit();
+        entities.edit(15.into()).unwrap().with(15).remove::<i32>().commit();
     }
 }
 

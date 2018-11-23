@@ -93,7 +93,7 @@ where
         let comp_ids = T::Data::get_comp_ids(comp_id_map);
         SystemEntry {
             system,
-            shard_key: component::composite_key(comp_ids.iter()),
+            shard_key: component::compose_key(comp_ids.iter()),
             data: SystemData::new(comp_map, comp_ids),
             transactions: Vec::new(),
         }

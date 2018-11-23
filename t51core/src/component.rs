@@ -15,21 +15,14 @@ pub trait Component: DeserializeOwned + Debug {
 
 /// Construct a composite bit-set shard key from the supplied component id's.
 #[inline]
-pub(crate) fn composite_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
+pub(crate) fn compose_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
     keys.fold(0 as ShardKey, |acc, cid| acc | cid.id)
 }
 
 /// Count the number of components set in the supplied shard key.
 #[inline]
-pub(crate) fn key_count(mut key: ShardKey) -> BitSetIdType {
-    let mut count = 0 as BitSetIdType;
-
-    while key > 0 {
-        count += key & 1;
-        key >>= 1
-    }
-
-    count
+pub(crate) fn key_count(key: ShardKey) -> BitSetIdType {
+    key.count_ones() as BitSetIdType
 }
 
 #[derive(Debug)]

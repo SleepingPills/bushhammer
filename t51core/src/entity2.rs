@@ -1,5 +1,5 @@
-use crate::component::{composite_key, key_count, Component, ComponentCoords, ShardKey};
-use crate::identity::{ComponentId, EntityId, ShardId};
+use crate::component::{compose_key, key_count, Component, ComponentCoords, ShardKey};
+use crate::identity::{ComponentId, EntityId};
 use hashbrown::HashMap;
 use serde_json;
 use std::any::TypeId;
@@ -11,7 +11,7 @@ use std::marker::PhantomData;
 #[derive(Debug)]
 pub struct Entity {
     pub id: EntityId,
-    pub shard_id: ShardId,
+    pub shard_key: ShardKey,
     pub shard_loc: usize,
     pub comp_sections: HashMap<ComponentId, usize>,
 }
@@ -44,7 +44,7 @@ impl TransactionContext {
     }
 
     pub fn batch_json<'i>(&'i mut self, comp_ids: &'i Vec<ComponentId>) -> JsonBatchBuilder<'i> {
-        let shard_key = composite_key(comp_ids.iter());
+        let shard_key = compose_key(comp_ids.iter());
 
         let builders = &self.builders;
         let shard: &mut HashMap<_, _> = self

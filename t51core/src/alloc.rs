@@ -64,6 +64,8 @@ impl<T> VecPool<T> {
     }
 }
 
+
+/// A slot based allocator that supports testing for the presence of values in the pool.
 #[derive(Debug)]
 pub struct SlotPool<T> {
     store: Vec<Option<T>>,

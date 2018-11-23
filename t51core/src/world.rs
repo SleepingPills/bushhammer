@@ -16,7 +16,7 @@ pub struct World {
     // Entity Handling
     entity_id_counter: u32,
     entity_registry: HashMap<EntityId, entity::Entity>,
-    entity_del_buffer: HashMap<ShardId, Vec<entity::Entity>>,
+    entity_del_buffer: HashMap<component::ShardKey, Vec<entity::Entity>>,
 
     // Systems
     system_registry: Registry<SystemId>,
@@ -111,7 +111,7 @@ impl World {
     fn apply_edit(&mut self, id: EntityId, mut ent_def: entity::EntityDef) {
         if let Some(ent) = self.entity_registry.remove(&id) {
             // If the entity composition didn't change, just update as necessary
-            if component::composite_key(ent.comp_sections.keys()) == component::composite_key(ent_def.components.keys()) {
+            if component::compose_key(ent.comp_sections.keys()) == component::compose_key(ent_def.components.keys()) {
                 let shard = &self.shards[&ent.shard_id];
 
                 for (comp_id, comp_def) in ent_def.components.drain() {
@@ -173,7 +173,7 @@ impl World {
                 .insert(entity_id_comp, entity::CompDef::Boxed(Box::new(id)));
         }
 
-        let shard_key = component::composite_key(ent_def.components.keys());
+        let shard_key = component::compose_key(ent_def.components.keys());
         let shard_id = self.get_shard_id(shard_key, &ent_def);
         let shard = &self.shards[&shard_id];
 

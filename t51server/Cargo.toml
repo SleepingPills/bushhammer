@@ -6,4 +6,6 @@ edition = "2018"
 
 [dependencies]
 t51core = { path = "../t51core" }
-indexmap = "1.0.1"
+t51core_proc = { path = "../t51core_proc" }
+serde = "*"
+serde_derive = "*"

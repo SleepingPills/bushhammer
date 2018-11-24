@@ -169,7 +169,6 @@ batch_builder_tup!(B7, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6);
 batch_builder_tup!(B8, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6, H:h:7);
 
 /// Utility functionality for tuples of components
-/// TODO: Move this to the component once the IDs are globalized since it will not be dependent on the context.
 pub trait ComponentTuple<'a> {
     type IdTuple;
 

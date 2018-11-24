@@ -4,6 +4,7 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::mem;
+use std::ops;
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
@@ -50,7 +51,7 @@ trait BitFlagIndexer {
 
 #[macro_export]
 macro_rules! bitflag_type_id {
-    ($name: ident, $type: ty) => {
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident, $ident_trait: ident) => {
         #[derive(Copy, Clone, Debug)]
         #[repr(transparent)]
         pub struct $name {
@@ -66,11 +67,10 @@ macro_rules! bitflag_type_id {
             pub fn new<T: 'static>(cur_count: usize) -> $name {
                 let name = unsafe { type_name::<T>() };
 
-                let limit = mem::size_of::<$type>() * 8;
                 let power = cur_count;
 
-                if (power + 1) >= limit {
-                    panic!("{} limit {} exceeded", name, limit)
+                if (power + 1) >= ID_BIT_LENGTH {
+                    panic!("{} limit {} exceeded", name, ID_BIT_LENGTH)
                 }
 
                 $name {
@@ -82,7 +82,7 @@ macro_rules! bitflag_type_id {
         impl BitFlagIndexer for $name {
             #[inline]
             fn indexer(&self) -> usize {
-                self.id.leading_zeros() as usize
+                self.id.trailing_zeros() as usize
             }
         }
 
@@ -122,61 +122,121 @@ macro_rules! bitflag_type_id {
                 write!(f, "{}({:?})", stringify!($name), self.id)
             }
         }
+
+        static mut $name_vec: Vec<&'static str> = Vec::new();
+        static mut $id_vec: Vec<$name> = Vec::new();
+
+        #[repr(transparent)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+        pub struct $composite_key($type);
+
+        impl $composite_key {
+            #[inline]
+            pub fn new<'a>(keys: impl Iterator<Item = &'a $name>) -> $composite_key {
+                $composite_key(keys.fold(0, |acc, cid| acc | cid.id))
+            }
+
+            #[inline]
+            pub fn key_count(&self) -> u32 {
+                self.0.count_ones()
+            }
+
+            #[inline]
+            pub fn decompose(&self) -> impl Iterator<Item = $name> {
+                let mut field = self.0;
+                (0..ID_BIT_LENGTH).filter_map(move |index| unsafe {
+                    let result = match field & 1 {
+                        1 => Some($id_vec[index]),
+                        _ => None,
+                    };
+                    field >>= 1;
+                    result
+                })
+            }
+        }
+
+        impl ops::Add for $name {
+            type Output = $composite_key;
+
+            #[inline]
+            fn add(self, rhs: $name) -> Self::Output {
+                $composite_key(self.id | rhs.id)
+            }
+        }
+
+        impl ops::Add<$composite_key> for $name {
+            type Output = $composite_key;
+
+            #[inline]
+            fn add(self, rhs: $composite_key) -> Self::Output {
+                $composite_key(self.id | rhs.0)
+            }
+        }
+
+        impl ops::Add<$name> for $composite_key {
+            type Output = $composite_key;
+
+            #[inline]
+            fn add(self, rhs: $name) -> Self::Output {
+                $composite_key(self.0 | rhs.id)
+            }
+        }
+
+        impl ops::AddAssign<$name> for $composite_key {
+            fn add_assign(&mut self, rhs: $name) {
+                self.0 |= rhs.id;
+            }
+        }
+
+        impl ops::Sub<$name> for $composite_key {
+            type Output = $composite_key;
+
+            #[inline]
+            fn sub(self, rhs: $name) -> Self::Output {
+                $composite_key(self.0 & (!rhs.id))
+            }
+        }
+
+        impl ops::SubAssign<$name> for $composite_key {
+            #[inline]
+            fn sub_assign(&mut self, rhs: $name) {
+                self.0 &= !rhs.id;
+            }
+        }
+
+        pub trait $ident_trait {
+            fn acquire_unique_id() {unimplemented!()}
+            fn get_unique_id() -> $name {unimplemented!()}
+
+            #[inline]
+            fn get_type_indexer() -> usize {
+                Self::get_unique_id().indexer()
+            }
+
+            #[inline]
+            fn get_type_name() -> &'static str {
+                unsafe { $name_vec[Self::get_type_indexer()] }
+            }
+
+            #[inline]
+            unsafe fn get_name_vec() -> &'static mut Vec<&'static str> {
+                &mut $name_vec
+            }
+
+            #[inline]
+            unsafe fn get_id_vec() -> &'static mut Vec<$name> {
+                &mut $id_vec
+            }
+        }
     };
 }
 
-pub(crate) type BitSetIdType = u64;
+pub(crate) type BitFlagId = u64;
+const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
 // TODO: Drop the ShardId and just use ShardKey as the unique identifier of a shard. It can be directly constructed
 // from vectors or tuples of component Ids or even generic types anywhere.
-pub type ShardId = BitSetIdType;
+pub type ShardId = BitFlagId;
 
-bitflag_type_id!(SystemId, BitSetIdType);
-bitflag_type_id!(ComponentId, BitSetIdType);
-
-static mut COMPONENT_NAMES: Vec<&'static str> = Vec::new();
-
-trait ComponentTypeIdentity {
-    fn acquire_type_id();
-    fn get_type_id() -> ComponentId;
-
-    #[inline]
-    fn get_type_indexer() -> usize {
-        Self::get_type_id().indexer()
-    }
-
-    #[inline]
-    fn get_type_name() -> &'static str {
-        unsafe { COMPONENT_NAMES[Self::get_type_indexer()] }
-    }
-}
-
-/*
-TODO
-TODO: Use count leading zeros on u64 since it is a single machine instruction and gets a unique index for the component.
-TODO: Replace all hashmap usage with ComponentIds with a simple Vec and then use the get_type_indexer to index into it.
-
-- TypeIdRegistry struct
-    - Global ID Counter
-    - Global TypeId -> CustomTypeId map
-
-trait CustomTypeIdentity {
-    fn acquire_type_id();
-    fn get_type_id();
-}
-
-- The trait will be implemented for each component by a proc macro.
-- A static variable will be added by the proc macro.
-- acquire_type_id() will be run by the world instances when registering components.
-    - It will use a Once thingy
-    - The Once will use the length of COMPONENT_NAMES as the counter
-    - It will generate a new Id
-    - It will then set the name based on the
-    - It will acquire a mutex on the IdGenerator.
-    - It will then ask the IdGenerator for an Id, passing in it's own TypeId
-    - The IdGenerator will check if this type already has a type id, and if not, it will increment
-      the internal counter and return the id
-    - The function will then set the static custom id
-- get_type_id() will just return the id value
-
-*/
+bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey, ComponentTypeIdentity);
+bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey, SystemTypeIdentity);

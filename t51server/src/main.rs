@@ -1,34 +1,18 @@
 #![allow(unused_imports, dead_code, unused_variables)]
 #[macro_use]
 extern crate t51core;
+extern crate t51core_proc;
 
-use t51core::identity::EntityId;
-use t51core::prelude::*;
-use t51core::system::context::Context;
-use t51core::system::SystemDef;
+use t51core::identity2::{ComponentId, ComponentTypeIdentity};
+use t51core::component::Component;
+use t51core_proc::Component;
+use serde_derive::{Deserialize, Serialize};
 
-pub struct Goof<'a> {
-    coll: Vec<&'a i32>,
-}
-
-impl<'a> System for Goof<'a> {
-    require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, u64>);
-
-    fn run(&mut self, mut data: Context<Self::JoinItem>, mut entities: EntityStore) {
-        for (a, b, c) in data.iter() {
-            *c = 5;
-            self.coll.push(b);
-        }
-
-        data.for_each(&Vec::new(), |(a, b, c)| {
-            *c = 5;
-        });
-
-        entities.create().with(15).with("123").build();
-        entities.edit(15.into()).unwrap().with(15).remove::<i32>().commit();
-    }
-}
+#[derive(Component, Deserialize, Debug)]
+struct Velocity;
 
 fn main() {
-    println!("*** YO YO YO {} ***", 1 << 16);
+    Velocity::acquire_unique_id();
+
+    println!("*** YO YO YO {:?} ***", Velocity::get_type_name());
 }

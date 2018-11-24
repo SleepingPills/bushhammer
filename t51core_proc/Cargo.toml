@@ -8,11 +8,4 @@ edition = "2018"
 proc-macro = true
 
 [dependencies]
-syn = { version = "0.15", features = ["full", "visit", "extra-traits"] }
-proc-macro2 = { version = "0.4", features = ["nightly"]}
-quote = "0.6"
-
-[features]
-default = ["external"]
-internal = []
-external = []
+syn = "*"

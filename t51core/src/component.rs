@@ -1,5 +1,6 @@
 use crate::alloc::VecPool;
 use crate::identity::{BitSetIdType, ComponentId, ShardId};
+use crate::identity2::{ComponentTypeIdentity};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
@@ -9,8 +10,7 @@ use std::fmt::Debug;
 pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
-pub trait Component: DeserializeOwned + Debug {
-    fn type_id() -> ComponentId;
+pub trait Component: ComponentTypeIdentity + DeserializeOwned + Debug {
 }
 
 /// Construct a composite bit-set shard key from the supplied component id's.

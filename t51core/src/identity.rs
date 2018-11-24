@@ -122,34 +122,3 @@ pub type ShardId = BitSetIdType;
 
 object_id!(SystemId, BitSetIdType);
 object_id!(ComponentId, BitSetIdType);
-
-// TODO: Add these to the macro
-struct ComponentIdRegistry {
-    counter: BitSetIdType,
-    type_map: HashMap<TypeId, ComponentId>,
-    name_map: HashMap<ComponentId, String>
-}
-
-/*
-TODO
-
-- TypeIdRegistry struct
-    - Global ID Counter
-    - Global TypeId -> CustomTypeId map
-
-trait CustomTypeId {
-    fn acquire_type_id();
-    fn get_type_id();
-}
-
-- The trait will be implemented for each component by a proc macro.
-- A static variable will be added by the proc macro.
-- acquire_type_id() will be run by the world instances when registering components.
-    - It will acquire a mutex on the IdGenerator.
-    - It will then ask the IdGenerator for an Id, passing in it's own TypeId
-    - The IdGenerator will check if this type already has a type id, and if not, it will increment
-      the internal counter and return the id
-    - The function will then set the static custom id
-- get_type_id() will just return the id value
-
-*/

@@ -2,7 +2,6 @@ use crate::alloc::VecPool;
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
-use serde_json;
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -70,9 +69,7 @@ impl<T> ShardedColumn<T> {
 
 pub trait Column {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
-    fn ingest_json(&mut self, json: String, section: usize) -> usize;
     fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize);
-    fn update_json(&mut self, json: String, section: usize, loc: usize);
     fn swap_remove(&mut self, section: usize, loc: usize);
     fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any>;
     fn new_section(&mut self) -> usize;
@@ -87,20 +84,8 @@ where
         self.push(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
     }
 
-    fn ingest_json(&mut self, json: String, section: usize) -> usize {
-        self.push(serde_json::from_str(&json).expect("Error deserializing component"), section)
-    }
-
     fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize) {
         self.update(*boxed.downcast::<T>().expect("Incorrect boxed component"), section, loc)
-    }
-
-    fn update_json(&mut self, json: String, section: usize, loc: usize) {
-        self.update(
-            serde_json::from_str(&json).expect("Error deserializing component"),
-            section,
-            loc,
-        )
     }
 
     fn swap_remove(&mut self, section: usize, loc: usize) {

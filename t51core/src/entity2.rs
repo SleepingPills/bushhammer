@@ -367,6 +367,11 @@ mod dynamic {
         }
 
         #[inline]
+        pub fn cast_mut<T>(&mut self) -> &mut Vec<T> {
+            unsafe { &mut *(self.ptr as *mut Vec<T>) }
+        }
+
+        #[inline]
         pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T> {
             &mut *(self.ptr as *mut Vec<T>)
         }

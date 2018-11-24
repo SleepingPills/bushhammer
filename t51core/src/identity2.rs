@@ -224,9 +224,5 @@ macro_rules! bitflag_type_id {
 pub(crate) type BitFlagId = u64;
 const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
-// TODO: Drop the ShardId and just use ShardKey as the unique identifier of a shard. It can be directly constructed
-// from vectors or tuples of component Ids or even generic types anywhere.
-pub type ShardId = BitFlagId;
-
 bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey);
 bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey);

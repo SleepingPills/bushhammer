@@ -1,9 +1,50 @@
 use crate::component2::{Component, ComponentCoords};
-use crate::identity2::{ComponentId, EntityId, ShardKey};
+use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde_json;
 use std::fmt::Debug;
 use std::marker::PhantomData;
+use serde_derive::{Deserialize, Serialize};
+use t51core_proc::Component;
+
+#[repr(transparent)]
+#[derive(Component, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+pub struct EntityId(u32);
+
+impl Into<usize> for EntityId {
+    #[inline]
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl From<u32> for EntityId {
+    #[inline]
+    fn from(id: u32) -> Self {
+        EntityId(id)
+    }
+}
+
+impl Into<u32> for EntityId {
+    #[inline]
+    fn into(self) -> u32 {
+        self.0
+    }
+}
+
+impl From<i32> for EntityId {
+    #[inline]
+    fn from(id: i32) -> Self {
+        EntityId(id as u32)
+    }
+}
+
+impl Into<i32> for EntityId {
+    #[inline]
+    fn into(self) -> i32 {
+        self.0 as i32
+    }
+}
 
 /// Entity root object. Maintains a registry of components and indices, along with the systems
 /// it is registerered with.

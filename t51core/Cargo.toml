@@ -13,6 +13,7 @@ itertools = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
+t51core_proc = { path = "../t51core_proc" }
 
 [dev-dependencies]
 criterion = "0.2"

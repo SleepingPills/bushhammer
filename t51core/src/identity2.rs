@@ -1,47 +1,7 @@
-use serde_derive::{Deserialize, Serialize};
 use std::fmt;
 use std::intrinsics::type_name;
 use std::mem;
 use std::ops;
-
-#[repr(transparent)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct EntityId(u32);
-
-impl Into<usize> for EntityId {
-    #[inline]
-    fn into(self) -> usize {
-        self.0 as usize
-    }
-}
-
-impl From<u32> for EntityId {
-    #[inline]
-    fn from(id: u32) -> Self {
-        EntityId(id)
-    }
-}
-
-impl Into<u32> for EntityId {
-    #[inline]
-    fn into(self) -> u32 {
-        self.0
-    }
-}
-
-impl From<i32> for EntityId {
-    #[inline]
-    fn from(id: i32) -> Self {
-        EntityId(id as u32)
-    }
-}
-
-impl Into<i32> for EntityId {
-    #[inline]
-    fn into(self) -> i32 {
-        self.0 as i32
-    }
-}
 
 #[macro_export]
 macro_rules! bitflag_type_id {

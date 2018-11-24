@@ -1,6 +1,6 @@
 use crate::component2::{Component, ComponentCoords, Shard, ShardedColumn};
-use crate::entity2::{Entity, TransactionContext};
-use crate::identity2::{ComponentId, EntityId, ShardKey};
+use crate::entity2::{Entity, EntityId, TransactionContext};
+use crate::identity2::{ComponentId, ShardKey};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
@@ -389,8 +389,8 @@ pub trait SystemDef {
 
 pub mod join {
     use super::{
-        Component, ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, Shard, ShardedColumn,
-        SystemDef, ShardKey
+        Component, ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, Shard, ShardKey,
+        ShardedColumn, SystemDef,
     };
 
     macro_rules! _decl_system_replace_expr {

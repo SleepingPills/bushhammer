@@ -1,7 +1,5 @@
 use serde_derive::{Deserialize, Serialize};
-use std::cmp::Ordering;
 use std::fmt;
-use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::mem;
 use std::ops;
@@ -45,14 +43,10 @@ impl Into<i32> for EntityId {
     }
 }
 
-trait BitFlagIndexer {
-    fn indexer(&self) -> usize;
-}
-
 #[macro_export]
 macro_rules! bitflag_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident, $ident_trait: ident) => {
-        #[derive(Copy, Clone, Debug)]
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident) => {
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         #[repr(transparent)]
         pub struct $name {
             pub id: $type,
@@ -77,42 +71,20 @@ macro_rules! bitflag_type_id {
                     id: (1 as $type) << power,
                 }
             }
-        }
 
-        impl BitFlagIndexer for $name {
             #[inline]
-            fn indexer(&self) -> usize {
+            pub fn indexer(&self) -> usize {
                 self.id.trailing_zeros() as usize
             }
-        }
 
-        impl Eq for $name {}
-
-        impl PartialEq for $name {
-            #[inline(always)]
-            fn eq(&self, other: &$name) -> bool {
-                self.id == other.id
+            #[inline]
+            pub unsafe fn get_name_vec() -> &'static mut Vec<&'static str> {
+                &mut $name_vec
             }
-        }
 
-        impl Hash for $name {
-            #[inline(always)]
-            fn hash<H: Hasher>(&self, state: &mut H) {
-                self.id.hash(state)
-            }
-        }
-
-        impl PartialOrd for $name {
-            #[inline(always)]
-            fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-                self.id.partial_cmp(&other.id)
-            }
-        }
-
-        impl Ord for $name {
-            #[inline(always)]
-            fn cmp(&self, other: &Self) -> Ordering {
-                self.id.cmp(&other.id)
+            #[inline]
+            pub unsafe fn get_id_vec() -> &'static mut Vec<$name> {
+                &mut $id_vec
             }
         }
 
@@ -127,7 +99,7 @@ macro_rules! bitflag_type_id {
         static mut $id_vec: Vec<$name> = Vec::new();
 
         #[repr(transparent)]
-        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd)]
+        #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         pub struct $composite_key($type);
 
         impl $composite_key {
@@ -137,7 +109,7 @@ macro_rules! bitflag_type_id {
             }
 
             #[inline]
-            pub fn key_count(&self) -> u32 {
+            pub fn count(&self) -> u32 {
                 self.0.count_ones()
             }
 
@@ -152,6 +124,49 @@ macro_rules! bitflag_type_id {
                     field >>= 1;
                     result
                 })
+            }
+
+            #[inline]
+            pub fn contains_key(&self, other: $composite_key) -> bool {
+                (self.0 & other.0) == other.0
+            }
+
+            #[inline]
+            pub fn contains_id(&self, other: $name) -> bool {
+                (self.0 & other.id) == other.id
+            }
+        }
+
+        impl From<$name> for $composite_key {
+            fn from(id: $name) -> Self {
+                $composite_key(id.id)
+            }
+        }
+
+        impl ops::BitOr for $name {
+            type Output = $composite_key;
+
+            #[inline]
+            fn bitor(self, rhs: $name) -> Self::Output {
+                $composite_key(self.id | rhs.id)
+            }
+        }
+
+        impl ops::BitOr<$composite_key> for $name {
+            type Output = $composite_key;
+
+            #[inline]
+            fn bitor(self, rhs: $composite_key) -> Self::Output {
+                $composite_key(self.id | rhs.0)
+            }
+        }
+
+        impl ops::BitOr<$name> for $composite_key {
+            type Output = $composite_key;
+
+            #[inline]
+            fn bitor(self, rhs: $name) -> Self::Output {
+                $composite_key(self.0 | rhs.id)
             }
         }
 
@@ -203,31 +218,6 @@ macro_rules! bitflag_type_id {
                 self.0 &= !rhs.id;
             }
         }
-
-        pub trait $ident_trait {
-            fn acquire_unique_id() {unimplemented!()}
-            fn get_unique_id() -> $name {unimplemented!()}
-
-            #[inline]
-            fn get_type_indexer() -> usize {
-                Self::get_unique_id().indexer()
-            }
-
-            #[inline]
-            fn get_type_name() -> &'static str {
-                unsafe { $name_vec[Self::get_type_indexer()] }
-            }
-
-            #[inline]
-            unsafe fn get_name_vec() -> &'static mut Vec<&'static str> {
-                &mut $name_vec
-            }
-
-            #[inline]
-            unsafe fn get_id_vec() -> &'static mut Vec<$name> {
-                &mut $id_vec
-            }
-        }
     };
 }
 
@@ -238,5 +228,5 @@ const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 // from vectors or tuples of component Ids or even generic types anywhere.
 pub type ShardId = BitFlagId;
 
-bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey, ComponentTypeIdentity);
-bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey, SystemTypeIdentity);
+bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey);
+bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey);

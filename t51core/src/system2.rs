@@ -1,7 +1,6 @@
-use crate::component;
-use crate::component::{ComponentCoords, ShardedColumn};
-use crate::entity::{Entity, EntityStore, Transaction};
-use crate::identity::{ComponentId, EntityId, ShardId};
+use crate::component2::{Component, ComponentCoords, Shard, ShardedColumn};
+use crate::entity2::{Entity, TransactionContext};
+use crate::identity2::{ComponentId, EntityId, ShardKey};
 use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
@@ -9,6 +8,8 @@ use indexmap::IndexMap;
 use std::any::TypeId;
 use std::sync::Arc;
 
+/*
+TODO: Export
 #[macro_export]
 macro_rules! require {
     ($($exprs:ty),*) => {
@@ -16,21 +17,21 @@ macro_rules! require {
         type JoinItem = <Self::Data as SystemDef>::JoinItem;
     };
 }
+*/
 
 pub trait System {
     type Data: SystemDef;
     type JoinItem: Joined;
 
-    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: EntityStore);
+    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: &mut TransactionContext);
 }
 
 pub trait SystemRuntime {
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>);
-    fn add_shard(&mut self, shard: &component::Shard);
-    fn remove_shard(&mut self, id: ShardId);
-    fn check_shard(&self, shard_key: component::ShardKey) -> bool;
-    fn get_required_components(&self) -> &Vec<ComponentId>;
-    fn get_transactions(&mut self) -> &mut Vec<Transaction>;
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
+    fn add_shard(&mut self, shard: &Shard);
+    fn remove_shard(&mut self, key: ShardKey);
+    fn check_shard(&self, shard_key: ShardKey) -> bool;
+    fn get_transactions(&mut self) -> &mut TransactionContext;
 }
 
 pub struct SystemData<T>
@@ -38,8 +39,7 @@ where
     T: SystemDef,
 {
     stores: T,
-    shards: IndexMap<ShardId, <T::JoinItem as Joined>::Indexer>,
-    comp_ids: Vec<ComponentId>,
+    shards: IndexMap<ShardKey, <T::JoinItem as Joined>::Indexer>,
 }
 
 impl<T> SystemData<T>
@@ -47,11 +47,10 @@ where
     T: SystemDef,
 {
     #[inline]
-    pub(crate) fn new(comp_map: &Registry<ComponentId>, comp_ids: Vec<ComponentId>) -> SystemData<T> {
+    pub(crate) fn new(comp_map: &Registry<ComponentId>) -> SystemData<T> {
         SystemData {
-            stores: T::new(&comp_ids, comp_map),
+            stores: T::new(comp_map),
             shards: IndexMap::new(),
-            comp_ids,
         }
     }
 
@@ -60,17 +59,17 @@ where
     where
         'b: 'a,
     {
-        context::Context::new(self.stores.as_joined(), &self.shards, entity_map, &self.comp_ids)
+        context::Context::new(self.stores.as_joined(), &self.shards, entity_map)
     }
 
     #[inline]
-    fn add_shard(&mut self, shard: &component::Shard) {
-        self.shards.insert(shard.id, T::reify_shard(&self.comp_ids, shard));
+    fn add_shard(&mut self, shard: &Shard) {
+        self.shards.insert(shard.shard_key, T::reify_shard(shard));
     }
 
     #[inline]
-    fn remove_shard(&mut self, id: ShardId) {
-        self.shards.remove(&id);
+    fn remove_shard(&mut self, key: ShardKey) {
+        self.shards.remove(&key);
     }
 }
 
@@ -79,9 +78,9 @@ where
     T: System,
 {
     system: T,
-    shard_key: component::ShardKey,
+    shard_key: ShardKey,
     data: SystemData<T::Data>,
-    transactions: Vec<Transaction>,
+    transactions: TransactionContext,
 }
 
 impl<T> SystemEntry<T>
@@ -89,13 +88,17 @@ where
     T: System,
 {
     #[inline]
-    pub(crate) fn new(system: T, comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemEntry<T> {
-        let comp_ids = T::Data::get_comp_ids(comp_id_map);
+    pub(crate) fn new(
+        system: T,
+        comp_map: &Registry<ComponentId>,
+        comp_id_map: &HashMap<TypeId, ComponentId>,
+        transactions: TransactionContext,
+    ) -> SystemEntry<T> {
         SystemEntry {
             system,
-            shard_key: component::compose_key(comp_ids.iter()),
-            data: SystemData::new(comp_map, comp_ids),
-            transactions: Vec::new(),
+            shard_key: T::Data::get_shard_key(),
+            data: SystemData::new(comp_map),
+            transactions,
         }
     }
 
@@ -110,35 +113,27 @@ where
     T: System,
 {
     #[inline]
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>) {
-        self.system.run(
-            self.data.context(entity_map),
-            EntityStore::new(entity_map, comp_id_map, &mut self.transactions),
-        );
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>) {
+        self.system.run(self.data.context(entity_map), &mut self.transactions);
     }
 
     #[inline]
-    fn add_shard(&mut self, shard: &component::Shard) {
+    fn add_shard(&mut self, shard: &Shard) {
         self.data.add_shard(shard);
     }
 
     #[inline]
-    fn remove_shard(&mut self, id: ShardId) {
-        self.data.remove_shard(id);
+    fn remove_shard(&mut self, key: ShardKey) {
+        self.data.remove_shard(key);
     }
 
     #[inline]
-    fn check_shard(&self, shard_key: component::ShardKey) -> bool {
-        (self.shard_key & shard_key) == self.shard_key
+    fn check_shard(&self, shard_key: ShardKey) -> bool {
+        self.shard_key.contains_key(shard_key)
     }
 
     #[inline]
-    fn get_required_components(&self) -> &Vec<ComponentId> {
-        &self.data.comp_ids
-    }
-
-    #[inline]
-    fn get_transactions(&mut self) -> &mut Vec<Transaction> {
+    fn get_transactions(&mut self) -> &mut TransactionContext {
         &mut self.transactions
     }
 }
@@ -151,6 +146,7 @@ pub trait Indexable {
 
 pub trait Query {
     type DataPtr: Indexable;
+    type DataType;
     type Item;
 
     fn len(&self, section: usize) -> usize;
@@ -271,6 +267,7 @@ pub mod store {
 
     impl<'a, T: 'a> Query for ReadQuery<'a, T> {
         type DataPtr = ReadPtr<'a, T>;
+        type DataType = T;
         type Item = &'a T;
 
         #[inline]
@@ -301,6 +298,7 @@ pub mod store {
 
     impl<'a, T: 'a> Query for WriteQuery<'a, T> {
         type DataPtr = RwPtr<'a, T>;
+        type DataType = T;
         type Item = &'a mut T;
 
         #[inline]
@@ -376,7 +374,7 @@ pub trait Joined {
     type Indexer;
 
     fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
-    fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> Self::ItemTup;
+    fn get_entity(&self, entity: &Entity) -> Self::ItemTup;
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
@@ -384,17 +382,16 @@ pub trait SystemDef {
     type JoinItem: Joined;
 
     fn as_joined(&self) -> Self::JoinItem;
-    fn reify_shard(sys_comps: &Vec<ComponentId>, shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer;
-    fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId>;
-    fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self;
+    fn reify_shard(shard: &Shard) -> <Self::JoinItem as Joined>::Indexer;
+    fn get_shard_key() -> ShardKey;
+    fn new(comp_map: &Registry<ComponentId>) -> Self;
 }
 
 pub mod join {
     use super::{
-        ComponentId, Entity, HashMap, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, ShardedColumn, SystemDef,
-        TypeId,
+        Component, ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, Shard, ShardedColumn,
+        SystemDef, ShardKey
     };
-    use crate::component;
 
     macro_rules! _decl_system_replace_expr {
         ($_t:tt $sub:ty) => {
@@ -432,6 +429,7 @@ pub mod join {
             impl<$($field_type),*> Joined for ($($field_type),*,)
             where
                 $($field_type: Query),*,
+                $($field_type::DataType: Component),*,
             {
                 type PtrTup = ($($field_type::DataPtr),*,);
                 type ItemTup = ($($field_type::Item),*,);
@@ -443,8 +441,8 @@ pub mod join {
                 }
 
                 #[inline]
-                fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> Self::ItemTup {
-                    ($(self.$field_seq.get_by_coords(entity.get_coords(&components[$field_seq]))),*,)
+                fn get_entity(&self, entity: &Entity) -> Self::ItemTup {
+                    ($(self.$field_seq.get_by_coords(entity.get_coords($field_type::DataType::get_unique_id()))),*,)
                 }
 
                 #[inline]
@@ -469,7 +467,8 @@ pub mod join {
             impl<$($field_type),*> SystemDef for ($($field_type),*,)
             where
                 $($field_type: Queryable),*,
-                $($field_type::DataType: 'static),*
+                $($field_type::DataType: 'static + Component),*,
+                $(<$field_type::QueryItem as Query>::DataType: Component),*
             {
                 type JoinItem = ($($field_type::QueryItem),*,);
 
@@ -479,19 +478,18 @@ pub mod join {
                 }
 
                 #[inline]
-                fn reify_shard(sys_comps: &Vec<ComponentId>,
-                                shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer {
-                    ($(shard.get_section(sys_comps[$field_seq])),*,)
+                fn get_shard_key() -> ShardKey {
+                    ($($field_type::DataType::get_unique_id())|*).into()
                 }
 
                 #[inline]
-                fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId> {
-                    vec![$(comp_ids[&TypeId::of::<$field_type::DataType>()]),*]
+                fn reify_shard(shard: &Shard) -> <Self::JoinItem as Joined>::Indexer {
+                    ($(shard.get_section($field_type::DataType::get_unique_id())),*,)
                 }
 
                 #[inline]
-                fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self {
-                    ($($field_type::new(comp_map.get::<ShardedColumn<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
+                fn new(comp_map: &Registry<ComponentId>) -> Self {
+                    ($($field_type::new(comp_map.get::<ShardedColumn<$field_type::DataType>>(&$field_type::DataType::get_unique_id()))),*,)
                 }
             }
         };
@@ -508,7 +506,7 @@ pub mod join {
 }
 
 pub mod context {
-    use super::{ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined, ShardId};
+    use super::{Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined, ShardKey};
     use indexmap::map::Values;
 
     pub struct Context<'a, T>
@@ -516,9 +514,8 @@ pub mod context {
         T: Joined,
     {
         stores: T,
-        shards: &'a IndexMap<ShardId, T::Indexer>,
+        shards: &'a IndexMap<ShardKey, T::Indexer>,
         entity_map: &'a HashMap<EntityId, Entity>,
-        components: &'a Vec<ComponentId>,
     }
 
     impl<'a, T> Context<'a, T>
@@ -528,15 +525,13 @@ pub mod context {
         #[inline]
         pub fn new(
             stores: T,
-            shards: &'a IndexMap<ShardId, T::Indexer>,
+            shards: &'a IndexMap<ShardKey, T::Indexer>,
             entity_map: &'a HashMap<EntityId, Entity>,
-            components: &'a Vec<ComponentId>,
         ) -> Context<'a, T> {
             Context {
                 stores,
                 shards,
                 entity_map,
-                components,
             }
         }
 
@@ -549,7 +544,7 @@ pub mod context {
                 .iter()
                 .filter_map(move |eid| {
                     if let Some(entity) = self.entity_map.get(eid) {
-                        Some(self.stores.get_entity(&entity, self.components))
+                        Some(self.stores.get_entity(&entity))
                     } else {
                         None
                     }
@@ -583,7 +578,7 @@ pub mod context {
         T: Joined,
     {
         stores: &'a mut T,
-        stream: Values<'a, ShardId, T::Indexer>,
+        stream: Values<'a, ShardKey, T::Indexer>,
         shard: T::PtrTup,
         size: usize,
         counter: usize,

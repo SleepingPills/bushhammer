@@ -1,8 +1,7 @@
-use crate::component::{compose_key, key_count, Component, ComponentCoords, ShardKey};
-use crate::identity::{ComponentId, EntityId};
+use crate::component2::{Component, ComponentCoords};
+use crate::identity2::{ComponentId, EntityId, ShardKey};
 use hashbrown::HashMap;
 use serde_json;
-use std::any::TypeId;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 
@@ -18,22 +17,29 @@ pub struct Entity {
 
 impl Entity {
     #[inline]
-    pub(crate) fn get_coords(&self, comp_id: &ComponentId) -> ComponentCoords {
-        (self.comp_sections[comp_id], self.shard_loc)
+    pub(crate) fn get_coords(&self, comp_id: ComponentId) -> ComponentCoords {
+        (self.comp_sections[&comp_id], self.shard_loc)
     }
 }
 
 /// Context for recording entity transactions. Prepared by the `World` after all components have been
 /// registered and the world is finalized.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TransactionContext {
     added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
     deleted: Vec<EntityId>,
-    builders: HashMap<ComponentId, Box<dynamic::BuildDynVec>>,
-    component_ids: HashMap<TypeId, ComponentId>,
+    builders: Vec<Box<dynamic::BuildDynVec>>,
 }
 
 impl TransactionContext {
+    pub fn new() -> TransactionContext {
+        TransactionContext {
+            added: HashMap::new(),
+            deleted: Vec::new(),
+            builders: Vec::new(),
+        }
+    }
+
     /// Create a batch entity builder optimized for rapidly adding entities with the same components.
     #[inline]
     pub fn batch<'a, T>(&'a mut self) -> T::Builder
@@ -43,16 +49,17 @@ impl TransactionContext {
         T::new_batch_builder(self)
     }
 
-    pub fn batch_json<'i>(&'i mut self, comp_ids: &'i Vec<ComponentId>) -> JsonBatchBuilder<'i> {
-        let shard_key = compose_key(comp_ids.iter());
+    /// Create a batch entity builder for ingesting JSON data
+    pub fn batch_json<'i>(&'i mut self, comp_ids: &'i [ComponentId]) -> JsonBatchBuilder<'i> {
+        let shard_key = ShardKey::new(comp_ids.iter());
 
         let builders = &self.builders;
         let shard: &mut HashMap<_, _> = self
             .added
             .entry(shard_key)
-            .or_insert_with(|| comp_ids.iter().map(|id| (*id, builders[id].build())).collect());
+            .or_insert_with(|| comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect());
 
-        JsonBatchBuilder{comp_ids, shard}
+        JsonBatchBuilder { comp_ids, shard }
     }
 
     /// Add a single entity with the supplied tuple of components.
@@ -76,16 +83,13 @@ impl TransactionContext {
     where
         T: 'static + Component,
     {
-        self.builders.insert(
-            self.component_ids[&TypeId::of::<T>()],
-            Box::new(dynamic::DynVecFactory::<T>(PhantomData)),
-        );
+        self.builders.push(Box::new(dynamic::DynVecFactory::<T>(PhantomData)));
     }
 }
 
 pub struct JsonBatchBuilder<'a> {
-    comp_ids: &'a Vec<ComponentId>,
-    shard: &'a mut HashMap<ComponentId, dynamic::DynVec>
+    comp_ids: &'a [ComponentId],
+    shard: &'a mut HashMap<ComponentId, dynamic::DynVec>,
 }
 
 impl<'a> JsonBatchBuilder<'a> {
@@ -118,7 +122,7 @@ macro_rules! batch_def_tup {
 
             #[inline]
             fn new_batch_builder(ctx: &'a mut TransactionContext) -> Self::Builder {
-                let ids = Self::get_ids(ctx);
+                let ids = Self::get_ids();
                 let shard = Self::get_shard(&ids, ctx);
 
                 // The below is safe because of previous checks
@@ -172,7 +176,7 @@ batch_builder_tup!(B8, A:a:0, B:b:1, C:c:2, D:d:3, E:e:4, F:f:5, G:g:6, H:h:7);
 pub trait ComponentTuple<'a> {
     type IdTuple;
 
-    fn get_ids(ctx: &TransactionContext) -> Self::IdTuple;
+    fn get_ids() -> Self::IdTuple;
     fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut HashMap<ComponentId, dynamic::DynVec>;
 }
 
@@ -191,17 +195,17 @@ macro_rules! comp_tup {
             type IdTuple = ($(_decl_entity_replace_expr!($field_type ComponentId)),*,);
 
             #[inline]
-            fn get_ids(ctx: &TransactionContext) -> Self::IdTuple {
+            fn get_ids() -> Self::IdTuple {
                 (
-                    $(ctx.component_ids[&TypeId::of::<$field_type>()]),*,
+                    $($field_type::get_unique_id()),*,
                 )
             }
 
             fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut HashMap<ComponentId, dynamic::DynVec> {
-                let shard_key = $(ids.$field_seq.id)|*;
+                let shard_key: ShardKey = ($(ids.$field_seq)|*).into();
 
                 // Ensure that all types are distinct and no duplicate mutable entries are returned.
-                if key_count(shard_key) != $field_count {
+                if shard_key.count() != $field_count {
                     panic!("Invalid shard key rank")
                 }
 
@@ -238,7 +242,7 @@ macro_rules! comp_ingress {
         {
             #[inline]
             fn ingest(self, ctx: &mut TransactionContext) {
-                let ids = Self::get_ids(ctx);
+                let ids = Self::get_ids();
                 let shard = Self::get_shard(&ids, ctx);
 
                 $(shard.get_mut(&ids.$field_seq).expect("Missing component").push(self.$field_seq));*;
@@ -261,6 +265,7 @@ mod dynamic {
 
     pub trait BuildDynVec: Debug {
         fn build(&self) -> DynVec;
+        fn clone_box(&self) -> Box<BuildDynVec>;
     }
 
     #[derive(Debug)]
@@ -272,19 +277,32 @@ mod dynamic {
     where
         T: 'static + Component,
     {
+        #[inline]
         fn build(&self) -> DynVec {
             DynVec::new(Vec::<T>::new())
+        }
+
+        #[inline]
+        fn clone_box(&self) -> Box<BuildDynVec> {
+            Box::new(DynVecFactory::<T>(PhantomData))
+        }
+    }
+
+    impl Clone for Box<BuildDynVec> {
+        fn clone(&self) -> Self {
+            self.clone_box()
         }
     }
 
     pub trait AnyVec: Debug {
         unsafe fn get_ptr(&mut self) -> *mut ();
         fn push_json(&mut self, json: &str);
+        fn clone_box(&self) -> Box<AnyVec>;
     }
 
     impl<T> AnyVec for Vec<T>
     where
-        T: Component,
+        T: 'static + Component,
     {
         #[inline]
         unsafe fn get_ptr(&mut self) -> *mut () {
@@ -295,12 +313,27 @@ mod dynamic {
         fn push_json(&mut self, json: &str) {
             self.push(serde_json::from_str(json).expect("Error deserializing component"));
         }
+
+        #[inline]
+        fn clone_box(&self) -> Box<AnyVec> {
+            Box::new(Vec::<T>::new())
+        }
     }
 
     #[derive(Debug)]
     pub struct DynVec {
         inst: Box<AnyVec>,
         ptr: *mut (),
+    }
+
+    impl Clone for DynVec {
+        fn clone(&self) -> Self {
+            unsafe {
+                let mut inst = self.inst.clone_box();
+                let ptr = inst.get_ptr();
+                DynVec { inst, ptr }
+            }
+        }
     }
 
     impl DynVec {

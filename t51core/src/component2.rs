@@ -1,27 +1,26 @@
 use crate::alloc::VecPool;
-use crate::identity::{BitSetIdType, ComponentId, ShardId};
+use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use serde_json;
 use std::any::Any;
 use std::fmt::Debug;
 
-pub(crate) type ShardKey = BitSetIdType;
 pub(crate) type ComponentCoords = (usize, usize);
 
 pub trait Component: DeserializeOwned + Debug {
-}
+    fn acquire_unique_id();
+    fn get_unique_id() -> ComponentId;
 
-/// Construct a composite bit-set shard key from the supplied component id's.
-#[inline]
-pub(crate) fn compose_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
-    keys.fold(0 as ShardKey, |acc, cid| acc | cid.id)
-}
+    #[inline]
+    fn get_type_indexer() -> usize {
+        Self::get_unique_id().indexer()
+    }
 
-/// Count the number of components set in the supplied shard key.
-#[inline]
-pub(crate) fn key_count(key: ShardKey) -> BitSetIdType {
-    key.count_ones() as BitSetIdType
+    #[inline]
+    fn get_type_name() -> &'static str {
+        unsafe { ComponentId::get_name_vec()[Self::get_type_indexer()] }
+    }
 }
 
 #[derive(Debug)]
@@ -132,15 +131,14 @@ where
 
 #[derive(Debug)]
 pub struct Shard {
-    pub(crate) id: ShardId,
     pub(crate) shard_key: ShardKey,
     pub(crate) sections: HashMap<ComponentId, usize>,
 }
 
 impl Shard {
     #[inline]
-    pub(crate) fn new(id: ShardId, shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
-        Shard { id, shard_key, sections }
+    pub(crate) fn new(shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
+        Shard { shard_key, sections }
     }
 
     #[inline]

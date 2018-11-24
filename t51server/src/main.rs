@@ -3,8 +3,8 @@
 extern crate t51core;
 extern crate t51core_proc;
 
-use t51core::identity2::{ComponentId, ComponentTypeIdentity};
-use t51core::component::Component;
+use t51core::identity2::ComponentId;
+use t51core::component2::Component;
 use t51core_proc::Component;
 use serde_derive::{Deserialize, Serialize};
 

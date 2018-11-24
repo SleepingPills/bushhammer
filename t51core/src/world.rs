@@ -358,6 +358,7 @@ impl World {
     }
 }
 
+/*
 #[cfg(test)]
 mod tests {
     use super::entity;
@@ -636,3 +637,4 @@ mod tests {
         assert_eq!(state[2], (1.into(), 5, SomeComponent { x: 1, y: 1 }));
     }
 }
+*/

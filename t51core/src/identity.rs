@@ -4,8 +4,6 @@ use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::intrinsics::type_name;
 use std::mem;
-use hashbrown::HashMap;
-use std::any::TypeId;
 
 #[macro_export]
 macro_rules! object_id {

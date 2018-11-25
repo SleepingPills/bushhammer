@@ -8,7 +8,7 @@ use std::fmt::Debug;
 pub(crate) type ComponentCoords = (usize, usize);
 
 pub trait Component: DeserializeOwned + Debug {
-    fn acquire_unique_id();
+    fn acquire_unique_id() -> ComponentId;
     fn get_unique_id() -> ComponentId;
 
     #[inline]
@@ -71,7 +71,6 @@ pub trait Column {
     fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
     fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize);
     fn swap_remove(&mut self, section: usize, loc: usize);
-    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any>;
     fn new_section(&mut self) -> usize;
     fn section_len(&self, section: usize) -> usize;
 }
@@ -92,14 +91,6 @@ where
         unsafe {
             let storage = self.data.get_unchecked_mut(section);
             storage.swap_remove(loc);
-        }
-    }
-
-    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any> {
-        unsafe {
-            let storage = self.data.get_unchecked_mut(section);
-            let instance = storage.swap_remove(loc);
-            Box::new(instance)
         }
     }
 

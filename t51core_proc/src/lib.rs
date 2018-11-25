@@ -26,7 +26,7 @@ fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro
 
         impl {main_trait} for {struct_name} {{
             #[inline]
-            fn acquire_unique_id() {{
+            fn acquire_unique_id() -> {id_type} {{
                 unsafe {{
                     {static_mod}::{static_once}.call_once(|| {{
                         let counter = {id_type}::get_name_vec().len();
@@ -34,7 +34,9 @@ fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro
 
                         {id_type}::get_name_vec().push("{struct_name}");
                         {id_type}::get_id_vec().push({static_mod}::{static_id});
-                    }})
+                    }});
+
+                    {static_mod}::{static_id}
                 }}
             }}
 

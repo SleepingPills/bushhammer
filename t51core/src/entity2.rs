@@ -1,15 +1,24 @@
 use crate::component2::{Component, ComponentCoords};
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
+use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use std::fmt::Debug;
 use std::marker::PhantomData;
-use serde_derive::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
 use t51core_proc::Component;
 
 #[repr(transparent)]
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
-pub struct EntityId(u32);
+pub struct EntityId(usize);
+
+impl From<usize> for EntityId {
+    #[inline]
+    fn from(id: usize) -> Self {
+        EntityId(id)
+    }
+}
 
 impl Into<usize> for EntityId {
     #[inline]
@@ -21,28 +30,14 @@ impl Into<usize> for EntityId {
 impl From<u32> for EntityId {
     #[inline]
     fn from(id: u32) -> Self {
-        EntityId(id)
-    }
-}
-
-impl Into<u32> for EntityId {
-    #[inline]
-    fn into(self) -> u32 {
-        self.0
+        EntityId(id as usize)
     }
 }
 
 impl From<i32> for EntityId {
     #[inline]
     fn from(id: i32) -> Self {
-        EntityId(id as u32)
-    }
-}
-
-impl Into<i32> for EntityId {
-    #[inline]
-    fn into(self) -> i32 {
-        self.0 as i32
+        EntityId(id as usize)
     }
 }
 
@@ -67,17 +62,19 @@ impl Entity {
 /// registered and the world is finalized.
 #[derive(Debug, Clone)]
 pub struct TransactionContext {
-    added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
-    deleted: Vec<EntityId>,
-    builders: Vec<Box<dynamic::BuildDynVec>>,
+    pub(crate) added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
+    pub(crate) deleted: Vec<EntityId>,
+    pub(crate) builders: Vec<Box<dynamic::BuildDynVec>>,
+    pub(crate) id_counter: Arc<AtomicUsize>,
 }
 
 impl TransactionContext {
-    pub fn new() -> TransactionContext {
+    pub fn new(counter: Arc<AtomicUsize>) -> TransactionContext {
         TransactionContext {
             added: HashMap::new(),
             deleted: Vec::new(),
             builders: Vec::new(),
+            id_counter: counter,
         }
     }
 
@@ -92,24 +89,34 @@ impl TransactionContext {
 
     /// Create a batch entity builder for ingesting JSON data
     pub fn batch_json<'i>(&'i mut self, comp_ids: &'i [ComponentId]) -> JsonBatchBuilder<'i> {
-        let shard_key = ShardKey::new(comp_ids.iter());
+        let entity_comp_id = EntityId::get_unique_id();
+        let shard_key = ShardKey::from_iter(comp_ids.iter()) + entity_comp_id;
 
         let builders = &self.builders;
-        let shard: &mut HashMap<_, _> = self
-            .added
-            .entry(shard_key)
-            .or_insert_with(|| comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect());
+        let shard = self.added.entry(shard_key).or_insert_with(|| {
+            let mut map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
+            map.insert(entity_comp_id, builders[entity_comp_id.indexer()].build());
+            map
+        });
 
-        JsonBatchBuilder { comp_ids, shard }
+        unsafe {
+            JsonBatchBuilder {
+                comp_ids,
+                shard,
+                //entity_vec: shard[&entity_comp_id].cast_mut_unchecked::<EntityId>(),
+                id_counter: self.id_counter.clone(),
+                batch_counter: 0,
+            }
+        }
     }
 
     /// Add a single entity with the supplied tuple of components.
     #[inline]
-    pub fn add<'a, T>(&'a mut self, tuple: T)
+    pub fn add<'a, T>(&'a mut self, tuple: T) -> EntityId
     where
         T: ComponentIngress<'a>,
     {
-        tuple.ingest(self);
+        tuple.ingest(self)
     }
 
     /// Delete the entity with the given id.
@@ -131,6 +138,9 @@ impl TransactionContext {
 pub struct JsonBatchBuilder<'a> {
     comp_ids: &'a [ComponentId],
     shard: &'a mut HashMap<ComponentId, dynamic::DynVec>,
+    //entity_vec: &'a mut Vec<EntityId>,
+    id_counter: Arc<AtomicUsize>,
+    batch_counter: usize,
 }
 
 impl<'a> JsonBatchBuilder<'a> {
@@ -143,6 +153,30 @@ impl<'a> JsonBatchBuilder<'a> {
         for (id, json) in self.comp_ids.iter().zip(json_str) {
             self.shard.get_mut(id).unwrap().push_json(json);
         }
+
+        self.batch_counter += 1;
+    }
+    pub fn commit(&mut self) -> &Vec<EntityId> {
+        // Bump the id counter by the number of recorded entries in the batch
+        let start_id = self.id_counter.fetch_add(self.batch_counter, Ordering::AcqRel);
+
+        // Generate entity Ids
+//        for id in start_id..(start_id + self.batch_counter) {
+//            self.entity_vec.push(EntityId(id));
+//        }
+
+        // Reset the batch counter
+        self.batch_counter = 0;
+
+//        self.entity_vec
+
+        unimplemented!()
+    }
+}
+
+impl<'a> Drop for JsonBatchBuilder<'a> {
+    fn drop(&mut self) {
+        self.commit();
     }
 }
 
@@ -154,51 +188,93 @@ pub trait BatchDef<'a>: ComponentTuple<'a> {
 }
 
 macro_rules! batch_def_tup {
-    ($tup_name:ident, $( $field_type:ident:$field_seq:tt ),*) => {
+    ($( $field_type:ident:$field_seq:tt ),*) => {
         impl<'a, $($field_type),*> BatchDef<'a> for ($($field_type),*,)
         where
             $($field_type: 'static + Component),*,
         {
-            type Builder = $tup_name<'a, $($field_type),*>;
+            type Builder = BatchBuilder<'a, ($(&'a mut Vec<$field_type>),*,)>;
 
-            #[inline]
             fn new_batch_builder(ctx: &'a mut TransactionContext) -> Self::Builder {
                 let ids = Self::get_ids();
+
+                let id_counter = ctx.id_counter.clone();
                 let shard = Self::get_shard(&ids, ctx);
 
                 // The below is safe because of previous checks
                 unsafe {
-                    $tup_name(
+                    let tup = (
                         $(shard[&ids.$field_seq].cast_mut_unchecked::<$field_type>()),*,
-                    )
+                    );
+
+                    let entity_vec = shard[&EntityId::get_unique_id()].cast_mut_unchecked::<EntityId>();
+
+                    BatchBuilder::new(tup, entity_vec, id_counter)
                 }
             }
         }
     };
 }
 
-batch_def_tup!(B1, A:0);
-batch_def_tup!(B2, A:0, B:1);
-batch_def_tup!(B3, A:0, B:1, C:2);
-batch_def_tup!(B4, A:0, B:1, C:2, D:3);
-batch_def_tup!(B5, A:0, B:1, C:2, D:3, E:4);
-batch_def_tup!(B6, A:0, B:1, C:2, D:3, E:4, F:5);
-batch_def_tup!(B7, A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-batch_def_tup!(B8, A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+batch_def_tup!(A:0);
+batch_def_tup!(A:0, B:1);
+batch_def_tup!(A:0, B:1, C:2);
+batch_def_tup!(A:0, B:1, C:2, D:3);
+batch_def_tup!(A:0, B:1, C:2, D:3, E:4);
+batch_def_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
+batch_def_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+batch_def_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+pub struct BatchBuilder<'a, T> {
+    tup: T,
+    entity_vec: &'a mut Vec<EntityId>,
+    id_counter: Arc<AtomicUsize>,
+    batch_counter: usize,
+}
+
+impl<'a, T> BatchBuilder<'a, T> {
+    #[inline]
+    pub fn new(tup: T, entity_vec: &'a mut Vec<EntityId>, id_counter: Arc<AtomicUsize>) -> BatchBuilder<'a, T> {
+        BatchBuilder {
+            tup,
+            entity_vec,
+            id_counter,
+            batch_counter: 0,
+        }
+    }
+
+    pub fn commit(&mut self) -> &Vec<EntityId> {
+        // Bump the id counter by the number of recorded entries in the batch
+        let start_id = self.id_counter.fetch_add(self.batch_counter, Ordering::AcqRel);
+
+        // Generate entity Ids
+        for id in start_id..(start_id + self.batch_counter) {
+            self.entity_vec.push(EntityId(id));
+        }
+
+        // Reset the batch counter
+        self.batch_counter = 0;
+
+        self.entity_vec
+    }
+}
+
+impl<'a, T> Drop for BatchBuilder<'a, T> {
+    fn drop(&mut self) {
+        self.commit();
+    }
+}
 
 macro_rules! batch_builder_tup {
     ($tup_name:ident, $( $field_type:ident:$field_name:ident:$field_seq:tt ),*) => {
-        pub struct $tup_name<'a, $($field_type),*>($(&'a mut Vec<$field_type>),*,)
-        where
-            $($field_type: Component),*;
-
-        impl<'a, $($field_type),*> $tup_name<'a, $($field_type),*>
+        impl<'a, $($field_type),*> BatchBuilder<'a, ($(&'a mut Vec<$field_type>),*,)>
         where
             $($field_type: Component),*
         {
             #[inline]
             pub fn add(&mut self, $($field_name: $field_type),*) {
-                $(self.$field_seq.push($field_name));*;
+                self.batch_counter += 1;
+                $(self.tup.$field_seq.push($field_name));*;
             }
         }
     };
@@ -243,16 +319,19 @@ macro_rules! comp_tup {
             }
 
             fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut HashMap<ComponentId, dynamic::DynVec> {
-                let shard_key: ShardKey = ($(ids.$field_seq)|*).into();
+                let entity_comp_id = EntityId::get_unique_id();
+                let shard_key: ShardKey = ($(ids.$field_seq)|* | entity_comp_id).into();
 
                 // Ensure that all types are distinct and no duplicate mutable entries are returned.
-                if shard_key.count() != $field_count {
+                // +1 is added to account for the Entity Id.
+                if shard_key.count() != ($field_count + 1) {
                     panic!("Invalid shard key rank")
                 }
 
                 // Get a cached shard builder or create a new one if necessary
                 ctx.added.entry(shard_key).or_insert_with(|| {
                     let mut map = HashMap::new();
+                    map.insert(entity_comp_id, dynamic::DynVec::new(Vec::<EntityId>::new()));
                     $(map.insert(ids.$field_seq, dynamic::DynVec::new(Vec::<$field_type>::new())));*;
                     map
                 })
@@ -272,7 +351,7 @@ comp_tup!(8, A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
 /// Trait for handling the ingress of a single data-tuple
 pub trait ComponentIngress<'a>: ComponentTuple<'a> {
-    fn ingest(self, ctx: &mut TransactionContext);
+    fn ingest(self, ctx: &mut TransactionContext) -> EntityId;
 }
 
 macro_rules! comp_ingress {
@@ -282,11 +361,17 @@ macro_rules! comp_ingress {
             $($field_type: 'static + Component),*,
         {
             #[inline]
-            fn ingest(self, ctx: &mut TransactionContext) {
+            fn ingest(self, ctx: &mut TransactionContext) -> EntityId {
                 let ids = Self::get_ids();
+
+                let entity_id = EntityId(ctx.id_counter.fetch_add(1, Ordering::AcqRel));
+
                 let shard = Self::get_shard(&ids, ctx);
 
+                shard.get_mut(&EntityId::get_unique_id()).expect("Missing EntityId").push(entity_id);
                 $(shard.get_mut(&ids.$field_seq).expect("Missing component").push(self.$field_seq));*;
+
+                entity_id
             }
         }
     };
@@ -301,7 +386,7 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-mod dynamic {
+pub mod dynamic {
     use super::*;
 
     pub trait BuildDynVec: Debug {
@@ -391,7 +476,10 @@ mod dynamic {
         }
 
         #[inline]
-        pub fn push<T>(&mut self, item: T) {
+        pub fn push<T>(&mut self, item: T)
+        where
+            T: Component,
+        {
             unsafe {
                 self.cast_mut_unchecked::<T>().push(item);
             }
@@ -403,17 +491,26 @@ mod dynamic {
         }
 
         #[inline]
-        pub fn cast<T>(&self) -> &Vec<T> {
+        pub fn cast<T>(&self) -> &Vec<T>
+        where
+            T: Component,
+        {
             unsafe { &*(self.ptr as *const Vec<T>) }
         }
 
         #[inline]
-        pub fn cast_mut<T>(&mut self) -> &mut Vec<T> {
+        pub fn cast_mut<T>(&mut self) -> &mut Vec<T>
+        where
+            T: Component,
+        {
             unsafe { &mut *(self.ptr as *mut Vec<T>) }
         }
 
         #[inline]
-        pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T> {
+        pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
+        where
+            T: Component,
+        {
             &mut *(self.ptr as *mut Vec<T>)
         }
     }

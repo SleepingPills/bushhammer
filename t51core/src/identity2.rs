@@ -64,7 +64,7 @@ macro_rules! bitflag_type_id {
 
         impl $composite_key {
             #[inline]
-            pub fn new<'a>(keys: impl Iterator<Item = &'a $name>) -> $composite_key {
+            pub fn from_iter<'a>(keys: impl Iterator<Item = &'a $name>) -> $composite_key {
                 $composite_key(keys.fold(0, |acc, cid| acc | cid.id))
             }
 
@@ -76,7 +76,11 @@ macro_rules! bitflag_type_id {
             #[inline]
             pub fn decompose(&self) -> impl Iterator<Item = $name> {
                 let mut field = self.0;
-                (0..ID_BIT_LENGTH).filter_map(move |index| unsafe {
+
+                let first_index = self.0.leading_zeros() as usize;
+                let last_index = ID_BIT_LENGTH - self.0.leading_zeros() as usize;
+
+                (first_index..last_index).filter_map(move |index| unsafe {
                     let result = match field & 1 {
                         1 => Some($id_vec[index]),
                         _ => None,

@@ -5,7 +5,6 @@ use crate::registry::Registry;
 use crate::sync::RwCell;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
-use std::any::TypeId;
 use std::sync::Arc;
 
 /*
@@ -23,15 +22,14 @@ pub trait System {
     type Data: SystemDef;
     type JoinItem: Joined;
 
-    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: &mut TransactionContext);
+    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, transactions: &mut TransactionContext);
 }
 
 pub trait SystemRuntime {
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>);
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, transactions: &mut TransactionContext);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
     fn check_shard(&self, shard_key: ShardKey) -> bool;
-    fn get_transactions(&mut self) -> &mut TransactionContext;
 }
 
 pub struct SystemData<T>
@@ -80,7 +78,6 @@ where
     system: T,
     shard_key: ShardKey,
     data: SystemData<T::Data>,
-    transactions: TransactionContext,
 }
 
 impl<T> SystemEntry<T>
@@ -91,14 +88,11 @@ where
     pub(crate) fn new(
         system: T,
         comp_map: &Registry<ComponentId>,
-        comp_id_map: &HashMap<TypeId, ComponentId>,
-        transactions: TransactionContext,
     ) -> SystemEntry<T> {
         SystemEntry {
             system,
             shard_key: T::Data::get_shard_key(),
             data: SystemData::new(comp_map),
-            transactions,
         }
     }
 
@@ -113,8 +107,8 @@ where
     T: System,
 {
     #[inline]
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>) {
-        self.system.run(self.data.context(entity_map), &mut self.transactions);
+    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, transactions: &mut TransactionContext) {
+        self.system.run(self.data.context(entity_map), transactions);
     }
 
     #[inline]
@@ -130,11 +124,6 @@ where
     #[inline]
     fn check_shard(&self, shard_key: ShardKey) -> bool {
         self.shard_key.contains_key(shard_key)
-    }
-
-    #[inline]
-    fn get_transactions(&mut self) -> &mut TransactionContext {
-        &mut self.transactions
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::component2::{Component, ComponentCoords};
+use crate::component2::{Component};
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
@@ -47,15 +47,6 @@ impl From<i32> for EntityId {
 pub struct Entity {
     pub id: EntityId,
     pub shard_key: ShardKey,
-    pub shard_loc: usize,
-    pub comp_sections: HashMap<ComponentId, usize>,
-}
-
-impl Entity {
-    #[inline]
-    pub(crate) fn get_coords(&self, comp_id: ComponentId) -> ComponentCoords {
-        (self.comp_sections[&comp_id], self.shard_loc)
-    }
 }
 
 /// Context for recording entity transactions. Prepared by the `World` after all components have been
@@ -99,14 +90,11 @@ impl TransactionContext {
             map
         });
 
-        unsafe {
-            JsonBatchBuilder {
-                comp_ids,
-                shard,
-                //entity_vec: shard[&entity_comp_id].cast_mut_unchecked::<EntityId>(),
-                id_counter: self.id_counter.clone(),
-                batch_counter: 0,
-            }
+        JsonBatchBuilder {
+            comp_ids,
+            shard,
+            id_counter: self.id_counter.clone(),
+            batch_counter: 0,
         }
     }
 
@@ -138,7 +126,6 @@ impl TransactionContext {
 pub struct JsonBatchBuilder<'a> {
     comp_ids: &'a [ComponentId],
     shard: &'a mut HashMap<ComponentId, dynamic::DynVec>,
-    //entity_vec: &'a mut Vec<EntityId>,
     id_counter: Arc<AtomicUsize>,
     batch_counter: usize,
 }
@@ -160,17 +147,17 @@ impl<'a> JsonBatchBuilder<'a> {
         // Bump the id counter by the number of recorded entries in the batch
         let start_id = self.id_counter.fetch_add(self.batch_counter, Ordering::AcqRel);
 
+        let entity_vec = self.shard.get_mut(&EntityId::get_unique_id()).unwrap().cast_mut::<EntityId>();
+
         // Generate entity Ids
-//        for id in start_id..(start_id + self.batch_counter) {
-//            self.entity_vec.push(EntityId(id));
-//        }
+        for id in start_id..(start_id + self.batch_counter) {
+            entity_vec.push(EntityId(id));
+        }
 
         // Reset the batch counter
         self.batch_counter = 0;
 
-//        self.entity_vec
-
-        unimplemented!()
+        entity_vec
     }
 }
 

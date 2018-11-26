@@ -1,4 +1,5 @@
 use crate::alloc::VecPool;
+use crate::entity2::EntityId;
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
@@ -25,17 +26,18 @@ pub trait Component: DeserializeOwned + Debug {
 #[derive(Debug)]
 pub struct ShardedColumn<T> {
     data: VecPool<Vec<T>>,
+    coords: HashMap<EntityId, ComponentCoords>,
 }
 
 impl<T> ShardedColumn<T> {
     #[inline]
     pub(crate) fn new() -> ShardedColumn<T> {
-        ShardedColumn { data: VecPool::new() }
+        ShardedColumn { data: VecPool::new(), coords: HashMap::new() }
     }
 
     #[inline]
-    pub(crate) fn get(&self, section: usize, loc: usize) -> Option<&T> {
-        self.data.get(section).get(loc)
+    pub(crate) fn get_coords(&self, id: EntityId) -> Option<ComponentCoords> {
+        self.coords.get(&id).and_then(|coords| Some(*coords))
     }
 
     #[inline]

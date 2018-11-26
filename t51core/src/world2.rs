@@ -111,7 +111,7 @@ impl World {
     pub fn process_systems(&mut self) {
         for (id, mut system) in self.system_registry.iter_mut::<SystemRuntime>() {
             unsafe {
-                system.run(&self.entity_registry, self.get_system_transactions(id.indexer()));
+                system.run(self.get_system_transactions(id.indexer()));
             }
         }
     }

@@ -11,6 +11,20 @@ use serde_derive::{Deserialize, Serialize};
 #[derive(Component, Deserialize, Debug)]
 struct Velocity;
 
+fn moof(a: Option<i32>, b: Option<i32>) -> Option<i32> {
+    let ping = match a {
+        Some(val) => val,
+        _ => return None,
+    };
+
+    let pong = match b {
+        Some(val) => val,
+        _ => return None,
+    };
+
+    Some(ping + pong)
+}
+
 fn main() {
     Velocity::acquire_unique_id();
 

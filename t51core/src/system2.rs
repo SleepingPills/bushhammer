@@ -1,9 +1,8 @@
-use crate::component2::{Component, ComponentCoords, Shard, ShardedColumn};
-use crate::entity2::{Entity, EntityId, TransactionContext};
+use crate::component2::{Component, Shard, ShardedColumn};
+use crate::entity2::{EntityId, TransactionContext};
 use crate::identity2::{ComponentId, ShardKey};
 use crate::registry::Registry;
 use crate::sync::RwCell;
-use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::sync::Arc;
 
@@ -26,7 +25,7 @@ pub trait System {
 }
 
 pub trait SystemRuntime {
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, transactions: &mut TransactionContext);
+    fn run(&mut self, transactions: &mut TransactionContext);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
     fn check_shard(&self, shard_key: ShardKey) -> bool;
@@ -53,11 +52,11 @@ where
     }
 
     #[inline]
-    pub fn context<'a, 'b>(&'a self, entity_map: &'b HashMap<EntityId, Entity>) -> context::Context<<T as SystemDef>::JoinItem>
+    pub fn context<'a, 'b>(&'a self) -> context::Context<<T as SystemDef>::JoinItem>
     where
         'b: 'a,
     {
-        context::Context::new(self.stores.as_joined(), &self.shards, entity_map)
+        context::Context::new(self.stores.as_joined(), &self.shards)
     }
 
     #[inline]
@@ -85,10 +84,7 @@ where
     T: System,
 {
     #[inline]
-    pub(crate) fn new(
-        system: T,
-        comp_map: &Registry<ComponentId>,
-    ) -> SystemEntry<T> {
+    pub(crate) fn new(system: T, comp_map: &Registry<ComponentId>) -> SystemEntry<T> {
         SystemEntry {
             system,
             shard_key: T::Data::get_shard_key(),
@@ -107,8 +103,8 @@ where
     T: System,
 {
     #[inline]
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, transactions: &mut TransactionContext) {
-        self.system.run(self.data.context(entity_map), transactions);
+    fn run(&mut self, transactions: &mut TransactionContext) {
+        self.system.run(self.data.context(), transactions);
     }
 
     #[inline]
@@ -139,7 +135,7 @@ pub trait Query {
     type Item;
 
     fn len(&self, section: usize) -> usize;
-    fn get_by_coords(&self, coords: ComponentCoords) -> Self::Item;
+    fn get_by_id(&self, id: EntityId) -> Option<Self::Item>;
     fn unwrap(&mut self, section: usize) -> Self::DataPtr;
     fn null() -> Self::DataPtr;
 }
@@ -159,7 +155,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Arc, ComponentCoords, Indexable, Query, Queryable, RwCell, ShardedColumn};
+    use super::{Arc, EntityId, Indexable, Query, Queryable, RwCell, ShardedColumn};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -265,10 +261,12 @@ pub mod store {
         }
 
         #[inline]
-        fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
-            let (section, loc) = coords;
-            let ptr = self.store_ref().get_data_ptr(section);
-            unsafe { &*ptr.add(loc) }
+        fn get_by_id(&self, id: EntityId) -> Option<&'a T> {
+            self.store_ref().get_coords(id).and_then(|(section, loc)| {
+                let ptr = self.store_ref().get_data_ptr(section);
+                unsafe { Some(&*ptr.add(loc)) }
+            })
+            // Horrible and unsafe malarkey.
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
             // self.store.get_item(coords)
@@ -296,10 +294,12 @@ pub mod store {
         }
 
         #[inline]
-        fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
-            let (section, loc) = coords;
-            let ptr = self.store_ref().get_data_ptr(section);
-            unsafe { &mut *(ptr.add(loc) as *mut _) }
+        fn get_by_id(&self, id: EntityId) -> Option<&'a mut T> {
+            self.store_ref().get_coords(id).and_then(|(section, loc)| {
+                let ptr = self.store_ref().get_data_ptr(section);
+                unsafe { Some(&mut *(ptr.add(loc) as *mut _)) }
+            })
+            // Horrible and unsafe malarkey.
             // Can't do the safe thing here due to lack of generic associated types as the
             // lifetimes would clash.
             // self.store.get_item_mut(coords)
@@ -363,7 +363,7 @@ pub trait Joined {
     type Indexer;
 
     fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
-    fn get_entity(&self, entity: &Entity) -> Self::ItemTup;
+    fn get_entity(&self, id: EntityId) -> Option<Self::ItemTup>;
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
@@ -378,7 +378,7 @@ pub trait SystemDef {
 
 pub mod join {
     use super::{
-        Component, ComponentId, Entity, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, Shard, ShardKey,
+        Component, ComponentId, EntityId, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, Shard, ShardKey,
         ShardedColumn, SystemDef,
     };
 
@@ -430,8 +430,14 @@ pub mod join {
                 }
 
                 #[inline]
-                fn get_entity(&self, entity: &Entity) -> Self::ItemTup {
-                    ($(self.$field_seq.get_by_coords(entity.get_coords($field_type::DataType::get_unique_id()))),*,)
+                #[allow(non_snake_case)]
+                fn get_entity(&self, id: EntityId) -> Option<Self::ItemTup> {
+                    $(let $field_type = match self.$field_seq.get_by_id(id) {
+                        Some(val) => val,
+                        _ => return None,
+                    });*;
+
+                    Some(($($field_type),*,))
                 }
 
                 #[inline]
@@ -495,7 +501,7 @@ pub mod join {
 }
 
 pub mod context {
-    use super::{Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined, ShardKey};
+    use super::{EntityId, IndexMap, IndexablePtrTup, Joined, ShardKey};
     use indexmap::map::Values;
 
     pub struct Context<'a, T>
@@ -504,7 +510,6 @@ pub mod context {
     {
         stores: T,
         shards: &'a IndexMap<ShardKey, T::Indexer>,
-        entity_map: &'a HashMap<EntityId, Entity>,
     }
 
     impl<'a, T> Context<'a, T>
@@ -515,12 +520,10 @@ pub mod context {
         pub fn new(
             stores: T,
             shards: &'a IndexMap<ShardKey, T::Indexer>,
-            entity_map: &'a HashMap<EntityId, Entity>,
         ) -> Context<'a, T> {
             Context {
                 stores,
                 shards,
-                entity_map,
             }
         }
 
@@ -531,12 +534,8 @@ pub mod context {
         {
             entities
                 .iter()
-                .filter_map(move |eid| {
-                    if let Some(entity) = self.entity_map.get(eid) {
-                        Some(self.stores.get_entity(&entity))
-                    } else {
-                        None
-                    }
+                .filter_map(move |&id| {
+                    self.stores.get_entity(id)
                 })
                 .for_each(f);
         }

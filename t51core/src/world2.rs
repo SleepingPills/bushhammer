@@ -8,8 +8,8 @@ use crate::sync::RwCell;
 use crate::system2::{System, SystemEntry, SystemRuntime};
 use hashbrown::HashMap;
 use std::any::TypeId;
+use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
-use std::sync::atomic::{ATOMIC_USIZE_INIT};
 
 pub struct World {
     // Entity Handling
@@ -175,19 +175,48 @@ impl World {
                 .map(|cid| (*cid, comp_reg.get_trait::<Column>(cid).write().new_section()))
                 .collect();
 
-            let shard = Shard::new(shard_key, sections);
-
-            // Notify systems that a new shard was added
-            sys_reg
-                .iter_mut::<SystemRuntime>()
-                .filter(|(_, sys)| sys.check_shard(shard_key))
-                .for_each(|(_, mut sys)| sys.add_shard(&shard));
-
-            shard
+            Shard::new(shard_key, sections)
         });
 
-        // TODO: Figure out some nice way of adding entities in batches ASSUMING the shard_def already
-        // has the entity ids inserted correctly.
+        let entity_comp_id = EntityId::get_unique_id();
+
+        // TODO: Notify systems when a shard had 0 entries before
+        // Ingestion happens in 2 phases due to borrow restrictions on ingesting entity ids into both
+        // the internal column mappings and as component data.
+        // Phase 1: Scope for recording the entity objects and ingesting the new IDs in the columns
+        {
+            let entity_dyn_vec = &shard_def[&entity_comp_id];
+            let entity_vec = entity_dyn_vec.cast::<EntityId>();
+
+            for entity_id in entity_vec {
+                self.entity_registry.insert(
+                    *entity_id,
+                    Entity {
+                        id: *entity_id,
+                        shard_key,
+                    },
+                );
+            }
+
+            for (comp_id, &section) in shard.sections.iter() {
+                let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
+                column.ingest_entity_ids(entity_vec, section);
+            }
+        }
+
+        // Phase 2: Scope for ingesting the actual component data
+        {
+            for (comp_id, &section) in shard.sections.iter() {
+                let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
+                let comp_data = shard_def.get_mut(comp_id).unwrap();
+                column.ingest_component_data(comp_data, section);
+            }
+        }
+
+        // TODO: The component ingestion method will take an immutable reference to both the entity_id and specific
+        // component vectors. The vectors can be cleared after ingetsion, no need to pass in mutable refs for draining.
+        // This also has the benefit that for ingesting the entity ids, we'll just pass in the same vector twice as
+        // immutable refs.
 
         /*
         // Ingest all components and stash away the coordinates.

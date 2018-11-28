@@ -5,6 +5,7 @@ use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use std::any::Any;
 use std::fmt::Debug;
+use crate::entity2::dynamic::DynVec;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -41,19 +42,6 @@ impl<T> ShardedColumn<T> {
     }
 
     #[inline]
-    pub(crate) fn push(&mut self, instance: T, section: usize) -> usize {
-        let storage = self.data.get_mut(section);
-        let loc = storage.len();
-        storage.push(instance);
-        loc
-    }
-
-    #[inline]
-    pub(crate) fn update(&mut self, instance: T, section: usize, loc: usize) {
-        self.data.get_mut(section)[loc] = instance;
-    }
-
-    #[inline]
     pub(crate) fn section_len(&self, section: usize) -> usize {
         self.data.get(section).len()
     }
@@ -70,8 +58,8 @@ impl<T> ShardedColumn<T> {
 }
 
 pub trait Column {
-    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
-    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize);
+    fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize);
+    fn ingest_component_data(&mut self, data: &mut DynVec, section: usize);
     fn swap_remove(&mut self, section: usize, loc: usize);
     fn new_section(&mut self) -> usize;
     fn section_len(&self, section: usize) -> usize;
@@ -79,14 +67,21 @@ pub trait Column {
 
 impl<T> Column for ShardedColumn<T>
 where
-    T: 'static + DeserializeOwned,
+    T: 'static + Component,
 {
-    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize {
-        self.push(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
+    fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize) {
+        let mut loc = self.section_len(section);
+
+        for &eid in entity_ids {
+            self.coords.insert(eid, (section, loc));
+            loc += 1;
+        }
     }
 
-    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize) {
-        self.update(*boxed.downcast::<T>().expect("Incorrect boxed component"), section, loc)
+    fn ingest_component_data(&mut self, data: &mut DynVec, section: usize) {
+        let incoming = data.cast_mut::<T>();
+        let section_data = self.data.get_mut(section);
+        section_data.append(incoming);
     }
 
     fn swap_remove(&mut self, section: usize, loc: usize) {

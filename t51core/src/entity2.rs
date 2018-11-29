@@ -49,11 +49,30 @@ pub struct Entity {
     pub shard_key: ShardKey,
 }
 
+#[derive(Debug, Clone)]
+pub struct ShardDef {
+    pub(crate) entity_ids: Vec<EntityId>,
+    pub(crate) components: HashMap<ComponentId, dynamic::DynVec>,
+}
+
+impl ShardDef {
+    #[inline]
+    fn new(comp_ids: &[ComponentId], builders: &Vec<Box<dynamic::BuildDynVec>>) -> ShardDef {
+        let map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
+        ShardDef {entity_ids: Vec::new(), components: map}
+    }
+
+    #[inline]
+    fn get_mut_vec(&mut self, comp_id: &ComponentId) -> &mut dynamic::DynVec {
+        self.components.get_mut(comp_id).unwrap()
+    }
+}
+
 /// Context for recording entity transactions. Prepared by the `World` after all components have been
 /// registered and the world is finalized.
 #[derive(Debug, Clone)]
 pub struct TransactionContext {
-    pub(crate) added: HashMap<ShardKey, HashMap<ComponentId, dynamic::DynVec>>,
+    pub(crate) added: HashMap<ShardKey, ShardDef>,
     pub(crate) deleted: Vec<EntityId>,
     pub(crate) builders: Vec<Box<dynamic::BuildDynVec>>,
     pub(crate) id_counter: Arc<AtomicUsize>,
@@ -80,14 +99,11 @@ impl TransactionContext {
 
     /// Create a batch entity builder for ingesting JSON data
     pub fn batch_json<'i>(&'i mut self, comp_ids: &'i [ComponentId]) -> JsonBatchBuilder<'i> {
-        let entity_comp_id = EntityId::get_unique_id();
-        let shard_key = ShardKey::from_iter(comp_ids.iter()) + entity_comp_id;
+        let shard_key = ShardKey::from_iter(comp_ids.iter());
 
         let builders = &self.builders;
         let shard = self.added.entry(shard_key).or_insert_with(|| {
-            let mut map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
-            map.insert(entity_comp_id, builders[entity_comp_id.indexer()].build());
-            map
+            ShardDef::new(comp_ids, builders)
         });
 
         JsonBatchBuilder {
@@ -125,7 +141,7 @@ impl TransactionContext {
 
 pub struct JsonBatchBuilder<'a> {
     comp_ids: &'a [ComponentId],
-    shard: &'a mut HashMap<ComponentId, dynamic::DynVec>,
+    shard: &'a mut ShardDef,
     id_counter: Arc<AtomicUsize>,
     batch_counter: usize,
 }
@@ -138,26 +154,28 @@ impl<'a> JsonBatchBuilder<'a> {
         }
 
         for (id, json) in self.comp_ids.iter().zip(json_str) {
-            self.shard.get_mut(id).unwrap().push_json(json);
+            self.shard.get_mut_vec(id).push_json(json);
         }
 
         self.batch_counter += 1;
     }
-    pub fn commit(&mut self) -> &Vec<EntityId> {
+    pub fn commit(&mut self) -> &[EntityId] {
         // Bump the id counter by the number of recorded entries in the batch
         let start_id = self.id_counter.fetch_add(self.batch_counter, Ordering::AcqRel);
 
-        let entity_vec = self.shard.get_mut(&EntityId::get_unique_id()).unwrap().cast_mut::<EntityId>();
+        let new_slice_start = self.shard.entity_ids.len();
 
         // Generate entity Ids
         for id in start_id..(start_id + self.batch_counter) {
-            entity_vec.push(EntityId(id));
+            self.shard.entity_ids.push(EntityId(id));
         }
 
         // Reset the batch counter
         self.batch_counter = 0;
 
-        entity_vec
+        unsafe {
+            self.shard.entity_ids.get_unchecked(new_slice_start..)
+        }
     }
 }
 
@@ -191,12 +209,10 @@ macro_rules! batch_def_tup {
                 // The below is safe because of previous checks
                 unsafe {
                     let tup = (
-                        $(shard[&ids.$field_seq].cast_mut_unchecked::<$field_type>()),*,
+                        $(shard.components[&ids.$field_seq].cast_mut_unchecked::<$field_type>()),*,
                     );
 
-                    let entity_vec = shard[&EntityId::get_unique_id()].cast_mut_unchecked::<EntityId>();
-
-                    BatchBuilder::new(tup, entity_vec, id_counter)
+                    BatchBuilder::new(tup, &mut shard.entity_ids, id_counter)
                 }
             }
         }
@@ -281,7 +297,7 @@ pub trait ComponentTuple<'a> {
     type IdTuple;
 
     fn get_ids() -> Self::IdTuple;
-    fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut HashMap<ComponentId, dynamic::DynVec>;
+    fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut ShardDef;
 }
 
 macro_rules! _decl_entity_replace_expr {
@@ -305,9 +321,8 @@ macro_rules! comp_tup {
                 )
             }
 
-            fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut HashMap<ComponentId, dynamic::DynVec> {
-                let entity_comp_id = EntityId::get_unique_id();
-                let shard_key: ShardKey = ($(ids.$field_seq)|* | entity_comp_id).into();
+            fn get_shard(ids: &Self::IdTuple, ctx: &'a mut TransactionContext) -> &'a mut ShardDef {
+                let shard_key: ShardKey = ($(ids.$field_seq)|*).into();
 
                 // Ensure that all types are distinct and no duplicate mutable entries are returned.
                 // +1 is added to account for the Entity Id.
@@ -318,9 +333,8 @@ macro_rules! comp_tup {
                 // Get a cached shard builder or create a new one if necessary
                 ctx.added.entry(shard_key).or_insert_with(|| {
                     let mut map = HashMap::new();
-                    map.insert(entity_comp_id, dynamic::DynVec::new(Vec::<EntityId>::new()));
                     $(map.insert(ids.$field_seq, dynamic::DynVec::new(Vec::<$field_type>::new())));*;
-                    map
+                    ShardDef {entity_ids: Vec::new(), components: map}
                 })
             }
         }

@@ -111,7 +111,7 @@ pub struct Shard {
 impl Shard {
     #[inline]
     pub(crate) fn new(shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
-        Shard { shard_key, sections }
+        Shard { shard_key, sections}
     }
 
     #[inline]

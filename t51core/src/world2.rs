@@ -1,33 +1,19 @@
 use crate::component2::{Column, Component, Shard, ShardedColumn};
-use crate::entity2::dynamic::DynVec;
 use crate::entity2::{Entity, EntityId, ShardDef, TransactionContext};
 use crate::identity2::{ComponentId, ShardKey, SystemId};
-use crate::registry::{Registry, TraitBox};
-use crate::sentinel;
+use crate::registry::Registry;
 use crate::sync::RwCell;
 use crate::system2::{System, SystemEntry, SystemRuntime};
 use hashbrown::HashMap;
-use std::any::TypeId;
 use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
 
 pub struct World {
-    // Entity Handling
-    entity_registry: HashMap<EntityId, Entity>,
-    entity_del_buffer: HashMap<ShardKey, Vec<Entity>>,
+    state: GameState,
 
-    // Systems
-    system_registry: Registry<SystemId>,
-
-    // Components & Shards
-    component_registry: Registry<ComponentId>,
-    shards: HashMap<ShardKey, Shard>,
-
+    // Transactions
     system_transactions: Vec<TransactionContext>,
-    transactions: sentinel::Take<TransactionContext>,
-
-    // Reference Data
-    system_ids: HashMap<TypeId, SystemId>,
+    transactions: TransactionContext,
     finalized: bool,
 }
 
@@ -46,14 +32,9 @@ impl World {
     #[inline]
     pub fn new() -> Self {
         let mut world = World {
-            entity_del_buffer: HashMap::new(),
-            component_registry: Registry::new(),
-            entity_registry: HashMap::new(),
-            system_registry: Registry::new(),
-            shards: HashMap::new(),
+            state: GameState::new(),
             system_transactions: Vec::new(),
-            transactions: sentinel::Take::new(TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT))),
-            system_ids: HashMap::new(),
+            transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
         };
         // Entity ID is always a registered component
@@ -65,7 +46,7 @@ impl World {
         self.finalized = true;
 
         // Create a copy of the main transaction context for each system so they can be run in parallel
-        for _ in 0..self.system_registry.len() {
+        for _ in 0..self.state.system_registry.len() {
             self.system_transactions.push(self.transactions.clone());
         }
     }
@@ -85,7 +66,7 @@ impl World {
     where
         T: System,
     {
-        SystemEntry::new(system, &self.component_registry)
+        SystemEntry::new(system, &self.state.component_registry)
     }
 
     /// Register the supplied system with the world.
@@ -98,18 +79,19 @@ impl World {
         }
 
         let runtime = self.create_runtime(system);
-        let id = SystemId::new::<T>(self.system_registry.len());
+        let id = SystemId::new::<T>(self.state.system_registry.len());
 
-        self.system_registry.register(id, runtime);
-        self.system_registry.register_trait::<SystemEntry<T>, SystemRuntime>(&id);
-        self.system_ids.insert(TypeId::of::<T>(), id);
+        self.state.system_registry.register(id, runtime);
+        self.state
+            .system_registry
+            .register_trait::<SystemEntry<T>, SystemRuntime>(&id);
         id
     }
 
     /// Process all currently registered systems.
     #[inline]
     pub fn process_systems(&mut self) {
-        for (id, mut system) in self.system_registry.iter_mut::<SystemRuntime>() {
+        for (id, mut system) in self.state.system_registry.iter_mut::<SystemRuntime>() {
             unsafe {
                 system.run(self.get_system_transactions(id.indexer()));
             }
@@ -121,7 +103,7 @@ impl World {
     where
         T: 'static + System,
     {
-        self.system_registry.get::<SystemEntry<T>>(&id)
+        self.state.system_registry.get::<SystemEntry<T>>(&id)
     }
 
     // TODO: Check the performance impact of drain/rebuild and switch if negligible
@@ -135,24 +117,71 @@ impl World {
 }
 
 impl World {
-    // TODO: Adjust this such that it extracts all the data that will be needed from self and
-    // passes them as individual arguments. No need to borrow self then.
     /// Process all transactions in the queue.
     pub fn process_transactions(&mut self) {
-        let mut main_tx = self.transactions.take();
-        self.process_context(&mut main_tx);
-        self.transactions.put(main_tx);
+        self.state.process_context(&mut self.transactions);
 
-        for i in 0..self.system_transactions.len() {
-            unsafe {
-                let tx = self.get_system_transactions(i);
-                self.process_context(tx);
-            }
+        for tx in self.system_transactions.iter_mut() {
+            self.state.process_context(tx);
         }
 
         self.process_removals();
     }
 
+    fn process_removals(&mut self) {
+        unimplemented!()
+    }
+}
+
+impl World {
+    /// Register the supplied component type.
+    pub fn register_component<T>(&mut self)
+    where
+        T: 'static + Component,
+    {
+        if self.finalized {
+            panic!("Can't add component to finalized world")
+        }
+
+        let id = T::acquire_unique_id();
+        let store = ShardedColumn::<T>::new();
+
+        // Add the store to the registry
+        self.state.component_registry.register(id, store);
+        self.state.component_registry.register_trait::<ShardedColumn<T>, Column>(&id);
+
+        // Register the entity builder vector type
+        self.transactions.add_builder::<T>();
+    }
+}
+
+pub struct GameState {
+    // Entity Handling
+    entity_registry: HashMap<EntityId, Entity>,
+    entity_del_buffer: HashMap<ShardKey, Vec<Entity>>,
+
+    // Systems
+    system_registry: Registry<SystemId>,
+
+    // Components & Shards
+    component_registry: Registry<ComponentId>,
+    shards: HashMap<ShardKey, Shard>,
+}
+
+impl GameState {
+    #[inline]
+    pub fn new() -> GameState {
+        GameState {
+            entity_del_buffer: HashMap::new(),
+            component_registry: Registry::new(),
+            entity_registry: HashMap::new(),
+            system_registry: Registry::new(),
+            shards: HashMap::new(),
+        }
+    }
+}
+
+impl GameState {
     fn process_context(&mut self, ctx: &mut TransactionContext) {
         // Drain all deleted entities into the delete buffer
         for id in ctx.deleted.drain(..) {
@@ -204,7 +233,10 @@ impl World {
 
         // Register the entities, drain the entity Ids into the relevant column and notify the systems
         // in case the shard was just added or repopulated.
-        let mut entity_id_column = self.component_registry.get::<ShardedColumn<EntityId>>(&entity_comp_id).write();
+        let mut entity_id_column = self
+            .component_registry
+            .get::<ShardedColumn<EntityId>>(&entity_comp_id)
+            .write();
         let entity_id_section = shard.sections[&entity_comp_id];
 
         // Notify systems in case the shard length was zero
@@ -227,31 +259,5 @@ impl World {
 
         entity_id_column.ingest_entity_ids(&shard_def.entity_ids, entity_id_section);
         entity_id_column.ingest_core(&mut shard_def.entity_ids, entity_id_section);
-    }
-
-    fn process_removals(&mut self) {
-        unimplemented!()
-    }
-}
-
-impl World {
-    /// Register the supplied component type.
-    pub fn register_component<T>(&mut self)
-    where
-        T: 'static + Component,
-    {
-        if self.finalized {
-            panic!("Can't add component to finalized world")
-        }
-
-        let id = T::acquire_unique_id();
-        let store = ShardedColumn::<T>::new();
-
-        // Add the store to the registry
-        self.component_registry.register(id, store);
-        self.component_registry.register_trait::<ShardedColumn<T>, Column>(&id);
-
-        // Register the entity builder vector type
-        self.transactions.add_builder::<T>();
     }
 }

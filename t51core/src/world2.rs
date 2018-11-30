@@ -1,6 +1,6 @@
 use crate::component2::{Column, Component, Shard, ShardedColumn};
 use crate::entity2::dynamic::DynVec;
-use crate::entity2::{Entity, EntityId, TransactionContext};
+use crate::entity2::{Entity, EntityId, ShardDef, TransactionContext};
 use crate::identity2::{ComponentId, ShardKey, SystemId};
 use crate::registry::{Registry, TraitBox};
 use crate::sentinel;
@@ -124,6 +124,7 @@ impl World {
         self.system_registry.get::<SystemEntry<T>>(&id)
     }
 
+    // TODO: Check the performance impact of drain/rebuild and switch if negligible
     /// Horribly unsafe function to get mutable references to multiple elements of the system
     /// transactions without having to drain and rebuild the vector all the time.
     #[inline]
@@ -134,6 +135,8 @@ impl World {
 }
 
 impl World {
+    // TODO: Adjust this such that it extracts all the data that will be needed from self and
+    // passes them as individual arguments. No need to borrow self then.
     /// Process all transactions in the queue.
     pub fn process_transactions(&mut self) {
         let mut main_tx = self.transactions.take();
@@ -160,101 +163,70 @@ impl World {
         }
 
         for (&key, shard) in ctx.added.iter_mut() {
-            self.process_add_uniform(key, shard);
+            // Only process shards with actual data in them
+            if shard.entity_ids.len() > 0 {
+                self.process_add_uniform(key, shard);
+            }
         }
     }
 
-    fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut HashMap<ComponentId, DynVec>) {
+    fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut ShardDef) {
+        let entity_comp_id = EntityId::get_unique_id();
+
+        // Add the entity component id to the shard key
+        let shard_key = shard_key + entity_comp_id;
+
         let comp_reg = &self.component_registry;
         let sys_reg = &self.system_registry;
 
         // Get the shard (or add a new one)
         let shard = self.shards.entry(shard_key).or_insert_with(|| {
-            let sections: HashMap<_, _> = shard_def
+            let mut sections: HashMap<_, _> = shard_def
+                .components
                 .keys()
                 .map(|cid| (*cid, comp_reg.get_trait::<Column>(cid).write().new_section()))
                 .collect();
 
+            sections.insert(
+                entity_comp_id,
+                comp_reg.get_trait::<Column>(&entity_comp_id).write().new_section(),
+            );
+
             Shard::new(shard_key, sections)
         });
 
-        // Ingestion happens in 2 phases due to borrow restrictions on ingesting entity ids into both
-        // the internal column mappings and as component data.
-        // Phase 1: Scope for recording the entity objects and ingesting the new IDs in the columns
-        {
-            let entity_dyn_vec = &shard_def[&EntityId::get_unique_id()];
-            let entity_vec = entity_dyn_vec.cast::<EntityId>();
-
-            // Notify systems in case the shard length was zero
-            if shard.len == 0  && entity_vec.len() > 0{
-                sys_reg
-                    .iter_mut::<SystemRuntime>()
-                    .filter(|(_, sys)| sys.check_shard(shard_key))
-                    .for_each(|(_, mut sys)| sys.add_shard(shard));
-            }
-
-            for entity_id in entity_vec {
-                self.entity_registry.insert(
-                    *entity_id,
-                    Entity {
-                        id: *entity_id,
-                        shard_key,
-                    },
-                );
-            }
-
-            for (comp_id, &section) in shard.sections.iter() {
-                let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
-                column.ingest_entity_ids(entity_vec, section);
-            }
+        // Drain the component data into the columns
+        for (comp_id, data) in shard_def.components.iter_mut() {
+            let section = shard.sections[&comp_id];
+            let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
+            column.ingest(&shard_def.entity_ids, data, section);
         }
 
-        // Phase 2: Scope for ingesting the actual component data
-        {
-            for (comp_id, &section) in shard.sections.iter() {
-                let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
-                let comp_data = shard_def.get_mut(comp_id).unwrap();
-                column.ingest_component_data(comp_data, section);
-            }
+        // Register the entities, drain the entity Ids into the relevant column and notify the systems
+        // in case the shard was just added or repopulated.
+        let mut entity_id_column = self.component_registry.get::<ShardedColumn<EntityId>>(&entity_comp_id).write();
+        let entity_id_section = shard.sections[&entity_comp_id];
+
+        // Notify systems in case the shard length was zero
+        if entity_id_column.section_len(entity_id_section) == 0 {
+            sys_reg
+                .iter_mut::<SystemRuntime>()
+                .filter(|(_, sys)| sys.check_shard(shard_key))
+                .for_each(|(_, mut sys)| sys.add_shard(shard));
         }
 
-        /*
-        // Ingest all components and stash away the coordinates.
-        let mut components = HashMap::new();
-        
-        let shard_loc = ent_def
-            .components
-            .drain()
-            .map(|(comp_id, comp_def)| {
-                self.get_column(comp_id).apply_mut(|column| {
-                    let section = shard.get_section(comp_id);
-                    components.insert(comp_id, section);
-        
-                    match comp_def {
-                        entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
-                        entity::CompDef::Json(json) => column.ingest_json(json, section),
-                        _ => panic!("No-op component definition on a new entity"),
-                    }
-                })
-            })
-            .fold1(|acc, loc| {
-                if acc != loc {
-                    panic!("Divergent section locations")
-                }
-        
-                loc
-            })
-            .unwrap();
-        
-        let ent = entity::Entity {
-            id,
-            shard_id,
-            shard_loc,
-            comp_sections: components,
-        };
-        
-        self.entity_registry.insert(ent.id, ent);
-        */
+        for &entity_id in shard_def.entity_ids.iter() {
+            self.entity_registry.insert(
+                entity_id,
+                Entity {
+                    id: entity_id,
+                    shard_key,
+                },
+            );
+        }
+
+        entity_id_column.ingest_entity_ids(&shard_def.entity_ids, entity_id_section);
+        entity_id_column.ingest_core(&mut shard_def.entity_ids, entity_id_section);
     }
 
     fn process_removals(&mut self) {

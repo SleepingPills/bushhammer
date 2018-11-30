@@ -47,6 +47,12 @@ impl<T> ShardedColumn<T> {
     }
 
     #[inline]
+    pub(crate) fn ingest_core(&mut self, data: &mut Vec<T>, section: usize) {
+        let section_data = self.data.get_mut(section);
+        section_data.append(data);
+    }
+
+    #[inline]
     pub(crate) fn get_data_ptr(&self, section: usize) -> *const T {
         self.data.get(section).as_ptr()
     }
@@ -60,6 +66,7 @@ impl<T> ShardedColumn<T> {
 pub trait Column {
     fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize);
     fn ingest_component_data(&mut self, data: &mut DynVec, section: usize);
+    fn ingest(&mut self, entity_ids: &Vec<EntityId>, data: &mut DynVec, section: usize);
     fn swap_remove(&mut self, section: usize, loc: usize);
     fn new_section(&mut self) -> usize;
     fn section_len(&self, section: usize) -> usize;
@@ -69,6 +76,7 @@ impl<T> Column for ShardedColumn<T>
 where
     T: 'static + Component,
 {
+    #[inline]
     fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize) {
         let mut loc = self.section_len(section);
 
@@ -78,12 +86,18 @@ where
         }
     }
 
+    #[inline]
     fn ingest_component_data(&mut self, data: &mut DynVec, section: usize) {
-        let incoming = data.cast_mut::<T>();
-        let section_data = self.data.get_mut(section);
-        section_data.append(incoming);
+        self.ingest_core(data.cast_mut::<T>(), section);
     }
 
+    #[inline]
+    fn ingest(&mut self, entity_ids: &Vec<EntityId>, data: &mut DynVec, section: usize) {
+        self.ingest_entity_ids(entity_ids, section);
+        self.ingest_component_data(data, section);
+    }
+
+    #[inline]
     fn swap_remove(&mut self, section: usize, loc: usize) {
         unsafe {
             let storage = self.data.get_unchecked_mut(section);
@@ -91,6 +105,7 @@ where
         }
     }
 
+    #[inline]
     fn new_section(&mut self) -> usize {
         let section = self.data.len();
         self.data.push(Vec::new());

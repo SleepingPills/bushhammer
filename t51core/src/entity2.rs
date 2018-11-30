@@ -246,9 +246,11 @@ impl<'a, T> BatchBuilder<'a, T> {
         }
     }
 
-    pub fn commit(&mut self) -> &Vec<EntityId> {
+    pub fn commit(&mut self) -> &[EntityId] {
         // Bump the id counter by the number of recorded entries in the batch
         let start_id = self.id_counter.fetch_add(self.batch_counter, Ordering::AcqRel);
+
+        let new_slice_start = self.entity_vec.len();
 
         // Generate entity Ids
         for id in start_id..(start_id + self.batch_counter) {
@@ -258,7 +260,9 @@ impl<'a, T> BatchBuilder<'a, T> {
         // Reset the batch counter
         self.batch_counter = 0;
 
-        self.entity_vec
+        unsafe {
+            self.entity_vec.get_unchecked(new_slice_start..)
+        }
     }
 }
 
@@ -369,8 +373,9 @@ macro_rules! comp_ingress {
 
                 let shard = Self::get_shard(&ids, ctx);
 
-                shard.get_mut(&EntityId::get_unique_id()).expect("Missing EntityId").push(entity_id);
-                $(shard.get_mut(&ids.$field_seq).expect("Missing component").push(self.$field_seq));*;
+                shard.entity_ids.push(entity_id);
+
+                $(shard.get_mut_vec(&ids.$field_seq).push(self.$field_seq));*;
 
                 entity_id
             }
@@ -463,6 +468,7 @@ pub mod dynamic {
         }
     }
 
+    // TODO: Check typecheck performance impact
     impl DynVec {
         pub fn new<T>(instance: Vec<T>) -> DynVec
         where

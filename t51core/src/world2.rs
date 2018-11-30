@@ -125,11 +125,7 @@ impl World {
             self.state.process_context(tx);
         }
 
-        self.process_removals();
-    }
-
-    fn process_removals(&mut self) {
-        unimplemented!()
+        selfs.state.process_removals();
     }
 }
 
@@ -216,6 +212,7 @@ impl GameState {
                 .map(|cid| (*cid, comp_reg.get_trait::<Column>(cid).write().new_section()))
                 .collect();
 
+            // Insert the entity id component column explicitly
             sections.insert(
                 entity_comp_id,
                 comp_reg.get_trait::<Column>(&entity_comp_id).write().new_section(),
@@ -227,16 +224,13 @@ impl GameState {
         // Drain the component data into the columns
         for (comp_id, data) in shard_def.components.iter_mut() {
             let section = shard.sections[&comp_id];
-            let mut column = self.component_registry.get_trait::<Column>(comp_id).write();
+            let mut column = comp_reg.get_trait::<Column>(comp_id).write();
             column.ingest(&shard_def.entity_ids, data, section);
         }
 
         // Register the entities, drain the entity Ids into the relevant column and notify the systems
         // in case the shard was just added or repopulated.
-        let mut entity_id_column = self
-            .component_registry
-            .get::<ShardedColumn<EntityId>>(&entity_comp_id)
-            .write();
+        let mut entity_id_column = comp_reg.get::<ShardedColumn<EntityId>>(&entity_comp_id).write();
         let entity_id_section = shard.sections[&entity_comp_id];
 
         // Notify systems in case the shard length was zero
@@ -257,7 +251,12 @@ impl GameState {
             );
         }
 
+        // Insert data into entity id column
         entity_id_column.ingest_entity_ids(&shard_def.entity_ids, entity_id_section);
         entity_id_column.ingest_core(&mut shard_def.entity_ids, entity_id_section);
+    }
+
+    fn process_removals(&mut self) {
+        unimplemented!()
     }
 }

@@ -1,11 +1,11 @@
 use crate::alloc::VecPool;
+use crate::entity2::dynamic::DynVec;
 use crate::entity2::EntityId;
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use std::any::Any;
 use std::fmt::Debug;
-use crate::entity2::dynamic::DynVec;
 
 pub(crate) type ComponentCoords = (usize, usize);
 
@@ -27,13 +27,18 @@ pub trait Component: DeserializeOwned + Debug {
 #[derive(Debug)]
 pub struct ShardedColumn<T> {
     data: VecPool<Vec<T>>,
+    entity_ids: VecPool<Vec<EntityId>>,
     coords: HashMap<EntityId, ComponentCoords>,
 }
 
 impl<T> ShardedColumn<T> {
     #[inline]
     pub(crate) fn new() -> ShardedColumn<T> {
-        ShardedColumn { data: VecPool::new(), coords: HashMap::new() }
+        ShardedColumn {
+            data: VecPool::new(),
+            entity_ids: VecPool::new(),
+            coords: HashMap::new(),
+        }
     }
 
     #[inline]
@@ -48,8 +53,8 @@ impl<T> ShardedColumn<T> {
 
     #[inline]
     pub(crate) fn ingest_core(&mut self, data: &mut Vec<T>, section: usize) {
-        let section_data = self.data.get_mut(section);
-        section_data.append(data);
+        let storage = self.data.get_mut(section);
+        storage.append(data);
     }
 
     #[inline]
@@ -64,10 +69,10 @@ impl<T> ShardedColumn<T> {
 }
 
 pub trait Column {
-    fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize);
+    fn ingest_entity_ids(&mut self, entity_ids: &[EntityId], section: usize);
     fn ingest_component_data(&mut self, data: &mut DynVec, section: usize);
-    fn ingest(&mut self, entity_ids: &Vec<EntityId>, data: &mut DynVec, section: usize);
-    fn swap_remove(&mut self, section: usize, loc: usize);
+    fn ingest(&mut self, entity_ids: &[EntityId], data: &mut DynVec, section: usize);
+    fn swap_remove(&mut self, entity_id: EntityId , section: usize);
     fn new_section(&mut self) -> usize;
     fn section_len(&self, section: usize) -> usize;
 }
@@ -77,11 +82,13 @@ where
     T: 'static + Component,
 {
     #[inline]
-    fn ingest_entity_ids(&mut self, entity_ids: &Vec<EntityId>, section: usize) {
+    fn ingest_entity_ids(&mut self, entity_ids: &[EntityId], section: usize) {
         let mut loc = self.section_len(section);
+        let section_entity_ids = self.entity_ids.get_mut(section);
 
         for &eid in entity_ids {
             self.coords.insert(eid, (section, loc));
+            section_entity_ids.push(eid);
             loc += 1;
         }
     }
@@ -92,16 +99,25 @@ where
     }
 
     #[inline]
-    fn ingest(&mut self, entity_ids: &Vec<EntityId>, data: &mut DynVec, section: usize) {
+    fn ingest(&mut self, entity_ids: &[EntityId], data: &mut DynVec, section: usize) {
         self.ingest_entity_ids(entity_ids, section);
         self.ingest_component_data(data, section);
     }
 
     #[inline]
-    fn swap_remove(&mut self, section: usize, loc: usize) {
+    fn swap_remove(&mut self, entity_id: EntityId, section: usize) {
+        let storage = self.data.get_mut(section);
+        let eid_storage = self.entity_ids.get_mut(section);
+
         unsafe {
-            let storage = self.data.get_unchecked_mut(section);
-            storage.swap_remove(loc);
+            if let Some((_, loc)) = self.coords.remove(&entity_id) {
+                storage.swap_remove(loc);
+                let eid_swapped = *eid_storage.get_unchecked(eid_storage.len() - 1);
+                eid_storage.swap_remove(loc);
+
+                // Overwrite coords of swapped in entity
+                self.coords.insert(eid_swapped, (section, loc));
+            }
         }
     }
 
@@ -109,6 +125,7 @@ where
     fn new_section(&mut self) -> usize {
         let section = self.data.len();
         self.data.push(Vec::new());
+        self.entity_ids.push(Vec::new());
         section
     }
 
@@ -126,7 +143,7 @@ pub struct Shard {
 impl Shard {
     #[inline]
     pub(crate) fn new(shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
-        Shard { shard_key, sections}
+        Shard { shard_key, sections }
     }
 
     #[inline]

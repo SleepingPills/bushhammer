@@ -125,7 +125,7 @@ impl World {
             self.state.process_context(tx);
         }
 
-        selfs.state.process_removals();
+        self.state.process_removals();
     }
 }
 

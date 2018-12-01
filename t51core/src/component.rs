@@ -18,12 +18,6 @@ pub(crate) fn compose_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> Sh
     keys.fold(0 as ShardKey, |acc, cid| acc | cid.id)
 }
 
-/// Count the number of components set in the supplied shard key.
-#[inline]
-pub(crate) fn key_count(key: ShardKey) -> BitSetIdType {
-    key.count_ones() as BitSetIdType
-}
-
 #[derive(Debug)]
 pub struct ShardedColumn<T> {
     data: VecPool<Vec<T>>,

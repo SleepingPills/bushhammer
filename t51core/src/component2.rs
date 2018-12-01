@@ -4,7 +4,6 @@ use crate::entity2::EntityId;
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
-use std::any::Any;
 use std::fmt::Debug;
 
 pub(crate) type ComponentCoords = (usize, usize);

@@ -9,6 +9,7 @@ pub mod alloc;
 pub mod sentinel;
 pub mod component;
 pub mod component2;
+pub mod component3;
 pub mod entity;
 pub mod entity2;
 pub mod identity;
@@ -19,6 +20,7 @@ pub mod sync;
 #[macro_use]
 pub mod system;
 pub mod system2;
+pub mod system3;
 
 pub mod world;
 pub mod world2;

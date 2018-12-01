@@ -487,9 +487,7 @@ pub mod dynamic {
         where
             T: Component,
         {
-            unsafe {
-                self.cast_mut_unchecked::<T>().push(item);
-            }
+            self.cast_mut::<T>().push(item);
         }
 
         #[inline]

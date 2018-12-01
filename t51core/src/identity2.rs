@@ -64,6 +64,11 @@ macro_rules! bitflag_type_id {
 
         impl $composite_key {
             #[inline]
+            pub fn empty() -> $composite_key {
+                $composite_key(0)
+            }
+
+            #[inline]
             pub fn from_iter<'a>(keys: impl Iterator<Item = &'a $name>) -> $composite_key {
                 $composite_key(keys.fold(0, |acc, cid| acc | cid.id))
             }

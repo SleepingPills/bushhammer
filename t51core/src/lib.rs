@@ -3,6 +3,7 @@
 #![feature(integer_atomics)]
 #![feature(core_intrinsics)]
 #![feature(const_vec_new)]
+#![feature(box_into_raw_non_null)]
 
 pub mod alloc;
 pub mod sentinel;

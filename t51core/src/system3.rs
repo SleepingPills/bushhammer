@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 pub trait RunSystem {
     type Data: QueryTup;
 
-    fn run(&mut self, data: Context<Self::Data>, transactions: &mut TransactionContext);
+    fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
 
 pub struct Context<'a, T>
@@ -716,7 +716,7 @@ mod tests {
 
         let entities: Vec<EntityId> = vec![0.into(), 1.into(), 2.into()];
 
-        Shard::new_with_ents(comp_1_id + comp_2_id, entities, map)
+        Shard::new_with_ents(comp_1_id + comp_2_id + EntityId::get_unique_id(), entities, map)
     }
 
     fn make_shard_2() -> Shard {
@@ -727,7 +727,7 @@ mod tests {
         map.insert(comp_1_id, Box::new(Vec::<CompB>::new()));
         map.insert(comp_2_id, Box::new(Vec::<CompC>::new()));
 
-        Shard::new(comp_1_id + comp_2_id, map)
+        Shard::new(comp_1_id + comp_2_id + EntityId::get_unique_id(), map)
     }
 
     #[test]
@@ -741,7 +741,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
 
-            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -764,7 +764,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Read<'a, CompB>;
 
-            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -788,7 +788,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Read<'a, CompB>;
 
-            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -820,7 +820,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
 
-            fn run(&mut self, mut data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+            fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();
 
                 for (&id, a, b) in data.components() {

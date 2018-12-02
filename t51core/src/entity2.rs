@@ -125,7 +125,7 @@ impl TransactionContext {
 
     /// Delete the entity with the given id.
     #[inline]
-    pub fn delete(&mut self, id: EntityId) {
+    pub fn remove(&mut self, id: EntityId) {
         self.deleted.push(id);
     }
 
@@ -268,7 +268,9 @@ impl<'a, T> BatchBuilder<'a, T> {
 
 impl<'a, T> Drop for BatchBuilder<'a, T> {
     fn drop(&mut self) {
-        self.commit();
+        if self.batch_counter > 0 {
+            self.commit();
+        }
     }
 }
 
@@ -330,7 +332,7 @@ macro_rules! comp_tup {
 
                 // Ensure that all types are distinct and no duplicate mutable entries are returned.
                 // +1 is added to account for the Entity Id.
-                if shard_key.count() != ($field_count + 1) {
+                if shard_key.count() != $field_count {
                     panic!("Invalid shard key rank")
                 }
 

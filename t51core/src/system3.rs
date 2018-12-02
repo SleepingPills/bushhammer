@@ -673,9 +673,9 @@ mod tests {
     use crate::identity2::ComponentId;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
-    use t51core_proc::Component;
-    use std::sync::Arc;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
+    use std::sync::Arc;
+    use t51core_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);

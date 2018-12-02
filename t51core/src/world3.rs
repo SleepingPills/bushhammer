@@ -199,7 +199,6 @@ impl GameState {
         if shard.len() == 0 {
             systems
                 .iter_mut::<System>()
-                .filter(|(_, sys)| sys.check_shard(shard_key))
                 .for_each(|(_, mut sys)| sys.add_shard(shard));
         }
 
@@ -225,7 +224,6 @@ impl GameState {
         if shard.len() == 0 {
             self.systems
                 .iter_mut::<System>()
-                .filter(|(_, sys)| sys.check_shard(shard_key))
                 .for_each(|(_, mut sys)| sys.remove_shard(shard_key));
         }
     }

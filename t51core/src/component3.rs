@@ -54,6 +54,14 @@ impl Shard {
         }
     }
 
+    pub fn new_with_ents(key: ShardKey, entities: Vec<EntityId>, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+        Shard {
+            key,
+            entities: Box::new(entities),
+            store,
+        }
+    }
+
     pub fn ingest(&mut self, shard_def: &mut ShardDef) -> usize {
         if shard_def.entity_ids.len() == 0 {
             panic!("No entities to ingest");

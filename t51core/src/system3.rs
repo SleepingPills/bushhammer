@@ -121,17 +121,21 @@ where
 
     #[inline]
     fn add_shard(&mut self, shard: &Shard) {
-        self.data.add_shard(shard);
+        if self.check_shard(shard.key) {
+            self.data.add_shard(shard);
+        }
     }
 
     #[inline]
     fn remove_shard(&mut self, key: ShardKey) {
-        self.data.remove_shard(key);
+        if self.check_shard(key) {
+            self.data.remove_shard(key);
+        }
     }
 
     #[inline]
     fn check_shard(&self, shard_key: ShardKey) -> bool {
-        self.shard_key.contains_key(shard_key)
+        shard_key.contains_key(self.shard_key)
     }
 }
 
@@ -228,6 +232,11 @@ pub mod store {
         #[inline]
         fn store_ref(&self) -> &'a Vec<T> {
             unsafe { &*self.store }
+        }
+
+        #[inline]
+        pub(crate) fn get_ptr(&self) -> *const Vec<T> {
+            self.store
         }
     }
 
@@ -656,60 +665,202 @@ pub mod context {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use crate::entity;
-    use crate::prelude::*;
+    use super::store::{Read, Write};
+    use super::*;
+    use crate::component3::ComponentVec;
+    use crate::identity2::ComponentId;
+    use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
+    use t51core_proc::Component;
+    use std::sync::Arc;
+    use std::sync::atomic::ATOMIC_USIZE_INIT;
 
-}
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompA(i32);
 
-/*
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompB(u64);
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompC {
+        x: i32,
+        y: i32,
+    }
+
+    #[derive(Component, Serialize, Deserialize, Debug, Eq, PartialEq)]
+    struct CompD(u8);
+
+    fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId) {
+        EntityId::acquire_unique_id();
+
+        (
+            CompA::acquire_unique_id(),
+            CompB::acquire_unique_id(),
+            CompC::acquire_unique_id(),
+            CompD::acquire_unique_id(),
+        )
+    }
+
+    fn make_shard_1() -> Shard {
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        let comp_1_id = CompA::get_unique_id();
+        let comp_2_id = CompB::get_unique_id();
+
+        let data_a = vec![CompA(0), CompA(1), CompA(2)];
+        let data_b = vec![CompB(0), CompB(1), CompB(2)];
+
+        map.insert(comp_1_id, Box::new(data_a));
+        map.insert(comp_2_id, Box::new(data_b));
+
+        let entities: Vec<EntityId> = vec![0.into(), 1.into(), 2.into()];
+
+        Shard::new_with_ents(comp_1_id + comp_2_id, entities, map)
+    }
+
+    fn make_shard_2() -> Shard {
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        let comp_1_id = CompB::get_unique_id();
+        let comp_2_id = CompC::get_unique_id();
+
+        map.insert(comp_1_id, Box::new(Vec::<CompB>::new()));
+        map.insert(comp_2_id, Box::new(Vec::<CompC>::new()));
+
+        Shard::new(comp_1_id + comp_2_id, map)
+    }
+
     #[test]
-    fn test_for_each() {
-        struct TestSystem<'a> {
-            collector: Vec<(EntityId, i32, f32)>,
-            _p: PhantomData<&'a ()>,
-        }
+    fn test_check_shard() {
+        setup();
 
-        impl<'a> System for TestSystem<'a> {
-            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, f32>);
+        let (a_id, b_id, c_id, d_id) = setup();
 
-            fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
-                let entity_ids: Vec<_> = (0..4).map(|id| id.into()).collect();
-                ctx.for_each(&entity_ids, |(id, a, b)| {
-                    self.collector.push((*id, *a, *b));
-                });
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
+
+            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+                unimplemented!()
             }
         }
 
-        let mut world = World::new();
+        let system = SystemRuntime::new(TestSystem(PhantomData));
 
-        world.register_component::<i32>();
-        world.register_component::<f32>();
-        world.register_component::<f64>();
+        assert!(system.check_shard(a_id + b_id + c_id + d_id));
+        assert!(system.check_shard(a_id + b_id + c_id));
+        assert!(!system.check_shard(a_id + b_id));
+        assert!(!system.check_shard(b_id + c_id));
+        assert!(!system.check_shard(a_id.into()));
+    }
 
-        let system_id = world.register_system(TestSystem {
-            collector: Vec::new(),
+    #[test]
+    fn test_add_shard() {
+        setup();
+
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = Read<'a, CompB>;
+
+            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+                unimplemented!()
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem(PhantomData));
+
+        let shard_1 = make_shard_1();
+        let shard_2 = make_shard_2();
+
+        system.add_shard(&shard_1);
+        system.add_shard(&shard_2);
+
+        assert_eq!(system.data.shards[&shard_1.key].get_ptr(), shard_1.data_ptr::<CompB>());
+        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+    }
+
+    #[test]
+    fn test_remove_shard() {
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = Read<'a, CompB>;
+
+            fn run(&mut self, _data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+                unimplemented!()
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem(PhantomData));
+
+        let shard_1 = make_shard_1();
+        let shard_2 = make_shard_2();
+
+        system.add_shard(&shard_1);
+        system.add_shard(&shard_2);
+
+        system.remove_shard(shard_1.key);
+
+        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+        assert!(!system.data.shards.contains_key(&shard_1.key));
+    }
+
+    #[test]
+    fn test_run() {
+        setup();
+
+        struct TestSystem<'a> {
+            collect_run: Vec<(EntityId, CompA, CompB)>,
+            collect_foreach: Vec<(EntityId, CompA, CompB)>,
+            _p: PhantomData<&'a ()>,
+        };
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
+
+            fn run(&mut self, mut data: Context<Self::Data>, _transactions: &mut TransactionContext) {
+                let mut entities = Vec::new();
+
+                for (&id, a, b) in data.components() {
+                    entities.push(id);
+                    self.collect_run.push((id, a.clone(), b.clone()));
+                }
+
+                data.components().for_each(&entities, |(id, a, b)| {
+                    self.collect_foreach.push((*id, a.clone(), b.clone()));
+                })
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem {
+            collect_run: Vec::new(),
+            collect_foreach: Vec::new(),
             _p: PhantomData,
         });
-        let system = world.get_system::<TestSystem>(system_id);
 
-        world.entities().create().with(0i32).with(0f32).build();
-        world.entities().create().with(1i32).with(1f32).build();
-        world.entities().create().with(2i32).with(2f32).build();
-        world.entities().create().with(3i32).with(3f32).with(5f64).build();
+        let shard_1 = make_shard_1();
 
-        world.run();
+        system.add_shard(&shard_1);
 
-        let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
+        let mut entities: HashMap<EntityId, _> = HashMap::new();
+        entities.insert(0.into(), (shard_1.key, 0));
+        entities.insert(1.into(), (shard_1.key, 1));
+        entities.insert(2.into(), (shard_1.key, 2));
 
-        assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0.into(), 0, 0f32));
-        assert_eq!(state[1], (1.into(), 1, 1f32));
-        assert_eq!(state[2], (2.into(), 2, 2f32));
-        assert_eq!(state[3], (3.into(), 3, 3f32));
+        let mut transactions = TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT));
+
+        system.run(&entities, &mut transactions);
+
+        assert_eq!(system.runstate.collect_run.len(), 3);
+        assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));
+        assert_eq!(system.runstate.collect_run[1], (1.into(), CompA(1), CompB(1)));
+        assert_eq!(system.runstate.collect_run[2], (2.into(), CompA(2), CompB(2)));
+
+        assert_eq!(system.runstate.collect_foreach.len(), 3);
+        assert_eq!(system.runstate.collect_foreach[0], (0.into(), CompA(0), CompB(0)));
+        assert_eq!(system.runstate.collect_foreach[1], (1.into(), CompA(1), CompB(1)));
+        assert_eq!(system.runstate.collect_foreach[2], (2.into(), CompA(2), CompB(2)));
     }
 }
-*/

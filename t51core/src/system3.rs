@@ -5,7 +5,7 @@ use crate::identity2::ShardKey;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 
-pub trait System {
+pub trait RunSystem {
     type Data: QueryTup;
 
     fn run(&mut self, data: Context<Self::Data>, transactions: &mut TransactionContext);
@@ -69,48 +69,48 @@ where
     }
 }
 
-pub struct SystemEntry<T>
+pub struct SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
-    system: T,
     shard_key: ShardKey,
+    runstate: T,
     data: SystemData<T::Data>,
 }
 
-impl<T> SystemEntry<T>
+impl<T> SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
     #[inline]
-    pub(crate) fn new(system: T) -> SystemEntry<T> {
-        SystemEntry {
-            system,
+    pub(crate) fn new(system: T) -> SystemRuntime<T> {
+        SystemRuntime {
             shard_key: T::Data::get_shard_key(),
+            runstate: system,
             data: SystemData::new(),
         }
     }
 
     #[inline]
     pub fn get_system_mut(&mut self) -> &mut T {
-        &mut self.system
+        &mut self.runstate
     }
 }
 
-pub trait SystemRuntime {
+pub trait System {
     fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
     fn check_shard(&self, shard_key: ShardKey) -> bool;
 }
 
-impl<T> SystemRuntime for SystemEntry<T>
+impl<T> System for SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
     #[inline]
     fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext) {
-        self.system.run(
+        self.runstate.run(
             Context {
                 system_data: &mut self.data,
                 entities,
@@ -222,7 +222,6 @@ pub mod store {
     impl<'a, T> ReadData<'a, T> {
         #[inline]
         fn new(store: *const Vec<T>) -> ReadData<'a, T> {
-            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             ReadData { store, _x: PhantomData }
         }
 
@@ -235,7 +234,6 @@ pub mod store {
     impl<'a, T> WriteData<'a, T> {
         #[inline]
         fn new(store: *mut Vec<T>) -> WriteData<'a, T> {
-            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
             WriteData { store, _x: PhantomData }
         }
 
@@ -657,3 +655,61 @@ pub mod context {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use crate::entity;
+    use crate::prelude::*;
+    use std::marker::PhantomData;
+
+}
+
+/*
+    #[test]
+    fn test_for_each() {
+        struct TestSystem<'a> {
+            collector: Vec<(EntityId, i32, f32)>,
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'a> System for TestSystem<'a> {
+            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, f32>);
+
+            fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
+                let entity_ids: Vec<_> = (0..4).map(|id| id.into()).collect();
+                ctx.for_each(&entity_ids, |(id, a, b)| {
+                    self.collector.push((*id, *a, *b));
+                });
+            }
+        }
+
+        let mut world = World::new();
+
+        world.register_component::<i32>();
+        world.register_component::<f32>();
+        world.register_component::<f64>();
+
+        let system_id = world.register_system(TestSystem {
+            collector: Vec::new(),
+            _p: PhantomData,
+        });
+        let system = world.get_system::<TestSystem>(system_id);
+
+        world.entities().create().with(0i32).with(0f32).build();
+        world.entities().create().with(1i32).with(1f32).build();
+        world.entities().create().with(2i32).with(2f32).build();
+        world.entities().create().with(3i32).with(3f32).with(5f64).build();
+
+        world.run();
+
+        let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
+
+        assert_eq!(state.len(), 4);
+        assert_eq!(state[0], (0.into(), 0, 0f32));
+        assert_eq!(state[1], (1.into(), 1, 1f32));
+        assert_eq!(state[2], (2.into(), 2, 2f32));
+        assert_eq!(state[3], (3.into(), 3, 3f32));
+    }
+}
+*/

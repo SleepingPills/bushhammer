@@ -3,13 +3,13 @@ use crate::entity2::dynamic::DynVec;
 use crate::entity2::{EntityId, ShardDef};
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
-use std::ops::Range;
 
 pub(crate) type ComponentCoords = (ShardKey, usize);
 
 pub trait ComponentVec {
     fn ingest(&mut self, data: &mut DynVec);
     fn remove(&mut self, loc: usize);
+    fn len(&self) -> usize;
     unsafe fn get_ptr(&self) -> *mut ();
 }
 
@@ -29,6 +29,11 @@ where
     }
 
     #[inline]
+    fn len(&self) -> usize {
+        self.len()
+    }
+
+    #[inline]
     unsafe fn get_ptr(&self) -> *mut () {
         self as *const Vec<T> as *mut ()
     }
@@ -36,21 +41,33 @@ where
 
 pub struct Shard {
     pub(crate) key: ShardKey,
-    entities: Vec<EntityId>,
+    entities: Box<Vec<EntityId>>,
     store: HashMap<ComponentId, Box<ComponentVec>>,
 }
 
 impl Shard {
-    pub fn ingest(&mut self, shard_def: &mut ShardDef) -> Range<usize> {
+    pub fn new(key: ShardKey, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+        Shard {
+            key,
+            entities: Box::new(Vec::new()),
+            store,
+        }
+    }
+
+    pub fn ingest(&mut self, shard_def: &mut ShardDef) -> usize {
+        if shard_def.entity_ids.len() == 0 {
+            panic!("No entities to ingest");
+        }
+
         for (id, data) in shard_def.components.iter_mut() {
             self.store.get_mut(id).unwrap().ingest(data);
         }
 
-        let loc_count = self.entities.len();
+        let loc_start = self.entities.len();
 
-        self.entities.append(&mut shard_def.entity_ids);
+        self.entities.extend(&shard_def.entity_ids);
 
-        (loc_count..self.entities.len())
+        loc_start
     }
 
     #[inline]
@@ -65,33 +82,144 @@ impl Shard {
     }
 
     #[inline]
+    pub fn len(&self) -> usize {
+        self.entities.len()
+    }
+
+    #[inline]
     pub fn data_ptr<T>(&self) -> *const Vec<T>
     where
         T: Component,
     {
-        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *const Vec<T> }
+        if T::get_unique_id() == EntityId::get_unique_id() {
+            unsafe { self.entities.get_ptr() as *const Vec<T> }
+        } else {
+            unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *const Vec<T> }
+        }
     }
 
     #[inline]
     pub fn data_mut_ptr<T>(&self) -> *mut Vec<T>
-        where
-            T: Component,
+    where
+        T: Component,
     {
         if T::get_unique_id() == EntityId::get_unique_id() {
             panic!("Entity ID vector is not writeable")
         }
 
-        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *mut  Vec<T> }
+        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *mut Vec<T> }
     }
 }
 
-/*
-TODO: Entity removal/lookup handling solution below
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_derive::{Deserialize, Serialize};
+    use t51core_proc::Component;
 
-The world will store the full (ShardKey, Loc) coords of each entity. This allows quick lookups and removes
-the need to maintain this info per shard.
+    #[derive(Component, Serialize, Deserialize, Debug)]
+    struct SomeComponent {
+        x: i32,
+        y: i32,
+    }
 
- - Ingest returns the locations of the newly added entities. This is just a range so it's efficient.
- - Remove will remove the entries at the location looked up in the registry in World. It will return the id of
-   the swapped entity if there is anything in the vector remaining.
-*/
+    fn setup() -> (ComponentId, ComponentId) {
+        (EntityId::acquire_unique_id(), SomeComponent::acquire_unique_id())
+    }
+
+    #[test]
+    fn test_ingest() {
+        let (some_comp_id, _) = setup();
+
+        let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
+        shard.store.insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
+
+        let mut shard_def = ShardDef {
+            entity_ids: vec![0.into(), 1.into(), 2.into()],
+            components: HashMap::new(),
+        };
+
+        // Load some components
+        let data = vec![
+            SomeComponent { x: 0, y: 0 },
+            SomeComponent { x: 1, y: 1 },
+            SomeComponent { x: 2, y: 2 },
+        ];
+
+        shard_def.components.insert(some_comp_id, DynVec::new(data));
+
+        assert_eq!(shard.ingest(&mut shard_def), 0);
+        assert_eq!(shard.entities.len(), 3);
+        assert_eq!(shard.store[&some_comp_id].len(), 3);
+    }
+
+    #[test]
+    fn test_remove() {
+        let (some_comp_id, _) = setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+
+        // Load some components
+        let data = vec![
+            SomeComponent { x: 0, y: 0 },
+            SomeComponent { x: 1, y: 1 },
+            SomeComponent { x: 2, y: 2 },
+        ];
+
+        map.insert(some_comp_id, Box::new(data));
+
+        let mut shard = Shard::new(ShardKey::empty(), map);
+
+        // Add matching entity entries
+        shard.entities.push(0.into());
+        shard.entities.push(1.into());
+        shard.entities.push(2.into());
+
+        // Remove from front, swapping id 2 in
+        assert_eq!(shard.remove(0).unwrap(), 2.into());
+        assert_eq!(shard.entities.len(), 2);
+        assert_eq!(shard.store[&some_comp_id].len(), 2);
+
+        // Remove the tail, no swapping
+        assert!(shard.remove(1).is_none());
+        assert_eq!(shard.entities.len(), 1);
+        assert_eq!(shard.store[&some_comp_id].len(), 1);
+
+        // Remove last item, no swapping
+        assert!(shard.remove(0).is_none());
+        assert_eq!(shard.entities.len(), 0);
+        assert_eq!(shard.store[&some_comp_id].len(), 0);
+    }
+
+    #[test]
+    fn test_data_ptr() {
+        setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+
+        let shard = Shard::new(ShardKey::empty(), map);
+
+        assert!(!shard.data_ptr::<EntityId>().is_null());
+        assert!(!shard.data_ptr::<SomeComponent>().is_null());
+    }
+
+    #[test]
+    fn test_data_mut_ptr() {
+        setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+
+        let shard = Shard::new(ShardKey::empty(), map);
+
+        assert!(!shard.data_mut_ptr::<SomeComponent>().is_null());
+    }
+
+    #[test]
+    #[should_panic(expected = "Entity ID vector is not writeable")]
+    fn test_entity_id_mut_ptr_fail() {
+        let shard = Shard::new(ShardKey::empty(), HashMap::new());
+        shard.data_mut_ptr::<EntityId>();
+    }
+}

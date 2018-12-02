@@ -1,64 +1,41 @@
-use crate::component;
-use crate::entity;
-use crate::identity::{ComponentId, EntityId, ShardId, SystemId};
+use crate::component::Component;
+use crate::component::{ComponentCoords, ComponentVec, Shard};
+use crate::entity::{EntityId, ShardDef, TransactionContext};
+use crate::identity::{ComponentId, ShardKey, SystemId};
 use crate::registry::Registry;
-use crate::registry::TraitBox;
-use crate::sentinel;
 use crate::sync::RwCell;
-use crate::system;
+use crate::system::{RunSystem, System, SystemRuntime};
 use hashbrown::HashMap;
-use itertools::Itertools;
-use serde::de::DeserializeOwned;
-use std::any::TypeId;
+use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
 
 pub struct World {
-    // Entity Handling
-    entity_id_counter: u32,
-    entity_registry: HashMap<EntityId, entity::Entity>,
+    state: GameState,
 
-    // Systems
-    system_registry: Registry<SystemId>,
-
-    // Components & Shards
-    component_registry: Registry<ComponentId>,
-    shards: HashMap<ShardId, component::Shard>,
-    shards_map: HashMap<component::ShardKey, ShardId>,
-
-    transactions: sentinel::Take<Vec<entity::Transaction>>,
-
-    // Reference Data
-    component_ids: HashMap<TypeId, ComponentId>,
-    system_ids: HashMap<TypeId, SystemId>,
+    // Transactions
+    system_transactions: Vec<TransactionContext>,
+    transactions: TransactionContext,
     finalized: bool,
 }
 
 impl World {
     #[inline]
-    pub fn entities(&mut self) -> entity::EntityStore {
-        entity::EntityStore::new(&self.entity_registry, &self.component_ids, &mut self.transactions)
+    pub fn entities(&mut self) -> &mut TransactionContext {
+        if !self.finalized {
+            panic!("World must be finalized before adding entities")
+        }
+
+        &mut self.transactions
     }
 }
 
 impl World {
     #[inline]
-    pub fn run(&mut self) {
-        self.process_transactions();
-        self.process_systems();
-    }
-
-    #[inline]
     pub fn new() -> Self {
         let mut world = World {
-            entity_id_counter: 0,
-            component_registry: Registry::new(),
-            entity_registry: HashMap::new(),
-            system_registry: Registry::new(),
-            shards: HashMap::new(),
-            shards_map: HashMap::new(),
-            transactions: sentinel::Take::new(Vec::new()),
-            component_ids: HashMap::new(),
-            system_ids: HashMap::new(),
+            state: GameState::new(),
+            system_transactions: Vec::new(),
+            transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
         };
         // Entity ID is always a registered component
@@ -66,213 +43,28 @@ impl World {
         world
     }
 
-    pub fn finalize(&mut self) {
+    pub fn build(&mut self) {
         self.finalized = true;
-    }
-}
 
-impl World {
-    /// Drain all the system transactions into the common transaction queue.
-    pub fn collect_transactions(&mut self) {
-        let transactions = &mut self.transactions;
-
-        for (_, mut system) in self.system_registry.iter_mut::<system::SystemRuntime>() {
-            transactions.append(system.get_transactions());
+        // Create a copy of the main transaction context for each system so they can be run in parallel
+        for _ in 0..self.state.systems.len() {
+            self.system_transactions.push(self.transactions.clone());
         }
     }
 
     /// Process all transactions in the queue.
     pub fn process_transactions(&mut self) {
-        self.collect_transactions();
+        self.state.process_context(&mut self.transactions);
 
-        // Take the transactions out
-        let mut transactions = self.transactions.take();
-
-        for transaction in transactions.drain(..) {
-            match transaction {
-                entity::Transaction::AddEnt(ent_def) => self.apply_add(ent_def),
-                entity::Transaction::EditEnt(id, ent_def) => self.apply_edit(id, ent_def),
-                entity::Transaction::RemoveEnt(id) => self.apply_remove(id),
-            }
-        }
-
-        self.transactions.put(transactions);
-    }
-
-    /// Add a new entity to the world.
-    fn apply_add(&mut self, ent_def: entity::EntityDef) {
-        let id = self.next_entity_id();
-        self.add_entity_core(id, ent_def);
-    }
-
-    /// Edit an existing entity.
-    fn apply_edit(&mut self, id: EntityId, mut ent_def: entity::EntityDef) {
-        if let Some(ent) = self.entity_registry.remove(&id) {
-            // If the entity composition didn't change, just update as necessary
-            if component::compose_key(ent.comp_sections.keys()) == component::compose_key(ent_def.components.keys()) {
-                let shard = &self.shards[&ent.shard_id];
-
-                for (comp_id, comp_def) in ent_def.components.drain() {
-                    let mut column = self.get_column(comp_id).write();
-                    let section = shard.get_section(comp_id);
-
-                    if let entity::CompDef::Boxed(boxed) = comp_def {
-                        column.update_box(boxed, section, ent.shard_loc);
-                    } else if let entity::CompDef::Json(json) = comp_def {
-                        column.update_json(json, section, ent.shard_loc);
-                    }
-                }
-
-                self.entity_registry.insert(id, ent);
-            } else {
-                // Remove all the components from the entity, stashing away those that need to be transferred
-                // due to Nops on the new definition
-                for (&comp_id, &section) in ent.comp_sections.iter() {
-                    self.get_column(comp_id).apply_mut(|col| {
-                        if ent_def.is_nop(comp_id) {
-                            let boxed = col.swap_remove_return(section, ent.shard_loc);
-                            ent_def.components.insert(comp_id, entity::CompDef::Boxed(boxed));
-                        } else {
-                            col.swap_remove(section, ent.shard_loc)
-                        }
-                    })
-                }
-
-                // Handle the swapped entity
-                self.handle_swapped(&ent);
-
-                // Add the new definition under the old id
-                self.add_entity_core(id, ent_def);
-            }
+        for tx in self.system_transactions.iter_mut() {
+            self.state.process_context(tx);
         }
     }
 
-    /// Remove an existing entity from the world.
-    fn apply_remove(&mut self, id: EntityId) {
-        if let Some(ent) = self.entity_registry.remove(&id) {
-            // Remove all the components assigned to the entity, swapping in the last entry into the now vacant slot
-            for (&comp_id, section) in ent.comp_sections.iter() {
-                self.get_column(comp_id)
-                    .apply_mut(|col| col.swap_remove(*section, ent.shard_loc));
-            }
-
-            self.handle_swapped(&ent)
-        }
-    }
-
-    /// Adds the supplied entity definition under the given Id.
-    fn add_entity_core(&mut self, id: EntityId, mut ent_def: entity::EntityDef) {
-        let entity_id_comp = self.get_component_id::<EntityId>();
-
-        // Add the id as a mandatory extra component (if not present yet)
-        if !ent_def.components.contains_key(&entity_id_comp) {
-            ent_def
-                .components
-                .insert(entity_id_comp, entity::CompDef::Boxed(Box::new(id)));
-        }
-
-        let shard_key = component::compose_key(ent_def.components.keys());
-        let shard_id = self.get_shard_id(shard_key, &ent_def);
-        let shard = &self.shards[&shard_id];
-
-        // Ingest all components and stash away the coordinates.
-        let mut components = HashMap::new();
-
-        let shard_loc = ent_def
-            .components
-            .drain()
-            .map(|(comp_id, comp_def)| {
-                self.get_column(comp_id).apply_mut(|column| {
-                    let section = shard.get_section(comp_id);
-                    components.insert(comp_id, section);
-
-                    match comp_def {
-                        entity::CompDef::Boxed(boxed) => column.ingest_box(boxed, section),
-                        entity::CompDef::Json(json) => column.ingest_json(json, section),
-                        _ => panic!("No-op component definition on a new entity"),
-                    }
-                })
-            })
-            .fold1(|acc, loc| {
-                if acc != loc {
-                    panic!("Divergent section locations")
-                }
-
-                loc
-            })
-            .unwrap();
-
-        // In case the entity is at position 0, the shard was empty before and has to be added to relevant systems.
-        if shard_loc == 0 {
-            // Notify each relevant system that a shard was added
-            self.system_registry
-                .iter_mut::<system::SystemRuntime>()
-                .filter(|(_, sys)| sys.check_shard(shard_key))
-                .for_each(|(_, mut sys)| sys.add_shard(shard));
-        }
-
-        let ent = entity::Entity {
-            id,
-            shard_id,
-            shard_loc,
-            comp_sections: components,
-        };
-
-        self.entity_registry.insert(ent.id, ent);
-    }
-
-    /// Removing entries from columns can result in swaps, handle these by updating the affected entity.
-    fn handle_swapped(&mut self, ent: &entity::Entity) -> () {
-        let entity_id_comp = self.get_component_id::<EntityId>();
-        self.component_registry
-            .get::<component::ShardedColumn<EntityId>>(&entity_id_comp)
-            .apply(|col| {
-                let entity_id_section = ent.comp_sections[&entity_id_comp];
-                if col.section_len(entity_id_section) > 0 {
-                    // Try and get the id of the entity swapped into the slot of the removed entity. If the removed
-                    // entity was the tail of the array, there is nothing to swap.
-                    if let Some(id) = col.get(entity_id_section, ent.shard_loc) {
-                        let swapped_entity = self.entity_registry.get_mut(id).unwrap();
-                        swapped_entity.set_loc(ent.shard_loc);
-                    }
-                } else {
-                    // Notify each relevant system that a shard was added
-                    self.system_registry
-                        .iter_mut::<system::SystemRuntime>()
-                        .filter(|(_, sys)| sys.check_shard(self.shards[&ent.shard_id].shard_key))
-                        .for_each(|(_, mut sys)| sys.remove_shard(ent.shard_id));
-                }
-            });
-    }
-
-    /// Gets the id of an existing shard (or creates a new one) based on the component
-    /// composition of an entity definition.
-    fn get_shard_id(&mut self, shard_key: component::ShardKey, ent_def: &entity::EntityDef) -> ShardId {
-        match self.shards_map.get(&shard_key) {
-            Some(&id) => id,
-            _ => self.create_shard(ent_def.components.keys(), shard_key),
-        }
-    }
-
-    /// Create a new shard based on the supplied component combination and return it's ID.
-    fn create_shard<'a>(&mut self, components: impl Iterator<Item = &'a ComponentId>, shard_key: component::ShardKey) -> ShardId {
-        let sections: HashMap<_, _> = components
-            .map(|&cid| (cid, self.get_column(cid).write().new_section()))
-            .collect();
-
-        let id = self.shards.len() as ShardId;
-        let shard = component::Shard::new(id, shard_key, sections);
-        self.shards.insert(id, shard);
-        self.shards_map.insert(shard_key, id);
-        id
-    }
-
-    /// Get the next entity id.
     #[inline]
-    fn next_entity_id(&mut self) -> EntityId {
-        let count = self.entity_id_counter;
-        self.entity_id_counter += 1;
-        count.into()
+    pub fn run_once(&mut self) {
+        self.process_transactions();
+        self.process_systems();
     }
 }
 
@@ -280,49 +72,55 @@ impl World {
     /// Create a new runtime using the supplied system. The runtime is wired up with
     /// all required subsystems and ready to execute.
     #[inline]
-    pub fn create_runtime<T>(&self, system: T) -> system::SystemEntry<T>
+    pub fn create_runtime<T>(&self, system: T) -> SystemRuntime<T>
     where
-        T: system::System,
+        T: RunSystem,
     {
-        system::SystemEntry::new(system, &self.component_registry, &self.component_ids)
+        SystemRuntime::new(system)
     }
 
     /// Register the supplied system with the world.
     pub fn register_system<T>(&mut self, system: T) -> SystemId
     where
-        T: 'static + system::System,
+        T: 'static + RunSystem,
     {
         if self.finalized {
-            panic!("This world instance is already finalized and cannot be extended")
+            panic!("Can't add systems to finalized world")
         }
 
-        let id = SystemId::new::<T>(self.system_registry.len());
         let runtime = self.create_runtime(system);
+        let id = SystemId::new::<T>(self.state.systems.len());
 
-        // TODO: Run through existing shards and add them as required to the system
-
-        self.system_registry.register(id, runtime);
-        self.system_registry
-            .register_trait::<system::SystemEntry<T>, system::SystemRuntime>(&id);
-        self.system_ids.insert(TypeId::of::<T>(), id);
+        self.state.systems.register(id, runtime);
+        self.state.systems.register_trait::<SystemRuntime<T>, System>(&id);
         id
     }
 
     /// Process all currently registered systems.
     #[inline]
     pub fn process_systems(&mut self) {
-        for (_, mut system) in self.system_registry.iter_mut::<system::SystemRuntime>() {
-            system.run(&self.entity_registry, &self.component_ids);
+        for (id, mut system) in self.state.systems.iter_mut::<System>() {
+            unsafe {
+                system.run(&self.state.entities, self.get_system_transactions(id.indexer()));
+            }
         }
     }
 
-    #[allow(dead_code)]
     #[inline]
-    pub fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<system::SystemEntry<T>>>
+    pub fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<SystemRuntime<T>>>
     where
-        T: 'static + system::System,
+        T: 'static + RunSystem,
     {
-        self.system_registry.get::<system::SystemEntry<T>>(&id)
+        self.state.systems.get::<SystemRuntime<T>>(&id)
+    }
+
+    // TODO: Check the performance impact of drain/rebuild and switch if negligible
+    /// Horribly unsafe function to get mutable references to multiple elements of the system
+    /// transactions without having to drain and rebuild the vector all the time.
+    #[inline]
+    unsafe fn get_system_transactions<'a>(&self, idx: usize) -> &'a mut TransactionContext {
+        let ptr = self.system_transactions.as_ptr() as *mut TransactionContext;
+        &mut *ptr.add(idx)
     }
 }
 
@@ -330,309 +128,268 @@ impl World {
     /// Register the supplied component type.
     pub fn register_component<T>(&mut self)
     where
-        T: 'static + DeserializeOwned,
+        T: 'static + Component,
     {
         if self.finalized {
-            panic!("This world instance is already finalized and cannot be extended")
+            panic!("Can't add component to finalized world")
         }
 
-        let id = ComponentId::new::<T>(self.component_registry.len());
-        let store = component::ShardedColumn::<T>::new();
+        let id = T::acquire_unique_id();
 
-        self.component_registry.register(id, store);
-        self.component_registry
-            .register_trait::<component::ShardedColumn<T>, component::Column>(&id);
-        self.component_ids.insert(TypeId::of::<T>(), id);
-    }
-
-    #[inline]
-    fn get_column(&self, comp_id: ComponentId) -> TraitBox<component::Column> {
-        self.component_registry.get_trait::<component::Column>(&comp_id)
-    }
-
-    #[inline]
-    fn get_component_id<T: 'static>(&self) -> ComponentId {
-        self.component_ids[&TypeId::of::<T>()]
+        // Register the entity and component builder vector types
+        self.transactions.add_builder::<T>();
+        self.state.builders.insert(id, Box::new(|| Box::new(Vec::<T>::new())));
     }
 }
 
-/*
+pub struct GameState {
+    entities: HashMap<EntityId, ComponentCoords>,
+    systems: Registry<SystemId>,
+
+    shards: HashMap<ShardKey, Shard>,
+    builders: HashMap<ComponentId, Box<Fn() -> Box<ComponentVec>>>,
+}
+
+impl GameState {
+    #[inline]
+    pub fn new() -> GameState {
+        GameState {
+            entities: HashMap::new(),
+            systems: Registry::new(),
+            shards: HashMap::new(),
+            builders: HashMap::new(),
+        }
+    }
+}
+
+impl GameState {
+    fn process_context(&mut self, ctx: &mut TransactionContext) {
+        // Drain all deleted entities into the delete buffer
+        for id in ctx.deleted.drain(..) {
+            if let Some(coords) = self.entities.remove(&id) {
+                self.process_remove(coords);
+            }
+        }
+
+        for (&key, shard) in ctx.added.iter_mut() {
+            // Only process shards with actual data in them
+            if shard.entity_ids.len() > 0 {
+                self.process_add_uniform(key, shard);
+            }
+        }
+    }
+
+    fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut ShardDef) {
+        let entity_comp_id = EntityId::get_unique_id();
+
+        // Add the entity component id to the shard key
+        let shard_key = shard_key + entity_comp_id;
+
+        let systems = &self.systems;
+        let builders = &self.builders;
+
+        // Get the shard (or add a new one)
+        let shard = self.shards.entry(shard_key).or_insert_with(|| {
+            let store: HashMap<_, _> = shard_def.components.keys().map(|cid| (*cid, builders[cid]())).collect();
+
+            Shard::new(shard_key, store)
+        });
+
+        // Notify systems in case the shard was empty before
+        if shard.len() == 0 {
+            systems.iter_mut::<System>().for_each(|(_, mut sys)| sys.add_shard(shard));
+        }
+
+        // Ingest the data and grab the location of the first item added
+        let mut loc_start = shard.ingest(shard_def);
+
+        // Insert entity records using the new locations
+        for id in shard_def.entity_ids.drain(..) {
+            self.entities.insert(id, (shard_key, loc_start));
+            loc_start += 1;
+        }
+    }
+
+    fn process_remove(&mut self, (shard_key, loc): ComponentCoords) {
+        let shard = self.shards.get_mut(&shard_key).unwrap();
+
+        // Update the location of the swapped-in entity
+        if let Some(swapped_id) = shard.remove(loc) {
+            self.entities.insert(swapped_id, (shard_key, loc));
+        }
+
+        // Remove the shard from the systems if it got emptied out
+        if shard.len() == 0 {
+            self.systems
+                .iter_mut::<System>()
+                .for_each(|(_, mut sys)| sys.remove_shard(shard_key));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::entity;
-    use crate::prelude::*;
+    use super::*;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
+    use t51core_proc::Component;
+    use crate::system::store::Read;
+    use crate::system::store::Write;
+    use crate::system::Context;
 
-    #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-    struct SomeComponent {
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompA(i32);
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompB(u64);
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompC {
         x: i32,
         y: i32,
+    }
+
+    impl CompC {
+        fn new(x: i32, y: i32) -> CompC {
+            CompC { x, y }
+        }
     }
 
     #[test]
     fn test_add_entity() {
         let mut world = World::new();
+        world.register_component::<CompA>();
+        world.register_component::<CompB>();
+        world.register_component::<CompC>();
+        world.build();
 
-        world.register_component::<SomeComponent>();
-        world.register_component::<i32>();
-        world.register_component::<f32>();
+        {
+            let mut batcher = world.entities().batch::<(CompA, CompB)>();
+            batcher.add(CompA(1), CompB(1));
+            batcher.add(CompA(2), CompB(2));
+            batcher.commit();
+        }
 
-        world.entities().create().with(SomeComponent { x: 1, y: 1 }).with(1).build();
-        world.entities().create().with(SomeComponent { x: 2, y: 2 }).with(2).build();
-        world
-            .entities()
-            .create()
-            .with(SomeComponent { x: 3, y: 3 })
-            .with(4)
-            .with(5f32)
-            .build();
-
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
-    }
-
-    #[test]
-    fn test_edit_entity() {
-        let mut world = World::new();
-
-        world.register_component::<SomeComponent>();
-        world.register_component::<i32>();
-        world.register_component::<f32>();
-
-        world.entities().create().with(SomeComponent { x: 1, y: 1 }).with(1).build();
-        world.entities().create().with(SomeComponent { x: 2, y: 2 }).with(2).build();
-        world.entities().create().with(SomeComponent { x: 3, y: 3 }).with(3).build();
+        world.entities().add((CompA(3), CompB(3), CompC::new(3, 3)));
 
         world.process_transactions();
 
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 1);
-
-        // Add a new component to an existing entity, resulting in a new shard
-        world
-            .entities()
-            .edit(1.into())
-            .expect("Entity must exist")
-            .with(5f32)
-            .commit();
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
-
-        // Move an additional entity to the new shard
-        world
-            .entities()
-            .edit(0.into())
-            .expect("Entity must exist")
-            .with(5f32)
-            .commit();
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
-
-        // Edit entity in-place, not resulting in a new shard
-        world
-            .entities()
-            .edit(2.into())
-            .expect("Entity must exist")
-            .with(SomeComponent { x: 1, y: 1 })
-            .commit();
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
+        assert_eq!(world.state.entities.len(), 3);
+        assert_eq!(world.state.shards.len(), 2);
+        assert_eq!(
+            world.state.entities[&0.into()],
+            (EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(), 0)
+        );
+        assert_eq!(
+            world.state.entities[&1.into()],
+            (EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(), 1)
+        );
+        assert_eq!(
+            world.state.entities[&2.into()],
+            (
+                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id() + CompC::get_unique_id(),
+                0
+            )
+        );
     }
 
     #[test]
     fn test_remove_entity() {
         let mut world = World::new();
+        world.register_component::<CompA>();
+        world.register_component::<CompB>();
+        world.register_component::<CompC>();
+        world.build();
 
-        world.register_component::<SomeComponent>();
-        world.register_component::<i32>();
-
-        world.entities().create().with(1).build();
-        world.entities().create().with(SomeComponent { x: 1, y: 1 }).with(2).build();
-        world.entities().create().with(SomeComponent { x: 2, y: 2 }).with(3).build();
+        {
+            let mut batcher = world.entities().batch::<(CompA, CompB)>();
+            batcher.add(CompA(1), CompB(1));
+            batcher.add(CompA(2), CompB(2));
+            batcher.add(CompA(3), CompB(3));
+            batcher.add(CompA(4), CompB(4));
+            batcher.commit();
+        }
 
         world.process_transactions();
+        assert_eq!(world.state.entities.len(), 4);
+        assert_eq!(world.state.entities[&0.into()].1, 0);
+        assert_eq!(world.state.entities[&1.into()].1, 1);
+        assert_eq!(world.state.entities[&2.into()].1, 2);
+        assert_eq!(world.state.entities[&3.into()].1, 3);
 
-        assert_eq!(world.component_registry.len(), 3);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
-
-        // Test removing entity in the middle
-        world.entities().remove(1.into());
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 3);
-        assert_eq!(world.entity_registry.len(), 2);
-        assert_eq!(world.shards.len(), 2);
-
-        // Test removing all entities
         world.entities().remove(0.into());
-        world.entities().remove(2.into());
-        world.process_transactions();
 
-        assert_eq!(world.component_registry.len(), 3);
-        assert_eq!(world.entity_registry.len(), 0);
-        assert_eq!(world.shards.len(), 2);
+        world.process_transactions();
+        assert_eq!(world.state.entities.len(), 3);
+        assert_eq!(world.state.entities[&1.into()].1, 1);
+        assert_eq!(world.state.entities[&2.into()].1, 2);
+        assert_eq!(world.state.entities[&3.into()].1, 0);
+
+        world.entities().remove(1.into());
+
+        world.process_transactions();
+        assert_eq!(world.state.entities.len(), 2);
+        assert_eq!(world.state.entities[&2.into()].1, 1);
+        assert_eq!(world.state.entities[&3.into()].1, 0);
+
+        world.entities().remove(3.into());
+
+        world.process_transactions();
+        assert_eq!(world.state.entities.len(), 1);
+        assert_eq!(world.state.entities[&2.into()].1, 0);
+
+        world.entities().remove(2.into());
+
+        world.process_transactions();
+        assert_eq!(world.state.entities.len(), 0);
     }
 
     #[test]
     fn test_ingest_system_transactions() {
-        // Create a system that edits an existing entity and added two new ones
+        // Create a system that adds a new entity and removes an existing one
         struct TestSystem<'a> {
             _p: PhantomData<&'a ()>,
         }
 
-        impl<'a> System for TestSystem<'a> {
-            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, SomeComponent>);
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
 
-            fn run(&mut self, _ctx: Context<Self::JoinItem>, mut entities: entity::EntityStore) {
-                entities.edit(0.into()).expect("Entity must exist").with(5f32).commit();
-                entities.create().with(SomeComponent { x: 2, y: 2 }).with(2).build();
-                entities.create().with(SomeComponent { x: 3, y: 3 }).with(3).build();
+            fn run(&mut self, _data: Context<Self::Data>, tx: &mut TransactionContext) {
+                tx.add((CompA(3), CompB(3)));
+                tx.remove(0.into());
             }
         }
 
         let mut world = World::new();
-
-        world.register_component::<SomeComponent>();
-        world.register_component::<i32>();
-        world.register_component::<f32>();
-
+        world.register_component::<CompA>();
+        world.register_component::<CompB>();
+        world.register_component::<CompC>();
         world.register_system(TestSystem { _p: PhantomData });
+        world.build();
 
-        // Add a single entity initially and ensure the state is correct
-        world.entities().create().with(SomeComponent { x: 1, y: 1 }).with(1).build();
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 1);
-        assert_eq!(world.shards.len(), 1);
-
-        // Run the system, triggering the edit and two additions
-        world.run();
-        world.process_transactions();
-
-        assert_eq!(world.component_registry.len(), 4);
-        assert_eq!(world.entity_registry.len(), 3);
-        assert_eq!(world.shards.len(), 2);
-    }
-
-    #[test]
-    fn test_run_systems() {
-        struct TestSystem<'a> {
-            collector: Vec<(EntityId, i32, SomeComponent)>,
-            _p: PhantomData<&'a ()>,
+        {
+            let mut batcher = world.entities().batch::<(CompA, CompB)>();
+            batcher.add(CompA(0), CompB(0));
+            batcher.add(CompA(1), CompB(1));
+            batcher.add(CompA(2), CompB(2));
+            batcher.commit();
         }
 
-        impl<'a> System for TestSystem<'a> {
-            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, SomeComponent>);
+        // Process the initial state
+        world.process_transactions();
 
-            fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
-                for (&id, &a, b) in ctx.iter() {
-                    self.collector.push((id, a, b.clone()));
-                }
-            }
-        }
+        assert_eq!(world.state.entities.len(), 3);
+        assert_eq!(world.state.entities[&0.into()].1, 0);
+        assert_eq!(world.state.entities[&1.into()].1, 1);
+        assert_eq!(world.state.entities[&2.into()].1, 2);
 
-        let mut world = World::new();
+        // Run the system, triggering the edit and addition
+        world.run_once();
+        world.process_transactions();
 
-        // Base scenario
-        world.register_component::<SomeComponent>();
-        world.register_component::<i32>();
-        world.register_component::<f32>();
-
-        let system_id = world.register_system(TestSystem {
-            collector: Vec::new(),
-            _p: PhantomData,
-        });
-        let system = world.get_system::<TestSystem>(system_id);
-
-        world
-            .entities()
-            .create()
-            .with(SomeComponent { x: 0, y: 0 })
-            .with(0i32)
-            .build();
-        world
-            .entities()
-            .create()
-            .with(SomeComponent { x: 1, y: 1 })
-            .with(1i32)
-            .build();
-        world
-            .entities()
-            .create()
-            .with(SomeComponent { x: 2, y: 2 })
-            .with(2i32)
-            .build();
-        world
-            .entities()
-            .create()
-            .with(SomeComponent { x: 3, y: 3 })
-            .with(3i32)
-            .with(5f32)
-            .build();
-
-        // Run the system
-        world.run();
-
-        // Check state
-        let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
-
-        assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (1.into(), 1, SomeComponent { x: 1, y: 1 }));
-        assert_eq!(state[2], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
-        assert_eq!(state[3], (3.into(), 3, SomeComponent { x: 3, y: 3 }));
-        state.clear();
-
-        // Remove the entity that was in it's own shard
-        world.entities().remove(3.into());
-
-        // Run the system
-        world.run();
-
-        // Ensure removed component is not in the results
-        let mut state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
-
-        assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (1.into(), 1, SomeComponent { x: 1, y: 1 }));
-        assert_eq!(state[2], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
-        state.clear();
-
-        // Edit entity, requiring a remove/add
-        world
-            .entities()
-            .edit(1.into())
-            .expect("Entity must exist")
-            .with(5f32)
-            .with(5i32)
-            .commit();
-
-        // Run the system
-        world.run();
-
-        // Ensure edited entity is in the results set
-        let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
-
-        assert_eq!(state.len(), 3);
-        assert_eq!(state[0], (0.into(), 0, SomeComponent { x: 0, y: 0 }));
-        assert_eq!(state[1], (2.into(), 2, SomeComponent { x: 2, y: 2 }));
-        assert_eq!(state[2], (1.into(), 5, SomeComponent { x: 1, y: 1 }));
+        assert_eq!(world.state.entities.len(), 3);
+        assert_eq!(world.state.entities[&1.into()].1, 1);
+        assert_eq!(world.state.entities[&2.into()].1, 0);
+        assert_eq!(world.state.entities[&3.into()].1, 2);
     }
 }
-*/

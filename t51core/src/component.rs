@@ -1,144 +1,250 @@
-use crate::alloc::VecPool;
-use crate::identity::{BitSetIdType, ComponentId, ShardId};
+use crate::entity::dynamic::DynVec;
+use crate::entity::{EntityId, ShardDef};
+use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
-use serde_json;
-use std::any::Any;
 use std::fmt::Debug;
 
-pub(crate) type ShardKey = BitSetIdType;
-pub(crate) type ComponentCoords = (usize, usize);
+pub(crate) type ComponentCoords = (ShardKey, usize);
 
 pub trait Component: DeserializeOwned + Debug {
-}
+    fn acquire_unique_id() -> ComponentId;
+    fn get_unique_id() -> ComponentId;
 
-/// Construct a composite bit-set shard key from the supplied component id's.
-#[inline]
-pub(crate) fn compose_key<'a>(keys: impl Iterator<Item = &'a ComponentId>) -> ShardKey {
-    keys.fold(0 as ShardKey, |acc, cid| acc | cid.id)
-}
-
-#[derive(Debug)]
-pub struct ShardedColumn<T> {
-    data: VecPool<Vec<T>>,
-}
-
-impl<T> ShardedColumn<T> {
     #[inline]
-    pub(crate) fn new() -> ShardedColumn<T> {
-        ShardedColumn { data: VecPool::new() }
+    fn get_type_indexer() -> usize {
+        Self::get_unique_id().indexer()
     }
 
     #[inline]
-    pub(crate) fn get(&self, section: usize, loc: usize) -> Option<&T> {
-        self.data.get(section).get(loc)
-    }
-
-    #[inline]
-    pub(crate) fn push(&mut self, instance: T, section: usize) -> usize {
-        let storage = self.data.get_mut(section);
-        let loc = storage.len();
-        storage.push(instance);
-        loc
-    }
-
-    #[inline]
-    pub(crate) fn update(&mut self, instance: T, section: usize, loc: usize) {
-        self.data.get_mut(section)[loc] = instance;
-    }
-
-    #[inline]
-    pub(crate) fn section_len(&self, section: usize) -> usize {
-        self.data.get(section).len()
-    }
-
-    #[inline]
-    pub(crate) fn get_data_ptr(&self, section: usize) -> *const T {
-        self.data.get(section).as_ptr()
-    }
-
-    #[inline]
-    pub(crate) fn get_data_mut_ptr(&mut self, section: usize) -> *mut T {
-        self.data.get_mut(section).as_mut_ptr()
+    fn get_type_name() -> &'static str {
+        unsafe { ComponentId::get_name_vec()[Self::get_type_indexer()] }
     }
 }
 
-pub trait Column {
-    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize;
-    fn ingest_json(&mut self, json: String, section: usize) -> usize;
-    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize);
-    fn update_json(&mut self, json: String, section: usize, loc: usize);
-    fn swap_remove(&mut self, section: usize, loc: usize);
-    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any>;
-    fn new_section(&mut self) -> usize;
-    fn section_len(&self, section: usize) -> usize;
+
+pub trait ComponentVec {
+    fn ingest(&mut self, data: &mut DynVec);
+    fn remove(&mut self, loc: usize);
+    fn len(&self) -> usize;
+    unsafe fn get_ptr(&self) -> *mut ();
 }
 
-impl<T> Column for ShardedColumn<T>
+impl<T> ComponentVec for Vec<T>
 where
-    T: 'static + DeserializeOwned,
+    T: Component,
 {
-    fn ingest_box(&mut self, boxed: Box<Any>, section: usize) -> usize {
-        self.push(*boxed.downcast::<T>().expect("Incorrect boxed component"), section)
+    #[inline]
+    fn ingest(&mut self, data: &mut DynVec) {
+        let data_vec = data.cast_mut::<T>();
+        self.append(data_vec);
     }
 
-    fn ingest_json(&mut self, json: String, section: usize) -> usize {
-        self.push(serde_json::from_str(&json).expect("Error deserializing component"), section)
+    #[inline]
+    fn remove(&mut self, loc: usize) {
+        self.swap_remove(loc);
     }
 
-    fn update_box(&mut self, boxed: Box<Any>, section: usize, loc: usize) {
-        self.update(*boxed.downcast::<T>().expect("Incorrect boxed component"), section, loc)
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
     }
 
-    fn update_json(&mut self, json: String, section: usize, loc: usize) {
-        self.update(
-            serde_json::from_str(&json).expect("Error deserializing component"),
-            section,
-            loc,
-        )
-    }
-
-    fn swap_remove(&mut self, section: usize, loc: usize) {
-        unsafe {
-            let storage = self.data.get_unchecked_mut(section);
-            storage.swap_remove(loc);
-        }
-    }
-
-    fn swap_remove_return(&mut self, section: usize, loc: usize) -> Box<Any> {
-        unsafe {
-            let storage = self.data.get_unchecked_mut(section);
-            let instance = storage.swap_remove(loc);
-            Box::new(instance)
-        }
-    }
-
-    fn new_section(&mut self) -> usize {
-        let section = self.data.len();
-        self.data.push(Vec::new());
-        section
-    }
-
-    fn section_len(&self, section: usize) -> usize {
-        ShardedColumn::<T>::section_len(self, section)
+    #[inline]
+    unsafe fn get_ptr(&self) -> *mut () {
+        self as *const Vec<T> as *mut ()
     }
 }
 
-#[derive(Debug)]
 pub struct Shard {
-    pub(crate) id: ShardId,
-    pub(crate) shard_key: ShardKey,
-    pub(crate) sections: HashMap<ComponentId, usize>,
+    pub(crate) key: ShardKey,
+    entities: Box<Vec<EntityId>>,
+    store: HashMap<ComponentId, Box<ComponentVec>>,
 }
 
 impl Shard {
-    #[inline]
-    pub(crate) fn new(id: ShardId, shard_key: ShardKey, sections: HashMap<ComponentId, usize>) -> Shard {
-        Shard { id, shard_key, sections }
+    pub fn new(key: ShardKey, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+        Shard {
+            key,
+            entities: Box::new(Vec::new()),
+            store,
+        }
+    }
+
+    pub fn new_with_ents(key: ShardKey, entities: Vec<EntityId>, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+        Shard {
+            key,
+            entities: Box::new(entities),
+            store,
+        }
+    }
+
+    pub fn ingest(&mut self, shard_def: &mut ShardDef) -> usize {
+        if shard_def.entity_ids.len() == 0 {
+            panic!("No entities to ingest");
+        }
+
+        for (id, data) in shard_def.components.iter_mut() {
+            self.store.get_mut(id).unwrap().ingest(data);
+        }
+
+        let loc_start = self.entities.len();
+
+        self.entities.extend(&shard_def.entity_ids);
+
+        loc_start
     }
 
     #[inline]
-    pub(crate) fn get_section(&self, id: ComponentId) -> usize {
-        self.sections[&id]
+    pub fn remove(&mut self, loc: usize) -> Option<EntityId> {
+        self.entities.swap_remove(loc);
+
+        for data in self.store.values_mut() {
+            data.remove(loc);
+        }
+
+        self.entities.get(loc).and_then(|eid| Some(*eid))
+    }
+
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.entities.len()
+    }
+
+    #[inline]
+    pub fn data_ptr<T>(&self) -> *const Vec<T>
+    where
+        T: Component,
+    {
+        if T::get_unique_id() == EntityId::get_unique_id() {
+            unsafe { self.entities.get_ptr() as *const Vec<T> }
+        } else {
+            unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *const Vec<T> }
+        }
+    }
+
+    #[inline]
+    pub fn data_mut_ptr<T>(&self) -> *mut Vec<T>
+    where
+        T: Component,
+    {
+        if T::get_unique_id() == EntityId::get_unique_id() {
+            panic!("Entity ID vector is not writeable")
+        }
+
+        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *mut Vec<T> }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_derive::{Deserialize, Serialize};
+    use t51core_proc::Component;
+
+    #[derive(Component, Serialize, Deserialize, Debug)]
+    struct SomeComponent {
+        x: i32,
+        y: i32,
+    }
+
+    fn setup() -> (ComponentId, ComponentId) {
+        (EntityId::acquire_unique_id(), SomeComponent::acquire_unique_id())
+    }
+
+    #[test]
+    fn test_ingest() {
+        let (some_comp_id, _) = setup();
+
+        let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
+        shard.store.insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
+
+        let mut shard_def = ShardDef {
+            entity_ids: vec![0.into(), 1.into(), 2.into()],
+            components: HashMap::new(),
+        };
+
+        // Load some components
+        let data = vec![
+            SomeComponent { x: 0, y: 0 },
+            SomeComponent { x: 1, y: 1 },
+            SomeComponent { x: 2, y: 2 },
+        ];
+
+        shard_def.components.insert(some_comp_id, DynVec::new(data));
+
+        assert_eq!(shard.ingest(&mut shard_def), 0);
+        assert_eq!(shard.entities.len(), 3);
+        assert_eq!(shard.store[&some_comp_id].len(), 3);
+    }
+
+    #[test]
+    fn test_remove() {
+        let (some_comp_id, _) = setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+
+        // Load some components
+        let data = vec![
+            SomeComponent { x: 0, y: 0 },
+            SomeComponent { x: 1, y: 1 },
+            SomeComponent { x: 2, y: 2 },
+        ];
+
+        map.insert(some_comp_id, Box::new(data));
+
+        let mut shard = Shard::new(ShardKey::empty(), map);
+
+        // Add matching entity entries
+        shard.entities.push(0.into());
+        shard.entities.push(1.into());
+        shard.entities.push(2.into());
+
+        // Remove from front, swapping id 2 in
+        assert_eq!(shard.remove(0).unwrap(), 2.into());
+        assert_eq!(shard.entities.len(), 2);
+        assert_eq!(shard.store[&some_comp_id].len(), 2);
+
+        // Remove the tail, no swapping
+        assert!(shard.remove(1).is_none());
+        assert_eq!(shard.entities.len(), 1);
+        assert_eq!(shard.store[&some_comp_id].len(), 1);
+
+        // Remove last item, no swapping
+        assert!(shard.remove(0).is_none());
+        assert_eq!(shard.entities.len(), 0);
+        assert_eq!(shard.store[&some_comp_id].len(), 0);
+    }
+
+    #[test]
+    fn test_data_ptr() {
+        setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+
+        let shard = Shard::new(ShardKey::empty(), map);
+
+        assert!(!shard.data_ptr::<EntityId>().is_null());
+        assert!(!shard.data_ptr::<SomeComponent>().is_null());
+    }
+
+    #[test]
+    fn test_data_mut_ptr() {
+        setup();
+
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+
+        let shard = Shard::new(ShardKey::empty(), map);
+
+        assert!(!shard.data_mut_ptr::<SomeComponent>().is_null());
+    }
+
+    #[test]
+    #[should_panic(expected = "Entity ID vector is not writeable")]
+    fn test_entity_id_mut_ptr_fail() {
+        let shard = Shard::new(ShardKey::empty(), HashMap::new());
+        shard.data_mut_ptr::<EntityId>();
     }
 }

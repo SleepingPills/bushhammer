@@ -1,145 +1,141 @@
-use crate::component;
-use crate::component::{ComponentCoords, ShardedColumn};
-use crate::entity::{Entity, EntityStore, Transaction};
-use crate::identity::{ComponentId, EntityId, ShardId};
-use crate::registry::Registry;
-use crate::sync::RwCell;
+use crate::component::Component;
+use crate::component::{ComponentCoords, Shard};
+use crate::entity::{EntityId, TransactionContext};
+use crate::identity::ShardKey;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
-use std::any::TypeId;
-use std::sync::Arc;
 
-#[macro_export]
-macro_rules! require {
-    ($($exprs:ty),*) => {
-        type Data = ($($exprs),*);
-        type JoinItem = <Self::Data as SystemDef>::JoinItem;
-    };
+pub trait RunSystem {
+    type Data: QueryTup;
+
+    fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
 
-pub trait System {
-    type Data: SystemDef;
-    type JoinItem: Joined;
-
-    fn run(&mut self, ctx: context::Context<<Self::Data as SystemDef>::JoinItem>, entities: EntityStore);
+pub struct Context<'a, T>
+where
+    T: QueryTup,
+{
+    system_data: &'a mut SystemData<T>,
+    entities: &'a HashMap<EntityId, ComponentCoords>,
 }
 
-pub trait SystemRuntime {
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>);
-    fn add_shard(&mut self, shard: &component::Shard);
-    fn remove_shard(&mut self, id: ShardId);
-    fn check_shard(&self, shard_key: component::ShardKey) -> bool;
-    fn get_required_components(&self) -> &Vec<ComponentId>;
-    fn get_transactions(&mut self) -> &mut Vec<Transaction>;
+impl<'a, T> Context<'a, T>
+where
+    T: QueryTup,
+{
+    #[inline]
+    pub fn components(&mut self) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+        self.system_data.components(self.entities)
+    }
 }
 
 pub struct SystemData<T>
 where
-    T: SystemDef,
+    T: QueryTup,
 {
-    stores: T,
-    shards: IndexMap<ShardId, <T::JoinItem as Joined>::Indexer>,
-    comp_ids: Vec<ComponentId>,
+    shards: IndexMap<ShardKey, T::DataTup>,
 }
 
 impl<T> SystemData<T>
 where
-    T: SystemDef,
+    T: QueryTup,
 {
     #[inline]
-    pub(crate) fn new(comp_map: &Registry<ComponentId>, comp_ids: Vec<ComponentId>) -> SystemData<T> {
-        SystemData {
-            stores: T::new(&comp_ids, comp_map),
-            shards: IndexMap::new(),
-            comp_ids,
-        }
+    fn new() -> SystemData<T> {
+        SystemData { shards: IndexMap::new() }
     }
 
     #[inline]
-    pub fn context<'a, 'b>(&'a self, entity_map: &'b HashMap<EntityId, Entity>) -> context::Context<<T as SystemDef>::JoinItem>
-    where
-        'b: 'a,
-    {
-        context::Context::new(self.stores.as_joined(), &self.shards, entity_map, &self.comp_ids)
+    pub fn components<'a>(
+        &'a mut self,
+        entities: &'a HashMap<EntityId, ComponentCoords>,
+    ) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+        context::ComponentContext::new(&mut self.shards, entities)
     }
 
     #[inline]
-    fn add_shard(&mut self, shard: &component::Shard) {
-        self.shards.insert(shard.id, T::reify_shard(&self.comp_ids, shard));
+    pub fn resources(&mut self) {
+        unimplemented!()
     }
 
     #[inline]
-    fn remove_shard(&mut self, id: ShardId) {
-        self.shards.remove(&id);
+    pub(crate) fn add_shard(&mut self, shard: &Shard) {
+        self.shards.insert(shard.key, T::reify_shard(shard));
+    }
+
+    #[inline]
+    pub(crate) fn remove_shard(&mut self, key: ShardKey) {
+        self.shards.remove(&key);
     }
 }
 
-pub struct SystemEntry<T>
+pub struct SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
-    system: T,
-    shard_key: component::ShardKey,
+    shard_key: ShardKey,
+    runstate: T,
     data: SystemData<T::Data>,
-    transactions: Vec<Transaction>,
 }
 
-impl<T> SystemEntry<T>
+impl<T> SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
     #[inline]
-    pub(crate) fn new(system: T, comp_map: &Registry<ComponentId>, comp_id_map: &HashMap<TypeId, ComponentId>) -> SystemEntry<T> {
-        let comp_ids = T::Data::get_comp_ids(comp_id_map);
-        SystemEntry {
-            system,
-            shard_key: component::compose_key(comp_ids.iter()),
-            data: SystemData::new(comp_map, comp_ids),
-            transactions: Vec::new(),
+    pub(crate) fn new(system: T) -> SystemRuntime<T> {
+        SystemRuntime {
+            shard_key: T::Data::get_shard_key(),
+            runstate: system,
+            data: SystemData::new(),
         }
     }
 
     #[inline]
     pub fn get_system_mut(&mut self) -> &mut T {
-        &mut self.system
+        &mut self.runstate
     }
 }
 
-impl<T> SystemRuntime for SystemEntry<T>
+pub trait System {
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext);
+    fn add_shard(&mut self, shard: &Shard);
+    fn remove_shard(&mut self, key: ShardKey);
+    fn check_shard(&self, shard_key: ShardKey) -> bool;
+}
+
+impl<T> System for SystemRuntime<T>
 where
-    T: System,
+    T: RunSystem,
 {
     #[inline]
-    fn run(&mut self, entity_map: &HashMap<EntityId, Entity>, comp_id_map: &HashMap<TypeId, ComponentId>) {
-        self.system.run(
-            self.data.context(entity_map),
-            EntityStore::new(entity_map, comp_id_map, &mut self.transactions),
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext) {
+        self.runstate.run(
+            Context {
+                system_data: &mut self.data,
+                entities,
+            },
+            transactions,
         );
     }
 
     #[inline]
-    fn add_shard(&mut self, shard: &component::Shard) {
-        self.data.add_shard(shard);
+    fn add_shard(&mut self, shard: &Shard) {
+        if self.check_shard(shard.key) {
+            self.data.add_shard(shard);
+        }
     }
 
     #[inline]
-    fn remove_shard(&mut self, id: ShardId) {
-        self.data.remove_shard(id);
+    fn remove_shard(&mut self, key: ShardKey) {
+        if self.check_shard(key) {
+            self.data.remove_shard(key);
+        }
     }
 
     #[inline]
-    fn check_shard(&self, shard_key: component::ShardKey) -> bool {
-        (self.shard_key & shard_key) == self.shard_key
-    }
-
-    #[inline]
-    fn get_required_components(&self) -> &Vec<ComponentId> {
-        &self.data.comp_ids
-    }
-
-    #[inline]
-    fn get_transactions(&mut self) -> &mut Vec<Transaction> {
-        &mut self.transactions
+    fn check_shard(&self, shard_key: ShardKey) -> bool {
+        shard_key.contains_key(self.shard_key)
     }
 }
 
@@ -149,22 +145,21 @@ pub trait Indexable {
     fn index(&self, idx: usize) -> Self::Item;
 }
 
-pub trait Query {
+pub trait Data {
     type DataPtr: Indexable;
     type Item;
 
-    fn len(&self, section: usize) -> usize;
-    fn get_by_coords(&self, coords: ComponentCoords) -> Self::Item;
-    fn unwrap(&mut self, section: usize) -> Self::DataPtr;
+    fn len(&self) -> usize;
+    fn get(&mut self, loc: usize) -> Self::Item;
+    fn unwrap(&mut self) -> Self::DataPtr;
     fn null() -> Self::DataPtr;
 }
 
-pub trait Queryable {
-    type QueryItem: Query;
+pub trait Query {
+    type QueryItem: Data;
     type DataType;
 
-    fn new(store: Arc<RwCell<ShardedColumn<Self::DataType>>>) -> Self;
-    fn get_query(&self) -> Self::QueryItem;
+    fn execute(shard: &Shard) -> Self::QueryItem;
 }
 
 pub trait IndexablePtrTup {
@@ -174,7 +169,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Arc, ComponentCoords, Indexable, Query, Queryable, RwCell, ShardedColumn};
+    use super::{Component, Data, Indexable, Query, Shard};
     use std::marker::PhantomData;
     use std::ptr;
 
@@ -217,80 +212,69 @@ pub mod store {
     }
 
     #[repr(transparent)]
-    pub struct ReadQuery<'a, T> {
-        store: *const ShardedColumn<T>,
+    pub struct ReadData<'a, T> {
+        store: *const Vec<T>,
         _x: PhantomData<&'a T>,
     }
 
     #[repr(transparent)]
-    pub struct WriteQuery<'a, T> {
-        store: *mut ShardedColumn<T>,
+    pub struct WriteData<'a, T> {
+        store: *mut Vec<T>,
         _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> ReadQuery<'a, T> {
+    impl<'a, T> ReadData<'a, T> {
         #[inline]
-        fn new(store: &RwCell<ShardedColumn<T>>) -> ReadQuery<'a, T> {
-            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
-            unsafe {
-                ReadQuery {
-                    store: store.get_ptr_raw(),
-                    _x: PhantomData,
-                }
-            }
+        fn new(store: *const Vec<T>) -> ReadData<'a, T> {
+            ReadData { store, _x: PhantomData }
         }
 
         #[inline]
-        fn store_ref(&self) -> &ShardedColumn<T> {
+        fn store_ref(&self) -> &'a Vec<T> {
             unsafe { &*self.store }
+        }
+
+        #[allow(dead_code)]
+        #[inline]
+        pub(crate) fn get_ptr(&self) -> *const Vec<T> {
+            self.store
         }
     }
 
-    impl<'a, T> WriteQuery<'a, T> {
+    impl<'a, T> WriteData<'a, T> {
         #[inline]
-        fn new(store: &RwCell<ShardedColumn<T>>) -> WriteQuery<'a, T> {
-            // No need for explicit guards as the scheduler guarantees to maintain the reference aliasing invariants.
-            unsafe {
-                WriteQuery {
-                    store: store.get_ptr_raw(),
-                    _x: PhantomData,
-                }
-            }
+        fn new(store: *mut Vec<T>) -> WriteData<'a, T> {
+            WriteData { store, _x: PhantomData }
         }
 
         #[inline]
-        fn store_ref(&self) -> &ShardedColumn<T> {
+        fn store_ref(&self) -> &'a Vec<T> {
             unsafe { &*self.store }
         }
 
         #[inline]
-        fn store_mut_ref(&mut self) -> &mut ShardedColumn<T> {
+        fn store_mut_ref(&mut self) -> &'a mut Vec<T> {
             unsafe { &mut *self.store }
         }
     }
 
-    impl<'a, T: 'a> Query for ReadQuery<'a, T> {
+    impl<'a, T: 'a> Data for ReadData<'a, T> {
         type DataPtr = ReadPtr<'a, T>;
         type Item = &'a T;
 
         #[inline]
-        fn len(&self, section: usize) -> usize {
-            self.store_ref().section_len(section)
+        fn len(&self) -> usize {
+            self.store_ref().len()
         }
 
         #[inline]
-        fn get_by_coords(&self, coords: ComponentCoords) -> &'a T {
-            let (section, loc) = coords;
-            let ptr = self.store_ref().get_data_ptr(section);
-            unsafe { &*ptr.add(loc) }
-            // Can't do the safe thing here due to lack of generic associated types as the
-            // lifetimes would clash.
-            // self.store.get_item(coords)
+        fn get(&mut self, loc: usize) -> &'a T {
+            unsafe { self.store_ref().get_unchecked(loc) }
         }
 
         #[inline]
-        fn unwrap(&mut self, section: usize) -> ReadPtr<'a, T> {
-            ReadPtr::new(self.store_ref().get_data_ptr(section))
+        fn unwrap(&mut self) -> ReadPtr<'a, T> {
+            ReadPtr::new(self.store_ref().as_ptr())
         }
 
         #[inline]
@@ -299,28 +283,23 @@ pub mod store {
         }
     }
 
-    impl<'a, T: 'a> Query for WriteQuery<'a, T> {
+    impl<'a, T: 'a> Data for WriteData<'a, T> {
         type DataPtr = RwPtr<'a, T>;
         type Item = &'a mut T;
 
         #[inline]
-        fn len(&self, section: usize) -> usize {
-            self.store_ref().section_len(section)
+        fn len(&self) -> usize {
+            self.store_ref().len()
         }
 
         #[inline]
-        fn get_by_coords(&self, coords: ComponentCoords) -> &'a mut T {
-            let (section, loc) = coords;
-            let ptr = self.store_ref().get_data_ptr(section);
-            unsafe { &mut *(ptr.add(loc) as *mut _) }
-            // Can't do the safe thing here due to lack of generic associated types as the
-            // lifetimes would clash.
-            // self.store.get_item_mut(coords)
+        fn get(&mut self, loc: usize) -> &'a mut T {
+            unsafe { self.store_mut_ref().get_unchecked_mut(loc) }
         }
 
         #[inline]
-        fn unwrap(&mut self, section: usize) -> RwPtr<'a, T> {
-            RwPtr::new(self.store_mut_ref().get_data_mut_ptr(section))
+        fn unwrap(&mut self) -> RwPtr<'a, T> {
+            RwPtr::new(self.store_mut_ref().as_mut_ptr())
         }
 
         #[inline]
@@ -329,82 +308,70 @@ pub mod store {
         }
     }
 
-    pub struct Read<'a, T> {
-        store: Arc<RwCell<ShardedColumn<T>>>,
+    pub struct Read<'a, T>
+    where
+        T: Component,
+    {
         _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Queryable for Read<'a, T> {
-        type QueryItem = ReadQuery<'a, T>;
+    impl<'a, T> Query for Read<'a, T>
+    where
+        T: Component,
+    {
+        type QueryItem = ReadData<'a, T>;
         type DataType = T;
 
         #[inline]
-        fn new(store: Arc<RwCell<ShardedColumn<T>>>) -> Self {
-            Read { store, _x: PhantomData }
-        }
-
-        #[inline]
-        fn get_query(&self) -> ReadQuery<'a, T> {
-            ReadQuery::new(&self.store)
+        fn execute(shard: &Shard) -> ReadData<'a, T> {
+            ReadData::new(shard.data_ptr::<T>())
         }
     }
 
-    pub struct Write<'a, T> {
-        store: Arc<RwCell<ShardedColumn<T>>>,
+    pub struct Write<'a, T>
+    where
+        T: Component,
+    {
         _x: PhantomData<&'a T>,
     }
 
-    impl<'a, T> Queryable for Write<'a, T> {
-        type QueryItem = WriteQuery<'a, T>;
+    impl<'a, T> Query for Write<'a, T>
+    where
+        T: Component,
+    {
+        type QueryItem = WriteData<'a, T>;
         type DataType = T;
 
         #[inline]
-        fn new(store: Arc<RwCell<ShardedColumn<T>>>) -> Self {
-            Write { store, _x: PhantomData }
-        }
-
-        #[inline]
-        fn get_query(&self) -> WriteQuery<'a, T> {
-            WriteQuery::new(&self.store)
+        fn execute(shard: &Shard) -> WriteData<'a, T> {
+            WriteData::new(shard.data_mut_ptr::<T>())
         }
     }
 }
 
-pub trait Joined {
+pub trait DataTup {
     type PtrTup: IndexablePtrTup;
     type ItemTup;
-    type Indexer;
 
-    fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup);
-    fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> Self::ItemTup;
+    fn get_entity(&mut self, loc: usize) -> Self::ItemTup;
+
+    fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup);
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
-pub trait SystemDef {
-    type JoinItem: Joined;
+pub trait QueryTup {
+    type DataTup: DataTup;
 
-    fn as_joined(&self) -> Self::JoinItem;
-    fn reify_shard(sys_comps: &Vec<ComponentId>, shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer;
-    fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId>;
-    fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self;
+    fn reify_shard(shard: &Shard) -> Self::DataTup;
+    fn get_shard_key() -> ShardKey;
 }
 
 pub mod join {
-    use super::{
-        ComponentId, Entity, HashMap, Indexable, IndexablePtrTup, Joined, Query, Queryable, Registry, ShardedColumn, SystemDef,
-        TypeId,
-    };
-    use crate::component;
-
-    macro_rules! _decl_system_replace_expr {
-        ($_t:tt $sub:ty) => {
-            $sub
-        };
-    }
+    use super::{Component, Data, DataTup, Indexable, IndexablePtrTup, Query, QueryTup, Shard, ShardKey};
 
     macro_rules! ptr_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
-            impl<$($field_type),*> IndexablePtrTup for ($($field_type),*,)
+            impl<$($field_type),*> IndexablePtrTup for ($($field_type,)*)
             where
                 $($field_type: Indexable),*
             {
@@ -427,71 +394,119 @@ pub mod join {
     ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
     ptr_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-    macro_rules! joined {
+    impl IndexablePtrTup for () {
+        type ItemTup = ();
+
+        fn index(&self, _idx: usize) -> Self::ItemTup {
+            unimplemented!()
+        }
+    }
+
+    impl<T> IndexablePtrTup for T
+    where
+        T: Indexable,
+    {
+        type ItemTup = T::Item;
+
+        #[inline]
+        fn index(&self, idx: usize) -> Self::ItemTup {
+            self.index(idx)
+        }
+    }
+
+    macro_rules! data_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
-            impl<$($field_type),*> Joined for ($($field_type),*,)
+            impl<$($field_type),*> DataTup for ($($field_type,)*)
             where
-                $($field_type: Query),*,
+                $($field_type: Data,)*
             {
-                type PtrTup = ($($field_type::DataPtr),*,);
-                type ItemTup = ($($field_type::Item),*,);
-                type Indexer = ($(_decl_system_replace_expr!($field_type usize)),*,);
+                type PtrTup = ($($field_type::DataPtr,)*);
+                type ItemTup = ($($field_type::Item,)*);
 
                 #[inline]
-                fn get_ptr_tup(&mut self, idx: &Self::Indexer) -> (usize, Self::PtrTup) {
-                    (self.0.len(idx.0), ($(self.$field_seq.unwrap(idx.$field_seq)),*,))
+                fn get_entity(&mut self, loc: usize) -> Self::ItemTup {
+                    ($(self.$field_seq.get(loc),)*)
                 }
 
                 #[inline]
-                fn get_entity(&self, entity: &Entity, components: &Vec<ComponentId>) -> Self::ItemTup {
-                    ($(self.$field_seq.get_by_coords(entity.get_coords(&components[$field_seq]))),*,)
+                fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup) {
+                    (self.0.len(), ($(self.$field_seq.unwrap(),)*))
                 }
 
                 #[inline]
                 unsafe fn get_zero_ptr_tup() -> Self::PtrTup {
-                    ($($field_type::null()),*,)
+                    ($($field_type::null(),)*)
                 }
             }
         };
     }
 
-    joined!(A:0);
-    joined!(A:0, B:1);
-    joined!(A:0, B:1, C:2);
-    joined!(A:0, B:1, C:2, D:3);
-    joined!(A:0, B:1, C:2, D:3, E:4);
-    joined!(A:0, B:1, C:2, D:3, E:4, F:5);
-    joined!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-    joined!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+    data_tup!(A:0);
+    data_tup!(A:0, B:1);
+    data_tup!(A:0, B:1, C:2);
+    data_tup!(A:0, B:1, C:2, D:3);
+    data_tup!(A:0, B:1, C:2, D:3, E:4);
+    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
+    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+    impl DataTup for () {
+        type PtrTup = ();
+        type ItemTup = ();
+
+        fn get_entity(&mut self, _loc: usize) -> Self::ItemTup {
+            unimplemented!()
+        }
+
+        fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup) {
+            unimplemented!()
+        }
+
+        unsafe fn get_zero_ptr_tup() -> Self::PtrTup {
+            unimplemented!()
+        }
+    }
+
+    impl<T> DataTup for T
+    where
+        T: Data,
+    {
+        type PtrTup = T::DataPtr;
+        type ItemTup = T::Item;
+
+        #[inline]
+        fn get_entity(&mut self, loc: usize) -> Self::ItemTup {
+            self.get(loc)
+        }
+
+        #[inline]
+        fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup) {
+            (self.len(), self.unwrap())
+        }
+
+        #[inline]
+        unsafe fn get_zero_ptr_tup() -> Self::PtrTup {
+            T::null()
+        }
+    }
 
     macro_rules! system_def {
         ($( $field_type:ident:$field_seq:tt ),*) => {
-            impl<$($field_type),*> SystemDef for ($($field_type),*,)
+            impl<$($field_type),*> QueryTup for ($($field_type,)*)
             where
-                $($field_type: Queryable),*,
-                $($field_type::DataType: 'static),*
+                $($field_type: Query,)*
+                $($field_type::DataType: 'static + Component,)*
             {
-                type JoinItem = ($($field_type::QueryItem),*,);
+                type DataTup = ($($field_type::QueryItem,)*);
 
                 #[inline]
-                fn as_joined(&self) -> ($($field_type::QueryItem),*,) {
-                    ($(self.$field_seq.get_query()),*,)
+                fn reify_shard(shard: &Shard) -> Self::DataTup {
+                    ($($field_type::execute(shard),)*)
                 }
 
                 #[inline]
-                fn reify_shard(sys_comps: &Vec<ComponentId>,
-                                shard: &component::Shard) -> <Self::JoinItem as Joined>::Indexer {
-                    ($(shard.get_section(sys_comps[$field_seq])),*,)
-                }
-
-                #[inline]
-                fn get_comp_ids(comp_ids: &HashMap<TypeId, ComponentId>) -> Vec<ComponentId> {
-                    vec![$(comp_ids[&TypeId::of::<$field_type::DataType>()]),*]
-                }
-
-                #[inline]
-                fn new(comp_ids: &[ComponentId], comp_map: &Registry<ComponentId>) -> Self {
-                    ($($field_type::new(comp_map.get::<ShardedColumn<$field_type::DataType>>(&comp_ids[$field_seq]))),*,)
+                fn get_shard_key() -> ShardKey {
+                    ($($field_type::DataType::get_unique_id())|*).into()
                 }
             }
         };
@@ -505,41 +520,64 @@ pub mod join {
     system_def!(A:0, B:1, C:2, D:3, E:4, F:5);
     system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
     system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+    impl QueryTup for () {
+        type DataTup = ();
+
+        fn reify_shard(_shard: &Shard) -> Self::DataTup {
+            unimplemented!()
+        }
+
+        #[inline]
+        fn get_shard_key() -> ShardKey {
+            ShardKey::empty()
+        }
+    }
+
+    impl<T> QueryTup for T
+    where
+        T: Query,
+        T::DataType: 'static + Component,
+    {
+        type DataTup = T::QueryItem;
+
+        #[inline]
+        fn reify_shard(shard: &Shard) -> Self::DataTup {
+            T::execute(shard)
+        }
+
+        #[inline]
+        fn get_shard_key() -> ShardKey {
+            T::DataType::get_unique_id().into()
+        }
+    }
 }
 
 pub mod context {
-    use super::{ComponentId, Entity, EntityId, HashMap, IndexMap, IndexablePtrTup, Joined, ShardId};
-    use indexmap::map::Values;
+    use super::{ComponentCoords, DataTup, EntityId, HashMap, IndexMap, IndexablePtrTup, ShardKey};
+    use indexmap::map::ValuesMut;
 
-    pub struct Context<'a, T>
+    pub struct ComponentContext<'a, T>
     where
-        T: Joined,
+        T: DataTup,
     {
-        stores: T,
-        shards: &'a IndexMap<ShardId, T::Indexer>,
-        entity_map: &'a HashMap<EntityId, Entity>,
-        components: &'a Vec<ComponentId>,
+        shards: &'a mut IndexMap<ShardKey, T>,
+        entities: &'a HashMap<EntityId, ComponentCoords>,
     }
 
-    impl<'a, T> Context<'a, T>
+    impl<'a, T> ComponentContext<'a, T>
     where
-        T: Joined,
+        T: DataTup,
     {
         #[inline]
         pub fn new(
-            stores: T,
-            shards: &'a IndexMap<ShardId, T::Indexer>,
-            entity_map: &'a HashMap<EntityId, Entity>,
-            components: &'a Vec<ComponentId>,
-        ) -> Context<'a, T> {
-            Context {
-                stores,
-                shards,
-                entity_map,
-                components,
-            }
+            shards: &'a mut IndexMap<ShardKey, T>,
+            entities: &'a HashMap<EntityId, ComponentCoords>,
+        ) -> ComponentContext<'a, T> {
+            ComponentContext { shards, entities }
         }
 
+        #[allow(unused_variables)]
         #[inline]
         pub fn for_each<F>(&mut self, entities: &[EntityId], f: F)
         where
@@ -547,28 +585,30 @@ pub mod context {
         {
             entities
                 .iter()
-                .filter_map(move |eid| {
-                    if let Some(entity) = self.entity_map.get(eid) {
-                        Some(self.stores.get_entity(&entity, self.components))
-                    } else {
-                        None
-                    }
+                .filter_map(move |id| {
+                    let (shard_key, loc) = self.entities.get(id)?;
+                    let shard = self.shards.get_mut(shard_key)?;
+                    Some(shard.get_entity(*loc))
                 })
                 .for_each(f);
         }
 
         #[inline]
         pub fn iter(&mut self) -> ComponentIterator<T> {
-            let mut stream = self.shards.values();
+            Self::iter_core(&mut self.shards)
+        }
+
+        #[inline]
+        fn iter_core(shards: &mut IndexMap<ShardKey, T>) -> ComponentIterator<T> {
+            let mut stream = shards.values_mut();
 
             unsafe {
                 let (size, shard) = match stream.next() {
-                    Some(item) => self.stores.get_ptr_tup(item),
+                    Some(item) => item.get_ptr_tup(),
                     _ => (0usize, T::get_zero_ptr_tup()),
                 };
 
                 ComponentIterator {
-                    stores: &mut self.stores,
                     stream,
                     shard,
                     size,
@@ -578,12 +618,24 @@ pub mod context {
         }
     }
 
+    impl<'a, T> IntoIterator for ComponentContext<'a, T>
+    where
+        T: DataTup,
+    {
+        type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
+        type IntoIter = ComponentIterator<'a, T>;
+
+        #[inline]
+        fn into_iter(self) -> ComponentIterator<'a, T> {
+            Self::iter_core(self.shards)
+        }
+    }
+
     pub struct ComponentIterator<'a, T>
     where
-        T: Joined,
+        T: DataTup,
     {
-        stores: &'a mut T,
-        stream: Values<'a, ShardId, T::Indexer>,
+        stream: ValuesMut<'a, ShardKey, T>,
         shard: T::PtrTup,
         size: usize,
         counter: usize,
@@ -591,7 +643,7 @@ pub mod context {
 
     impl<'a, T> Iterator for ComponentIterator<'a, T>
     where
-        T: Joined,
+        T: DataTup,
     {
         type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
 
@@ -604,70 +656,212 @@ pub mod context {
                     return Some(self.shard.index(idx));
                 }
 
-                if let Some(item) = self.stream.next() {
-                    let (size, shard) = self.stores.get_ptr_tup(item);
-                    self.shard = shard;
-                    self.size = size;
-                    self.counter = 0;
-                } else {
-                    return None;
-                }
+                let item = self.stream.next()?;
+                let (size, shard) = item.get_ptr_tup();
+                self.shard = shard;
+                self.size = size;
+                self.counter = 0;
             }
         }
     }
 }
 
-/*
 #[cfg(test)]
 mod tests {
-    use crate::entity;
-    use crate::prelude::*;
+    use super::store::{Read, Write};
+    use super::*;
+    use crate::component::ComponentVec;
+    use crate::identity::ComponentId;
+    use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
+    use std::sync::atomic::ATOMIC_USIZE_INIT;
+    use std::sync::Arc;
+    use t51core_proc::Component;
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompA(i32);
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompB(u64);
+
+    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    struct CompC {
+        x: i32,
+        y: i32,
+    }
+
+    #[derive(Component, Serialize, Deserialize, Debug, Eq, PartialEq)]
+    struct CompD(u8);
+
+    fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId) {
+        EntityId::acquire_unique_id();
+
+        (
+            CompA::acquire_unique_id(),
+            CompB::acquire_unique_id(),
+            CompC::acquire_unique_id(),
+            CompD::acquire_unique_id(),
+        )
+    }
+
+    fn make_shard_1() -> Shard {
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        let comp_1_id = CompA::get_unique_id();
+        let comp_2_id = CompB::get_unique_id();
+
+        let data_a = vec![CompA(0), CompA(1), CompA(2)];
+        let data_b = vec![CompB(0), CompB(1), CompB(2)];
+
+        map.insert(comp_1_id, Box::new(data_a));
+        map.insert(comp_2_id, Box::new(data_b));
+
+        let entities: Vec<EntityId> = vec![0.into(), 1.into(), 2.into()];
+
+        Shard::new_with_ents(comp_1_id + comp_2_id + EntityId::get_unique_id(), entities, map)
+    }
+
+    fn make_shard_2() -> Shard {
+        let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
+        let comp_1_id = CompB::get_unique_id();
+        let comp_2_id = CompC::get_unique_id();
+
+        map.insert(comp_1_id, Box::new(Vec::<CompB>::new()));
+        map.insert(comp_2_id, Box::new(Vec::<CompC>::new()));
+
+        Shard::new(comp_1_id + comp_2_id + EntityId::get_unique_id(), map)
+    }
 
     #[test]
-    fn test_for_each() {
-        struct TestSystem<'a> {
-            collector: Vec<(EntityId, i32, f32)>,
-            _p: PhantomData<&'a ()>,
-        }
+    fn test_check_shard() {
+        setup();
 
-        impl<'a> System for TestSystem<'a> {
-            require!(Read<'a, EntityId>, Read<'a, i32>, Write<'a, f32>);
+        let (a_id, b_id, c_id, d_id) = setup();
 
-            fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: entity::EntityStore) {
-                let entity_ids: Vec<_> = (0..4).map(|id| id.into()).collect();
-                ctx.for_each(&entity_ids, |(id, a, b)| {
-                    self.collector.push((*id, *a, *b));
-                });
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
+
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+                unimplemented!()
             }
         }
 
-        let mut world = World::new();
+        let system = SystemRuntime::new(TestSystem(PhantomData));
 
-        world.register_component::<i32>();
-        world.register_component::<f32>();
-        world.register_component::<f64>();
+        assert!(system.check_shard(a_id + b_id + c_id + d_id));
+        assert!(system.check_shard(a_id + b_id + c_id));
+        assert!(!system.check_shard(a_id + b_id));
+        assert!(!system.check_shard(b_id + c_id));
+        assert!(!system.check_shard(a_id.into()));
+    }
 
-        let system_id = world.register_system(TestSystem {
-            collector: Vec::new(),
+    #[test]
+    fn test_add_shard() {
+        setup();
+
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = Read<'a, CompB>;
+
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+                unimplemented!()
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem(PhantomData));
+
+        let shard_1 = make_shard_1();
+        let shard_2 = make_shard_2();
+
+        system.add_shard(&shard_1);
+        system.add_shard(&shard_2);
+
+        assert_eq!(system.data.shards[&shard_1.key].get_ptr(), shard_1.data_ptr::<CompB>());
+        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+    }
+
+    #[test]
+    fn test_remove_shard() {
+        struct TestSystem<'a>(PhantomData<&'a ()>);
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = Read<'a, CompB>;
+
+            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+                unimplemented!()
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem(PhantomData));
+
+        let shard_1 = make_shard_1();
+        let shard_2 = make_shard_2();
+
+        system.add_shard(&shard_1);
+        system.add_shard(&shard_2);
+
+        system.remove_shard(shard_1.key);
+
+        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+        assert!(!system.data.shards.contains_key(&shard_1.key));
+    }
+
+    #[test]
+    fn test_run() {
+        setup();
+
+        struct TestSystem<'a> {
+            collect_run: Vec<(EntityId, CompA, CompB)>,
+            collect_foreach: Vec<(EntityId, CompA, CompB)>,
+            _p: PhantomData<&'a ()>,
+        };
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
+
+            fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
+                let mut entities = Vec::new();
+
+                for (&id, a, b) in data.components() {
+                    entities.push(id);
+                    self.collect_run.push((id, a.clone(), b.clone()));
+                }
+
+                data.components().for_each(&entities, |(id, a, b)| {
+                    self.collect_foreach.push((*id, a.clone(), b.clone()));
+                })
+            }
+        }
+
+        let mut system = SystemRuntime::new(TestSystem {
+            collect_run: Vec::new(),
+            collect_foreach: Vec::new(),
             _p: PhantomData,
         });
-        let system = world.get_system::<TestSystem>(system_id);
 
-        world.entities().create().with(0i32).with(0f32).build();
-        world.entities().create().with(1i32).with(1f32).build();
-        world.entities().create().with(2i32).with(2f32).build();
-        world.entities().create().with(3i32).with(3f32).with(5f64).build();
+        let shard_1 = make_shard_1();
 
-        world.run();
+        system.add_shard(&shard_1);
 
-        let state: Vec<_> = system.write().get_system_mut().collector.drain(..).collect();
+        let mut entities: HashMap<EntityId, _> = HashMap::new();
+        entities.insert(0.into(), (shard_1.key, 0));
+        entities.insert(1.into(), (shard_1.key, 1));
+        entities.insert(2.into(), (shard_1.key, 2));
 
-        assert_eq!(state.len(), 4);
-        assert_eq!(state[0], (0.into(), 0, 0f32));
-        assert_eq!(state[1], (1.into(), 1, 1f32));
-        assert_eq!(state[2], (2.into(), 2, 2f32));
-        assert_eq!(state[3], (3.into(), 3, 3f32));
+        let mut transactions = TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT));
+
+        system.run(&entities, &mut transactions);
+
+        assert_eq!(system.runstate.collect_run.len(), 3);
+        assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));
+        assert_eq!(system.runstate.collect_run[1], (1.into(), CompA(1), CompB(1)));
+        assert_eq!(system.runstate.collect_run[2], (2.into(), CompA(2), CompB(2)));
+
+        assert_eq!(system.runstate.collect_foreach.len(), 3);
+        assert_eq!(system.runstate.collect_foreach[0], (0.into(), CompA(0), CompB(0)));
+        assert_eq!(system.runstate.collect_foreach[1], (1.into(), CompA(1), CompB(1)));
+        assert_eq!(system.runstate.collect_foreach[2], (2.into(), CompA(2), CompB(2)));
     }
 }
-*/

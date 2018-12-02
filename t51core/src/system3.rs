@@ -1,20 +1,32 @@
 use crate::component2::Component;
-use crate::component3::Shard;
+use crate::component3::{ComponentCoords, Shard};
 use crate::entity2::{EntityId, TransactionContext};
 use crate::identity2::ShardKey;
+use hashbrown::HashMap;
 use indexmap::IndexMap;
 
 pub trait System {
     type Data: QueryTup;
 
-    fn run(&mut self, data: &mut SystemData<Self::Data>, transactions: &mut TransactionContext);
+    fn run(&mut self, data: Context<Self::Data>, transactions: &mut TransactionContext);
 }
 
-pub trait SystemRuntime {
-    fn run(&mut self, transactions: &mut TransactionContext);
-    fn add_shard(&mut self, shard: &Shard);
-    fn remove_shard(&mut self, key: ShardKey);
-    fn check_shard(&self, shard_key: ShardKey) -> bool;
+pub struct Context<'a, T>
+where
+    T: QueryTup,
+{
+    system_data: &'a mut SystemData<T>,
+    entities: &'a HashMap<EntityId, ComponentCoords>,
+}
+
+impl<'a, T> Context<'a, T>
+where
+    T: QueryTup,
+{
+    #[inline]
+    pub fn components(&mut self) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+        self.system_data.components(self.entities)
+    }
 }
 
 pub struct SystemData<T>
@@ -29,13 +41,21 @@ where
     T: QueryTup,
 {
     #[inline]
-    pub(crate) fn new() -> SystemData<T> {
+    fn new() -> SystemData<T> {
         SystemData { shards: IndexMap::new() }
     }
 
     #[inline]
-    pub fn context(&mut self) -> context::Context<<T as QueryTup>::DataTup> {
-        context::Context::new(&mut self.shards)
+    pub fn components<'a>(
+        &'a mut self,
+        entities: &'a HashMap<EntityId, ComponentCoords>,
+    ) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+        context::ComponentContext::new(&mut self.shards, entities)
+    }
+
+    #[inline]
+    pub fn resources(&mut self) {
+        unimplemented!()
     }
 
     #[inline]
@@ -77,13 +97,26 @@ where
     }
 }
 
+pub trait SystemRuntime {
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext);
+    fn add_shard(&mut self, shard: &Shard);
+    fn remove_shard(&mut self, key: ShardKey);
+    fn check_shard(&self, shard_key: ShardKey) -> bool;
+}
+
 impl<T> SystemRuntime for SystemEntry<T>
 where
     T: System,
 {
     #[inline]
-    fn run(&mut self, transactions: &mut TransactionContext) {
-        self.system.run(&mut self.data, transactions);
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext) {
+        self.system.run(
+            Context {
+                system_data: &mut self.data,
+                entities,
+            },
+            transactions,
+        );
     }
 
     #[inline]
@@ -361,7 +394,10 @@ pub mod join {
         }
     }
 
-    impl<T> IndexablePtrTup for T where T: Indexable {
+    impl<T> IndexablePtrTup for T
+    where
+        T: Indexable,
+    {
         type ItemTup = T::Item;
 
         #[inline]
@@ -423,7 +459,10 @@ pub mod join {
         }
     }
 
-    impl<T> DataTup for T where T: Data {
+    impl<T> DataTup for T
+    where
+        T: Data,
+    {
         type PtrTup = T::DataPtr;
         type ItemTup = T::Item;
 
@@ -481,18 +520,25 @@ pub mod join {
             unimplemented!()
         }
 
+        #[inline]
         fn get_shard_key() -> ShardKey {
             ShardKey::empty()
         }
     }
 
-    impl<T> QueryTup for T where T: Query, T::DataType: 'static + Component {
+    impl<T> QueryTup for T
+    where
+        T: Query,
+        T::DataType: 'static + Component,
+    {
         type DataTup = T::QueryItem;
 
+        #[inline]
         fn reify_shard(shard: &Shard) -> Self::DataTup {
             T::execute(shard)
         }
 
+        #[inline]
         fn get_shard_key() -> ShardKey {
             T::DataType::get_unique_id().into()
         }
@@ -500,23 +546,27 @@ pub mod join {
 }
 
 pub mod context {
-    use super::{DataTup, EntityId, IndexMap, IndexablePtrTup, ShardKey};
+    use super::{ComponentCoords, DataTup, EntityId, HashMap, IndexMap, IndexablePtrTup, ShardKey};
     use indexmap::map::ValuesMut;
 
-    pub struct Context<'a, T>
+    pub struct ComponentContext<'a, T>
     where
         T: DataTup,
     {
         shards: &'a mut IndexMap<ShardKey, T>,
+        entities: &'a HashMap<EntityId, ComponentCoords>,
     }
 
-    impl<'a, T> Context<'a, T>
+    impl<'a, T> ComponentContext<'a, T>
     where
         T: DataTup,
     {
         #[inline]
-        pub fn new(shards: &'a mut IndexMap<ShardKey, T>) -> Context<'a, T> {
-            Context { shards }
+        pub fn new(
+            shards: &'a mut IndexMap<ShardKey, T>,
+            entities: &'a HashMap<EntityId, ComponentCoords>,
+        ) -> ComponentContext<'a, T> {
+            ComponentContext { shards, entities }
         }
 
         #[allow(unused_variables)]
@@ -525,14 +575,14 @@ pub mod context {
         where
             F: FnMut(T::ItemTup),
         {
-            // TODO: Add entity getting
-            //            entities
-            //                .iter()
-            //                .filter_map(move |&id| {
-            //                    self.stores.get_entity(id)
-            //                })
-            //                .for_each(f);
-            unimplemented!()
+            entities
+                .iter()
+                .filter_map(move |id| {
+                    let (shard_key, loc) = self.entities.get(id)?;
+                    let shard = self.shards.get_mut(shard_key)?;
+                    Some(shard.get_entity(*loc))
+                })
+                .for_each(f);
         }
 
         #[inline]
@@ -541,7 +591,7 @@ pub mod context {
         }
 
         #[inline]
-        fn iter_core(shards: & mut IndexMap<ShardKey, T>) -> ComponentIterator<T> {
+        fn iter_core(shards: &mut IndexMap<ShardKey, T>) -> ComponentIterator<T> {
             let mut stream = shards.values_mut();
 
             unsafe {
@@ -560,10 +610,14 @@ pub mod context {
         }
     }
 
-    impl<'a, T> IntoIterator for Context<'a, T> where T: DataTup {
+    impl<'a, T> IntoIterator for ComponentContext<'a, T>
+    where
+        T: DataTup,
+    {
         type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
         type IntoIter = ComponentIterator<'a, T>;
 
+        #[inline]
         fn into_iter(self) -> ComponentIterator<'a, T> {
             Self::iter_core(self.shards)
         }

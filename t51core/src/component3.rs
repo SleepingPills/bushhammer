@@ -3,6 +3,9 @@ use crate::entity2::dynamic::DynVec;
 use crate::entity2::{EntityId, ShardDef};
 use crate::identity2::{ComponentId, ShardKey};
 use hashbrown::HashMap;
+use std::ops::Range;
+
+pub(crate) type ComponentCoords = (ShardKey, usize);
 
 pub trait ComponentVec {
     fn ingest(&mut self, data: &mut DynVec);
@@ -34,41 +37,31 @@ where
 pub struct Shard {
     pub(crate) key: ShardKey,
     entities: Vec<EntityId>,
-    locs: HashMap<EntityId, usize>,
     store: HashMap<ComponentId, Box<ComponentVec>>,
 }
 
 impl Shard {
-    pub fn ingest(&mut self, shard_def: &mut ShardDef) {
+    pub fn ingest(&mut self, shard_def: &mut ShardDef) -> Range<usize> {
         for (id, data) in shard_def.components.iter_mut() {
             self.store.get_mut(id).unwrap().ingest(data);
         }
 
-        let mut loc_count = self.entities.len();
+        let loc_count = self.entities.len();
 
-        self.entities.extend(&shard_def.entity_ids);
+        self.entities.append(&mut shard_def.entity_ids);
 
-        for &entity_id in shard_def.entity_ids.iter() {
-            self.locs.insert(entity_id, loc_count);
-            loc_count += 1;
-        }
-
-        unsafe {
-            let entity_vec = &mut *(self.store[&EntityId::get_unique_id()].get_ptr() as *mut Vec<EntityId>);
-            entity_vec.append(&mut shard_def.entity_ids);
-        }
+        (loc_count..self.entities.len())
     }
 
-    pub fn remove(&mut self, id: EntityId) {
-        if let Some(del_loc) = self.locs.remove(&id) {
-            self.entities.swap_remove(del_loc);
-            let swapped_id = self.entities[del_loc];
-            self.locs.insert(swapped_id, del_loc);
+    #[inline]
+    pub fn remove(&mut self, loc: usize) -> Option<EntityId> {
+        self.entities.swap_remove(loc);
 
-            for data in self.store.values_mut() {
-                data.remove(del_loc);
-            }
+        for data in self.store.values_mut() {
+            data.remove(loc);
         }
+
+        self.entities.get(loc).and_then(|eid| Some(*eid))
     }
 
     #[inline]
@@ -91,3 +84,14 @@ impl Shard {
         unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *mut  Vec<T> }
     }
 }
+
+/*
+TODO: Entity removal/lookup handling solution below
+
+The world will store the full (ShardKey, Loc) coords of each entity. This allows quick lookups and removes
+the need to maintain this info per shard.
+
+ - Ingest returns the locations of the newly added entities. This is just a range so it's efficient.
+ - Remove will remove the entries at the location looked up in the registry in World. It will return the id of
+   the swapped entity if there is anything in the vector remaining.
+*/

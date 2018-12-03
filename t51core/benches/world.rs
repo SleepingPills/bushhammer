@@ -1,22 +1,33 @@
 #[macro_use]
 extern crate criterion;
-#[macro_use]
-extern crate t51core;
 
+extern crate t51core;
 use criterion::Criterion;
 use std::marker::PhantomData;
 use t51core::prelude::*;
+use t51core_proc::Component;
+
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C1(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C2(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C3(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C4(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C5(u32);
 
 fn add_ents(c: &mut Criterion) {
     struct TestSystem<'a> {
         _p: PhantomData<&'a ()>,
     }
 
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, i8>, Write<'a, i16>);
+    impl<'a> RunSystem for TestSystem<'a> {
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
-        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
+        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}
     }
 
     c.bench_function("Add Entity", move |b| {
@@ -26,93 +37,52 @@ fn add_ents(c: &mut Criterion) {
                 let mut world = World::new();
 
                 // Register Components
-                world.register_component::<i8>();
-                world.register_component::<i16>();
-                world.register_component::<i32>();
-                world.register_component::<i64>();
-                world.register_component::<u8>();
-                world.register_component::<u16>();
-                world.register_component::<u32>();
-                world.register_component::<u64>();
-
-                // Register System
-                world.register_system(TestSystem { _p: PhantomData });
-                world
-            },
-            |mut world| {
-                let mut entities = world.entities();
-
-                for i in 0..100 {
-                    entities.create().with(i as i8).with(i as i16).build();
-                }
-
-                for i in 0..100 {
-                    entities.create().with(i as i16).with(i as i16).with(i as i32).build();
-                }
-
-                for i in 0..100 {
-                    entities.create().with(i as i32).with(i as u8).with(i as u16).build();
-                }
-
-                for i in 0..100 {
-                    entities.create().with(i as u8).with(i as u16).with(i as u32).build();
-                }
-
-                for i in 0..100 {
-                    entities.create().with(i as u16).with(i as u32).with(i as u64).build();
-                }
-
-                world.process_transactions();
-                world
-            },
-        )
-    });
-}
-
-fn edit_ents(c: &mut Criterion) {
-    struct TestSystem<'a> {
-        _p: PhantomData<&'a ()>,
-    }
-
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, i8>, Write<'a, i16>);
-
-        #[inline]
-        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
-    }
-
-    c.bench_function("Edit Entity", move |b| {
-        b.iter_with_setup(
-            || {
-                // Create World
-                let mut world = World::new();
-
-                // Register Components
-                world.register_component::<i8>();
-                world.register_component::<i16>();
-                world.register_component::<i32>();
+                world.register_component::<C1>();
+                world.register_component::<C2>();
+                world.register_component::<C3>();
+                world.register_component::<C4>();
+                world.register_component::<C5>();
 
                 // Register System
                 world.register_system(TestSystem { _p: PhantomData });
 
-                for i in 0..500 {
-                    world.entities().create().with(i as i8).with(i as i16).build();
-                }
-
-                world.process_transactions();
+                // Build World
+                world.build();
                 world
             },
             |mut world| {
-                let mut entities = world.entities();
+                let entities = world.entities();
 
-                // These are moved
-                for i in 0..250 {
-                    entities.edit(i.into()).unwrap().with(i as i32).with(i as i16).commit();
+                {
+                    let mut batcher = entities.batch::<(C1, C2)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C1(i), C2(i));
+                    }
                 }
 
-                // These are updated
-                for i in 250..500 {
-                    entities.edit(i.into()).unwrap().with(i as i8).with(i as i16).commit();
+                {
+                    let mut batcher = entities.batch::<(C2, C3)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C2(i), C3(i));
+                    }
+                }
+
+                {
+                    let mut batcher = entities.batch::<(C3, C4)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C3(i), C4(i));
+                    }
+                }
+
+                {
+                    let mut batcher = entities.batch::<(C4, C5)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C4(i), C5(i));
+                    }
                 }
 
                 world.process_transactions();
@@ -127,11 +97,11 @@ fn remove_ents(c: &mut Criterion) {
         _p: PhantomData<&'a ()>,
     }
 
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, i8>, Write<'a, i16>);
+    impl<'a> RunSystem for TestSystem<'a> {
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
-        fn run(&mut self, _ctx: Context<Self::JoinItem>, _entities: EntityStore) {}
+        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}
     }
 
     c.bench_function("Remove Entity", move |b| {
@@ -141,29 +111,60 @@ fn remove_ents(c: &mut Criterion) {
                 let mut world = World::new();
 
                 // Register Components
-                world.register_component::<i8>();
-                world.register_component::<i16>();
-                world.register_component::<i32>();
+                world.register_component::<C1>();
+                world.register_component::<C2>();
+                world.register_component::<C3>();
+                world.register_component::<C4>();
+                world.register_component::<C5>();
 
                 // Register System
                 world.register_system(TestSystem { _p: PhantomData });
 
-                for i in 0..250 {
-                    world.entities().create().with(i as i8).with(i as i16).build();
+                // Build World
+                world.build();
+
+                let entities = world.entities();
+
+                {
+                    let mut batcher = entities.batch::<(C1, C2)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C1(i), C2(i));
+                    }
                 }
 
-                for i in 0..250 {
-                    world.entities().create().with(i as i16).with(i as i32).build();
+                {
+                    let mut batcher = entities.batch::<(C2, C3)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C2(i), C3(i));
+                    }
+                }
+
+                {
+                    let mut batcher = entities.batch::<(C3, C4)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C3(i), C4(i));
+                    }
+                }
+
+                {
+                    let mut batcher = entities.batch::<(C4, C5)>();
+
+                    for i in 0..2500 {
+                        batcher.add(C4(i), C5(i));
+                    }
                 }
 
                 world.process_transactions();
                 world
             },
             |mut world| {
-                let mut entities = world.entities();
+                let entities = world.entities();
 
                 // These are moved
-                for i in 0..500 {
+                for i in 0..10000 {
                     entities.remove(i.into())
                 }
 
@@ -174,5 +175,5 @@ fn remove_ents(c: &mut Criterion) {
     });
 }
 
-criterion_group!(benches, add_ents, edit_ents, remove_ents);
+criterion_group!(benches, add_ents, remove_ents);
 criterion_main!(benches);

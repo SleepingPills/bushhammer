@@ -106,14 +106,6 @@ impl World {
         }
     }
 
-    #[inline]
-    pub fn get_system<T>(&self, id: SystemId) -> Arc<RwCell<SystemRuntime<T>>>
-    where
-        T: 'static + RunSystem,
-    {
-        self.state.systems.get::<SystemRuntime<T>>(&id)
-    }
-
     // TODO: Check the performance impact of drain/rebuild and switch if negligible
     /// Horribly unsafe function to get mutable references to multiple elements of the system
     /// transactions without having to drain and rebuild the vector all the time.

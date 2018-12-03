@@ -22,7 +22,6 @@ pub trait Component: DeserializeOwned + Debug {
     }
 }
 
-
 pub trait ComponentVec {
     fn ingest(&mut self, data: &mut DynVec);
     fn remove(&mut self, loc: usize);

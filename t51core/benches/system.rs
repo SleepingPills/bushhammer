@@ -1,16 +1,16 @@
 #[macro_use]
 extern crate criterion;
-#[macro_use]
-extern crate t51core;
 
+extern crate t51core;
 use criterion::black_box;
 use criterion::Criterion;
 use rand::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use t51core::prelude::*;
+use t51core_proc::Component;
 
-#[derive(Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct C1 {
     x: f32,
     y: f32,
@@ -27,7 +27,7 @@ impl C1 {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Component, Serialize, Deserialize, Debug)]
 pub struct C2 {
     x: f32,
     y: f32,
@@ -150,14 +150,14 @@ fn system_loop_linear_bench(c: &mut Criterion) {
         _p: PhantomData<&'a ()>,
     }
 
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, C1>, Write<'a, C2>);
+    impl<'a> RunSystem for TestSystem<'a> {
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {
+        fn run(&mut self, mut data: Context<Self::Data>, tx: &mut TransactionContext) {
             let mut c = 0f32;
 
-            for (a, b) in ctx.iter() {
+            for (a, b) in data.components() {
                 b.x += a.x;
                 b.y += a.y;
                 b.z += a.z;
@@ -178,9 +178,16 @@ fn system_loop_linear_bench(c: &mut Criterion) {
     // Register System
     world.register_system(TestSystem { _p: PhantomData });
 
-    // Add Entities
-    for i in 0..5000 {
-        world.entities().create().with(C1::new(i as f32)).with(C2::new(0f32)).build();
+    // Build the world
+    world.build();
+
+    {
+        let mut batcher = world.entities().batch::<(C1, C2)>();
+
+        // Add Entities
+        for i in 0..5000 {
+            batcher.add(C1::new(i as f32), C2::new(0f32));
+        }
     }
 
     world.process_transactions();
@@ -192,19 +199,28 @@ fn system_loop_linear_bench(c: &mut Criterion) {
     });
 }
 
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C3(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C4(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C5(u32);
+#[derive(Component, Serialize, Deserialize, Debug, Clone)]
+pub struct C6(u32);
+
 fn system_loop_multi_shards(c: &mut Criterion) {
     struct TestSystem<'a> {
         _p: PhantomData<&'a ()>,
     }
 
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, C1>, Write<'a, C2>);
+    impl<'a> RunSystem for TestSystem<'a> {
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {
+        fn run(&mut self, mut data: Context<Self::Data>, tx: &mut TransactionContext) {
             let mut c = 0f32;
 
-            for (a, b) in ctx.iter() {
+            for (a, b) in data.components() {
                 b.x += a.x;
                 b.y += a.y;
                 b.z += a.z;
@@ -221,42 +237,33 @@ fn system_loop_multi_shards(c: &mut Criterion) {
     // Register a truckload of components to fracture the data space into many shards
     world.register_component::<C1>();
     world.register_component::<C2>();
-    world.register_component::<i8>();
-    world.register_component::<i16>();
-    world.register_component::<i32>();
-    world.register_component::<i64>();
-    world.register_component::<u8>();
-    world.register_component::<u16>();
-    world.register_component::<u32>();
-    world.register_component::<u64>();
+    world.register_component::<C3>();
+    world.register_component::<C4>();
+    world.register_component::<C5>();
+    world.register_component::<C6>();
 
     // Register System
     world.register_system(TestSystem { _p: PhantomData });
 
-    fn make_ent<T>(world: &mut World, specialized: T, i: i32)
+    // Build the world
+    world.build();
+
+    fn make_ent<T>(world: &mut World, specialized: T)
     where
-        T: 'static,
+        T: 'static + Component + Clone,
     {
-        world
-            .entities()
-            .create()
-            .with(specialized)
-            .with(C1::new(i as f32))
-            .with(C2::new(i as f32))
-            .build();
+        let mut builder = world.entities().batch::<(C1, C2, T)>();
+
+        for i in 0..1250 {
+            builder.add(C1::new(i as f32), C2::new(i as f32), specialized.clone());
+        }
     }
 
     // Add Entities
-    for i in 0..625 {
-        make_ent(&mut world, i as i8, i);
-        make_ent(&mut world, i as i16, i);
-        make_ent(&mut world, i as i32, i);
-        make_ent(&mut world, i as i64, i);
-        make_ent(&mut world, i as u8, i);
-        make_ent(&mut world, i as u16, i);
-        make_ent(&mut world, i as u32, i);
-        make_ent(&mut world, i as u64, i);
-    }
+    make_ent(&mut world, C3(0));
+    make_ent(&mut world, C4(0));
+    make_ent(&mut world, C5(0));
+    make_ent(&mut world, C6(0));
 
     world.process_transactions();
 
@@ -272,15 +279,15 @@ fn system_loop_foreach_ent(c: &mut Criterion) {
         _p: PhantomData<&'a ()>,
     }
 
-    impl<'a> System for TestSystem<'a> {
-        require!(Read<'a, C1>, Write<'a, C2>);
+    impl<'a> RunSystem for TestSystem<'a> {
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
-        fn run(&mut self, mut ctx: Context<Self::JoinItem>, _entities: EntityStore) {
+        fn run(&mut self, mut   data: Context<Self::Data>, tx: &mut TransactionContext) {
             let mut c = 0f32;
             let entity_ids: Vec<_> = (0..5000).map(|id| id.into()).collect();
 
-            ctx.for_each(&entity_ids, |(a, b)| {
+            data.components().for_each(&entity_ids, |(a, b)| {
                 b.x += a.x;
                 b.y += a.y;
                 b.z += a.z;
@@ -301,9 +308,16 @@ fn system_loop_foreach_ent(c: &mut Criterion) {
     // Register System
     world.register_system(TestSystem { _p: PhantomData });
 
-    // Add Entities
-    for i in 0..5000 {
-        world.entities().create().with(C1::new(i as f32)).with(C2::new(0f32)).build();
+    // Build the world
+    world.build();
+
+    {
+        let mut batcher = world.entities().batch::<(C1, C2)>();
+
+        // Add Entities
+        for i in 0..5000 {
+            batcher.add(C1::new(i as f32), C2::new(0f32));
+        }
     }
 
     world.process_transactions();

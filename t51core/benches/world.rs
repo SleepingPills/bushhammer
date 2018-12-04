@@ -34,7 +34,7 @@ fn add_ents(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 // Create World
-                let mut world = World::new();
+                let mut world = World::default();
 
                 // Register Components
                 world.register_component::<C1>();
@@ -108,7 +108,7 @@ fn remove_ents(c: &mut Criterion) {
         b.iter_with_setup(
             || {
                 // Create World
-                let mut world = World::new();
+                let mut world = World::default();
 
                 // Register Components
                 world.register_component::<C1>();

@@ -3,13 +3,19 @@ use crate::component::{ComponentCoords, ComponentVec, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
 use crate::identity::{ComponentId, ShardKey, SystemId};
 use crate::registry::Registry;
-use crate::sync::RwCell;
 use crate::system::{RunSystem, System, SystemRuntime};
 use hashbrown::HashMap;
 use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
+use std::thread;
+use std::time;
+
 
 pub struct World {
+    // Global Settings
+    frame_time: time::Duration,
+
+    // Game State
     state: GameState,
 
     // Transactions
@@ -31,8 +37,9 @@ impl World {
 
 impl World {
     #[inline]
-    pub fn new() -> Self {
+    pub fn default() -> Self {
         let mut world = World {
+            frame_time: time::Duration::from_millis(50),
             state: GameState::new(),
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
@@ -62,9 +69,31 @@ impl World {
     }
 
     #[inline]
-    pub fn run_once(&mut self) {
+    pub fn run_once(&mut self) -> bool {
         self.process_transactions();
         self.process_systems();
+
+        // Eventually, process stopping conditions from various triggers (local or via network).
+        true
+    }
+
+    #[inline]
+    pub fn run(&mut self) {
+        let mut proceed = true;
+
+        while proceed {
+            let before = time::Instant::now();
+
+            proceed = self.run_once();
+
+            let elapsed = time::Instant::now().duration_since(before);
+
+            if elapsed < self.frame_time {
+                let timeout = self.frame_time - elapsed;
+                println!("*** {:#?} ***", timeout);
+                thread::sleep(timeout);
+            }
+        }
     }
 }
 
@@ -249,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_add_entity() {
-        let mut world = World::new();
+        let mut world = World::default();
         world.register_component::<CompA>();
         world.register_component::<CompB>();
         world.register_component::<CompC>();
@@ -287,7 +316,7 @@ mod tests {
 
     #[test]
     fn test_remove_entity() {
-        let mut world = World::new();
+        let mut world = World::default();
         world.register_component::<CompA>();
         world.register_component::<CompB>();
         world.register_component::<CompC>();
@@ -352,7 +381,7 @@ mod tests {
             }
         }
 
-        let mut world = World::new();
+        let mut world = World::default();
         world.register_component::<CompA>();
         world.register_component::<CompB>();
         world.register_component::<CompC>();

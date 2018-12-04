@@ -9,6 +9,7 @@ use serde_derive::{Deserialize, Serialize};
 use std::marker::PhantomData;
 use t51core::prelude::*;
 use t51core_proc::Component;
+use t51core::component::Component;
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct C1 {
@@ -169,7 +170,7 @@ fn system_loop_linear_bench(c: &mut Criterion) {
     }
 
     // Create World
-    let mut world = World::new();
+    let mut world = World::default();
 
     // Register Components
     world.register_component::<C1>();
@@ -232,7 +233,7 @@ fn system_loop_multi_shards(c: &mut Criterion) {
     }
 
     // Create World
-    let mut world = World::new();
+    let mut world = World::default();
 
     // Register a truckload of components to fracture the data space into many shards
     world.register_component::<C1>();
@@ -299,7 +300,7 @@ fn system_loop_foreach_ent(c: &mut Criterion) {
     }
 
     // Create World
-    let mut world = World::new();
+    let mut world = World::default();
 
     // Register Components
     world.register_component::<C1>();

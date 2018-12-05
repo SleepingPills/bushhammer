@@ -6,12 +6,12 @@ use anymap::AnyMap;
 use indexmap::IndexMap;
 
 use crate::sync::{ReadGuard, RwCell, RwGuard};
+use std::fmt::Display;
 use std::intrinsics::type_name;
 use std::marker::Unsize;
+use std::mem::ManuallyDrop;
 use std::ops::Deref;
 use std::ops::DerefMut;
-use std::fmt::Display;
-use std::mem::ManuallyDrop;
 
 /// Dynamically typed registry for shared ownership access to objects and traits they implement.
 /// Vanilla trait objects in rust take full ownership of the underlying instance, making it
@@ -62,7 +62,7 @@ where
     pub fn get<T: 'static>(&self, key: &K) -> Arc<RwCell<T>> {
         match self.try_get::<T>(key) {
             Some(item) => item,
-            _ => panic!("No {} instance found under key {}", unsafe{type_name::<T>()}, key),
+            _ => panic!("No {} instance found under key {}", unsafe { type_name::<T>() }, key),
         }
     }
 
@@ -179,7 +179,9 @@ pub struct WeakBox<T: ?Sized> {
 
 impl<T: ?Sized> WeakBox<T> {
     pub fn new(boxed: Box<T>) -> WeakBox<T> {
-        WeakBox { item: ManuallyDrop::new(boxed) }
+        WeakBox {
+            item: ManuallyDrop::new(boxed),
+        }
     }
 }
 

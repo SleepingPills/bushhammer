@@ -10,7 +10,6 @@ use std::sync::Arc;
 use std::thread;
 use std::time;
 
-
 pub struct World {
     // Global Settings
     frame_time: time::Duration,
@@ -251,12 +250,12 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_derive::{Deserialize, Serialize};
-    use std::marker::PhantomData;
-    use t51core_proc::Component;
     use crate::system::store::Read;
     use crate::system::store::Write;
     use crate::system::Context;
+    use serde_derive::{Deserialize, Serialize};
+    use std::marker::PhantomData;
+    use t51core_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);

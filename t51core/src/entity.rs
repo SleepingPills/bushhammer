@@ -1,4 +1,4 @@
-use crate::component::{Component};
+use crate::component::Component;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
@@ -59,7 +59,10 @@ impl ShardDef {
     #[inline]
     fn new(comp_ids: &[ComponentId], builders: &Vec<Box<dynamic::BuildDynVec>>) -> ShardDef {
         let map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
-        ShardDef {entity_ids: Vec::new(), components: map}
+        ShardDef {
+            entity_ids: Vec::new(),
+            components: map,
+        }
     }
 
     #[inline]
@@ -102,9 +105,10 @@ impl TransactionContext {
         let shard_key = ShardKey::from_iter(comp_ids.iter());
 
         let builders = &self.builders;
-        let shard = self.added.entry(shard_key).or_insert_with(|| {
-            ShardDef::new(comp_ids, builders)
-        });
+        let shard = self
+            .added
+            .entry(shard_key)
+            .or_insert_with(|| ShardDef::new(comp_ids, builders));
 
         JsonBatchBuilder {
             comp_ids,
@@ -173,9 +177,7 @@ impl<'a> JsonBatchBuilder<'a> {
         // Reset the batch counter
         self.batch_counter = 0;
 
-        unsafe {
-            self.shard.entity_ids.get_unchecked(new_slice_start..)
-        }
+        unsafe { self.shard.entity_ids.get_unchecked(new_slice_start..) }
     }
 }
 
@@ -260,9 +262,7 @@ impl<'a, T> BatchBuilder<'a, T> {
         // Reset the batch counter
         self.batch_counter = 0;
 
-        unsafe {
-            self.entity_vec.get_unchecked(new_slice_start..)
-        }
+        unsafe { self.entity_vec.get_unchecked(new_slice_start..) }
     }
 }
 

@@ -2,18 +2,21 @@ use crate::component::Component;
 use crate::component::{ComponentCoords, Shard};
 use crate::entity::{EntityId, TransactionContext};
 use crate::identity::ShardKey;
+use anymap::AnyMap;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
+use std::marker::PhantomData;
 
 pub trait RunSystem {
-    type Data: QueryTup = ();
+    type Data: ComponentQueryTup = ();
+//    type Resources: ResourceQueryTup = ();
 
     fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
 
 pub struct Context<'a, T>
 where
-    T: QueryTup,
+    T: ComponentQueryTup,
 {
     system_data: &'a mut SystemData<T>,
     entities: &'a HashMap<EntityId, ComponentCoords>,
@@ -21,24 +24,24 @@ where
 
 impl<'a, T> Context<'a, T>
 where
-    T: QueryTup,
+    T: ComponentQueryTup,
 {
     #[inline]
-    pub fn components(&mut self) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+    pub fn components(&mut self) -> context::ComponentContext<<T as ComponentQueryTup>::DataTup> {
         self.system_data.components(self.entities)
     }
 }
 
 pub struct SystemData<T>
 where
-    T: QueryTup,
+    T: ComponentQueryTup,
 {
     shards: IndexMap<ShardKey, T::DataTup>,
 }
 
 impl<T> SystemData<T>
 where
-    T: QueryTup,
+    T: ComponentQueryTup,
 {
     #[inline]
     fn new() -> SystemData<T> {
@@ -49,7 +52,7 @@ where
     pub fn components<'a>(
         &'a mut self,
         entities: &'a HashMap<EntityId, ComponentCoords>,
-    ) -> context::ComponentContext<<T as QueryTup>::DataTup> {
+    ) -> context::ComponentContext<<T as ComponentQueryTup>::DataTup> {
         context::ComponentContext::new(&mut self.shards, entities)
     }
 
@@ -169,8 +172,7 @@ pub trait IndexablePtrTup {
 }
 
 pub mod store {
-    use super::{Component, Data, Indexable, Query, Shard};
-    use std::marker::PhantomData;
+    use super::{Component, Data, Indexable, PhantomData, Query, Shard};
     use std::ptr;
 
     #[repr(transparent)]
@@ -349,7 +351,7 @@ pub mod store {
     }
 }
 
-pub trait DataTup {
+pub trait ComponentDataTup {
     type PtrTup: IndexablePtrTup;
     type ItemTup;
 
@@ -359,15 +361,15 @@ pub trait DataTup {
     unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
 }
 
-pub trait QueryTup {
-    type DataTup: DataTup;
+pub trait ComponentQueryTup {
+    type DataTup: ComponentDataTup;
 
     fn reify_shard(shard: &Shard) -> Self::DataTup;
     fn get_shard_key() -> ShardKey;
 }
 
 pub mod join {
-    use super::{Component, Data, DataTup, Indexable, IndexablePtrTup, Query, QueryTup, Shard, ShardKey};
+    use super::{Component, ComponentDataTup, ComponentQueryTup, Data, Indexable, IndexablePtrTup, Query, Shard, ShardKey};
 
     macro_rules! ptr_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
@@ -416,7 +418,7 @@ pub mod join {
 
     macro_rules! data_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
-            impl<$($field_type),*> DataTup for ($($field_type,)*)
+            impl<$($field_type),*> ComponentDataTup for ($($field_type,)*)
             where
                 $($field_type: Data,)*
             {
@@ -450,7 +452,7 @@ pub mod join {
     data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
     data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-    impl DataTup for () {
+    impl ComponentDataTup for () {
         type PtrTup = ();
         type ItemTup = ();
 
@@ -467,7 +469,7 @@ pub mod join {
         }
     }
 
-    impl<T> DataTup for T
+    impl<T> ComponentDataTup for T
     where
         T: Data,
     {
@@ -492,7 +494,7 @@ pub mod join {
 
     macro_rules! system_def {
         ($( $field_type:ident:$field_seq:tt ),*) => {
-            impl<$($field_type),*> QueryTup for ($($field_type,)*)
+            impl<$($field_type),*> ComponentQueryTup for ($($field_type,)*)
             where
                 $($field_type: Query,)*
                 $($field_type::DataType: 'static + Component,)*
@@ -521,7 +523,7 @@ pub mod join {
     system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
     system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-    impl QueryTup for () {
+    impl ComponentQueryTup for () {
         type DataTup = ();
 
         fn reify_shard(_shard: &Shard) -> Self::DataTup {
@@ -534,7 +536,7 @@ pub mod join {
         }
     }
 
-    impl<T> QueryTup for T
+    impl<T> ComponentQueryTup for T
     where
         T: Query,
         T::DataType: 'static + Component,
@@ -553,13 +555,200 @@ pub mod join {
     }
 }
 
+pub trait ResourceDataTup {
+    type ItemTup;
+
+    fn borrow(&mut self) -> Self::ItemTup;
+}
+
+pub trait ResourceQueryTup {
+    type DataTup: ResourceDataTup;
+
+    fn reify(resources: &AnyMap) -> Self::DataTup;
+}
+
+pub mod resource {
+    use super::{AnyMap, PhantomData, ResourceDataTup, ResourceQueryTup};
+    use std::ptr::NonNull;
+
+    pub trait Data {
+        type Item;
+
+        fn get_item(&mut self) -> Self::Item;
+    }
+
+    pub struct Reader<'a, T> {
+        data: NonNull<T>,
+        _x: PhantomData<&'a ()>,
+    }
+
+    impl<'a, T> Data for Reader<'a, T>
+    where
+        T: 'a,
+    {
+        type Item = &'a T;
+
+        fn get_item(&mut self) -> Self::Item {
+            unsafe { &*self.data.as_ptr() }
+        }
+    }
+
+    pub struct Writer<'a, T> {
+        data: NonNull<T>,
+        _x: PhantomData<&'a ()>,
+    }
+
+    impl<'a, T> Data for Writer<'a, T>
+    where
+        T: 'a,
+    {
+        type Item = &'a mut T;
+
+        fn get_item(&mut self) -> Self::Item {
+            unsafe { &mut *self.data.as_ptr() }
+        }
+    }
+
+    pub trait Query {
+        type Data: Data;
+
+        fn acquire(resources: &AnyMap) -> Self::Data;
+    }
+
+    pub struct Read<'a, T> {
+        _x: PhantomData<&'a T>,
+    }
+
+    impl<'a, T> Query for Read<'a, T>
+    where
+        T: 'static,
+    {
+        type Data = Reader<'a, T>;
+
+        fn acquire(resources: &AnyMap) -> Self::Data {
+            Reader {
+                data: resources.get::<NonNull<T>>().expect("Resource missing").clone(),
+                _x: PhantomData,
+            }
+        }
+    }
+
+    pub struct Write<'a, T> {
+        _x: PhantomData<&'a T>,
+    }
+
+    impl<'a, T> Query for Write<'a, T>
+    where
+        T: 'static,
+    {
+        type Data = Writer<'a, T>;
+
+        fn acquire(resources: &AnyMap) -> Self::Data {
+            Writer {
+                data: resources.get::<NonNull<T>>().expect("Resource missing").clone(),
+                _x: PhantomData,
+            }
+        }
+    }
+
+    macro_rules! resource_tup {
+        ($( $field_type:ident:$field_seq:tt ),*) => {
+            impl<$($field_type),*> ResourceDataTup for ($($field_type,)*)
+            where
+                $($field_type: Data,)*
+            {
+                type ItemTup = ($($field_type::Item,)*);
+
+                #[inline]
+                fn borrow(&mut self) -> Self::ItemTup {
+                    ($(self.$field_seq.get_item(),)*)
+                }
+            }
+        };
+    }
+
+    resource_tup!(A:0);
+    resource_tup!(A:0, B:1);
+    resource_tup!(A:0, B:1, C:2);
+    resource_tup!(A:0, B:1, C:2, D:3);
+    resource_tup!(A:0, B:1, C:2, D:3, E:4);
+    resource_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
+    resource_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    resource_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+
+    impl ResourceDataTup for () {
+        type ItemTup = ();
+
+        fn borrow(&mut self) -> Self::ItemTup {
+            unimplemented!()
+        }
+    }
+
+    impl<T> ResourceDataTup for T
+    where
+        T: Data,
+    {
+        type ItemTup = T::Item;
+
+        #[inline]
+        fn borrow(&mut self) -> Self::ItemTup {
+            self.get_item()
+        }
+    }
+
+    macro_rules! resource_def {
+        ($( $field_type:ident ),*) => {
+            impl<$($field_type),*> ResourceQueryTup for ($($field_type,)*)
+            where
+                $($field_type: Query,)*
+            {
+                type DataTup = ($($field_type::Data,)*);
+
+                #[inline]
+                fn reify(resources: &AnyMap) -> Self::DataTup {
+                    ($($field_type::acquire(resources),)*)
+                }
+            }
+        };
+    }
+
+    resource_def!(A);
+    resource_def!(A, B);
+    resource_def!(A, B, C);
+    resource_def!(A, B, C, D);
+    resource_def!(A, B, C, D, E);
+    resource_def!(A, B, C, D, E, F);
+    resource_def!(A, B, C, D, E, F, G);
+    resource_def!(A, B, C, D, E, F, G, H);
+
+    impl ResourceQueryTup for () {
+        type DataTup = ();
+
+        fn reify(_: &AnyMap) -> Self::DataTup {
+            ()
+        }
+    }
+
+    impl<T> ResourceQueryTup for T
+    where
+        T: Query,
+    {
+        type DataTup = T::Data;
+
+        #[inline]
+        fn reify(resources: &AnyMap) -> Self::DataTup {
+            T::acquire(resources)
+        }
+    }
+}
+
 pub mod context {
-    use super::{ComponentCoords, DataTup, EntityId, HashMap, IndexMap, IndexablePtrTup, ShardKey};
+    use super::{ComponentCoords, ComponentDataTup, EntityId, HashMap, IndexMap, IndexablePtrTup, ShardKey};
     use indexmap::map::ValuesMut;
 
     pub struct ComponentContext<'a, T>
     where
-        T: DataTup,
+        T: ComponentDataTup,
     {
         shards: &'a mut IndexMap<ShardKey, T>,
         entities: &'a HashMap<EntityId, ComponentCoords>,
@@ -567,7 +756,7 @@ pub mod context {
 
     impl<'a, T> ComponentContext<'a, T>
     where
-        T: DataTup,
+        T: ComponentDataTup,
     {
         #[inline]
         pub fn new(
@@ -620,7 +809,7 @@ pub mod context {
 
     impl<'a, T> IntoIterator for ComponentContext<'a, T>
     where
-        T: DataTup,
+        T: ComponentDataTup,
     {
         type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
         type IntoIter = ComponentIterator<'a, T>;
@@ -633,7 +822,7 @@ pub mod context {
 
     pub struct ComponentIterator<'a, T>
     where
-        T: DataTup,
+        T: ComponentDataTup,
     {
         stream: ValuesMut<'a, ShardKey, T>,
         shard: T::PtrTup,
@@ -643,7 +832,7 @@ pub mod context {
 
     impl<'a, T> Iterator for ComponentIterator<'a, T>
     where
-        T: DataTup,
+        T: ComponentDataTup,
     {
         type Item = <T::PtrTup as IndexablePtrTup>::ItemTup;
 
@@ -806,6 +995,11 @@ mod tests {
 
         assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
         assert!(!system.data.shards.contains_key(&shard_1.key));
+    }
+
+    #[test]
+    fn test_reify_resources() {
+
     }
 
     #[test]

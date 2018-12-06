@@ -250,8 +250,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::system::store::Read;
-    use crate::system::store::Write;
+    use crate::system::store;
     use crate::system::Context;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
@@ -372,7 +371,7 @@ mod tests {
         }
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
+            type Data = (store::Read<'a, EntityId>, store::Read<'a, CompA>, store::Write<'a, CompB>);
 
             fn run(&mut self, _data: Context<Self::Data>, tx: &mut TransactionContext) {
                 tx.add((CompA(3), CompB(3)));

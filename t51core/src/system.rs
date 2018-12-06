@@ -6,7 +6,7 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 
 pub trait RunSystem {
-    type Data: QueryTup;
+    type Data: QueryTup = ();
 
     fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
@@ -668,7 +668,7 @@ pub mod context {
 
 #[cfg(test)]
 mod tests {
-    use super::store::{Read, Write};
+    use super::store;
     use super::*;
     use crate::component::ComponentVec;
     use crate::identity::ComponentId;
@@ -740,7 +740,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
+            type Data = (store::Read<'a, CompA>, store::Read<'a, CompB>, store::Write<'a, CompC>);
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -763,7 +763,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = Read<'a, CompB>;
+            type Data = store::Read<'a, CompB>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -787,7 +787,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = Read<'a, CompB>;
+            type Data = store::Read<'a, CompB>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -819,7 +819,7 @@ mod tests {
         };
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
+            type Data = (store::Read<'a, EntityId>, store::Read<'a, CompA>, store::Write<'a, CompB>);
 
             fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();

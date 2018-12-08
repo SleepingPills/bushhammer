@@ -49,6 +49,7 @@ pub struct Entity {
     pub shard_key: ShardKey,
 }
 
+/// Shard definition for accumulating components for new entities.
 #[derive(Debug, Clone)]
 pub struct ShardDef {
     pub(crate) entity_ids: Vec<EntityId>,

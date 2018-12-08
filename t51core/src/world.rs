@@ -36,6 +36,8 @@ impl World {
 }
 
 impl World {
+    /// Creates a `World` instance initialized with default parameters:
+    /// FPS: 20
     #[inline]
     pub fn default() -> Self {
         let mut world = World {
@@ -50,6 +52,8 @@ impl World {
         world
     }
 
+    /// Builds and finalizes this world. After finalization, new components, resources and
+    /// systems can no longer be added.
     pub fn build(&mut self) {
         self.finalized = true;
 
@@ -70,6 +74,7 @@ impl World {
         }
     }
 
+    /// Runs one game iteration
     #[inline]
     pub fn run_once(&mut self) -> bool {
         self.process_transactions();
@@ -79,6 +84,7 @@ impl World {
         true
     }
 
+    /// Runs the main game loop with frame rate limiting.
     #[inline]
     pub fn run(&mut self) {
         let mut proceed = true;

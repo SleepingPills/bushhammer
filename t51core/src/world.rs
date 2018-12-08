@@ -4,6 +4,7 @@ use crate::entity::{EntityId, ShardDef, TransactionContext};
 use crate::identity::{ComponentId, ShardKey, SystemId};
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
+use anymap::AnyMap;
 use hashbrown::HashMap;
 use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
@@ -52,8 +53,10 @@ impl World {
     pub fn build(&mut self) {
         self.finalized = true;
 
-        // Create a copy of the main transaction context for each system so they can be run in parallel
-        for _ in 0..self.state.systems.len() {
+        for (_, mut system) in self.state.systems.iter_mut::<System>() {
+            system.init(&self.state.resources);
+
+            // Create a copy of the main transaction context for each system so they can be run in parallel
             self.system_transactions.push(self.transactions.clone());
         }
     }
@@ -160,11 +163,25 @@ impl World {
         self.transactions.add_builder::<T>();
         self.state.builders.insert(id, Box::new(|| Box::new(Vec::<T>::new())));
     }
+
+    /// Register the supplied resource instance.
+    pub fn register_resource<T>(&mut self, resource: T)
+    where
+        T: 'static,
+    {
+        if self.finalized {
+            panic!("Can't add resource to finalized world")
+        }
+
+        let boxed = Box::new(resource);
+        self.state.resources.insert(Box::into_raw_non_null(boxed));
+    }
 }
 
 pub struct GameState {
     entities: HashMap<EntityId, ComponentCoords>,
     systems: Registry<SystemId>,
+    resources: AnyMap,
 
     shards: HashMap<ShardKey, Shard>,
     builders: HashMap<ComponentId, Box<Fn() -> Box<ComponentVec>>>,
@@ -176,6 +193,7 @@ impl GameState {
         GameState {
             entities: HashMap::new(),
             systems: Registry::new(),
+            resources: AnyMap::new(),
             shards: HashMap::new(),
             builders: HashMap::new(),
         }
@@ -251,10 +269,11 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::system::Context;
-    use crate::system::{Components, Read, Write};
+    use crate::system::{Components, Read, Resources, Write};
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use t51core_proc::Component;
+    use std::ptr::NonNull;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -364,6 +383,42 @@ mod tests {
     }
 
     #[test]
+    fn test_resources() {
+        struct TestResource1 {
+            x: i32,
+        }
+
+        struct TestResource2 {
+            x: i32,
+        }
+
+        struct TestSystem<'a> {
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'a> RunSystem for TestSystem<'a> {
+            type Data = Resources<(Read<'a, TestResource1>, Write<'a, TestResource2>)>;
+
+            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+                let (r1, mut r2) = ctx.resources();
+                r2.x = r1.x;
+            }
+        }
+
+        let mut world = World::default();
+        world.register_resource(TestResource1 { x: 100 });
+        world.register_resource(TestResource2 { x: 0 });
+        world.register_system(TestSystem { _p: PhantomData });
+        world.build();
+
+        world.run_once();
+
+        let resource_val = world.state.resources.get::<NonNull<TestResource2>>().unwrap();
+
+        assert_eq!(unsafe {resource_val.as_ref()}.x, 100)
+    }
+
+    #[test]
     fn test_ingest_system_transactions() {
         // Create a system that adds a new entity and removes an existing one
         struct TestSystem<'a> {
@@ -373,7 +428,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
-            fn run(&mut self, _data: Context<Self::Data>, tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, tx: &mut TransactionContext) {
                 tx.add((CompA(3), CompB(3)));
                 tx.remove(0.into());
             }

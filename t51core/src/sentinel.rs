@@ -13,6 +13,11 @@ impl<T> Take<T> {
         Take { data: Some(data) }
     }
 
+    #[inline]
+    pub fn empty() -> Self {
+        Take { data: None }
+    }
+
     /// Take the value out from the sentinel. The sentinel won't be usable until a value is put back in.
     #[inline]
     pub fn take(&mut self) -> T {

@@ -2,6 +2,7 @@ use crate::component::Component;
 use crate::component::{ComponentCoords, Shard};
 use crate::entity::{EntityId, TransactionContext};
 use crate::identity::ShardKey;
+use crate::sentinel::Take;
 use anymap::AnyMap;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
@@ -10,7 +11,7 @@ use std::marker::PhantomData;
 pub trait RunSystem {
     type Data: DataDef;
 
-    fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
+    fn run(&mut self, ctx: Context<Self::Data>, tx: &mut TransactionContext);
 }
 
 pub trait DataDef {
@@ -63,6 +64,11 @@ where
     pub fn components(&mut self) -> context::ComponentContext<<T::Components as ComponentQueryTup>::DataTup> {
         self.system_data.components(self.entities)
     }
+
+    #[inline]
+    pub fn resources(&mut self) -> <<T::Resources as ResourceQueryTup>::DataTup as ResourceDataTup>::ItemTup {
+        self.system_data.resources()
+    }
 }
 
 pub struct SystemData<T>
@@ -70,6 +76,7 @@ where
     T: DataDef,
 {
     shards: IndexMap<ShardKey, <T::Components as ComponentQueryTup>::DataTup>,
+    resource_tup: Take<<T::Resources as ResourceQueryTup>::DataTup>,
 }
 
 impl<T> SystemData<T>
@@ -78,7 +85,10 @@ where
 {
     #[inline]
     fn new() -> SystemData<T> {
-        SystemData { shards: IndexMap::new() }
+        SystemData {
+            shards: IndexMap::new(),
+            resource_tup: Take::empty(),
+        }
     }
 
     #[inline]
@@ -90,8 +100,13 @@ where
     }
 
     #[inline]
-    pub fn resources(&mut self) {
-        unimplemented!()
+    pub fn resources(&mut self) -> <<T::Resources as ResourceQueryTup>::DataTup as ResourceDataTup>::ItemTup {
+        self.resource_tup.borrow()
+    }
+
+    #[inline]
+    pub fn init_resources(&mut self, resources: &AnyMap) {
+        self.resource_tup.put(<T::Resources as ResourceQueryTup>::reify(resources));
     }
 
     #[inline]
@@ -135,6 +150,7 @@ where
 
 pub trait System {
     fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext);
+    fn init(&mut self, resources: &AnyMap);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
     fn check_shard(&self, shard_key: ShardKey) -> bool;
@@ -153,6 +169,11 @@ where
             },
             transactions,
         );
+    }
+
+    #[inline]
+    fn init(&mut self, resources: &AnyMap) {
+        self.data.init_resources(resources);
     }
 
     #[inline]
@@ -945,7 +966,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>)>;
 
-            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -968,7 +989,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<Read<'a, CompB>>;
 
-            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -992,7 +1013,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<Read<'a, CompB>>;
 
-            fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
             }
         }
@@ -1012,9 +1033,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reify_resources() {}
-
-    #[test]
     fn test_run() {
         setup();
 
@@ -1027,15 +1045,15 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
-            fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();
 
-                for (&id, a, b) in data.components() {
+                for (&id, a, b) in ctx.components() {
                     entities.push(id);
                     self.collect_run.push((id, a.clone(), b.clone()));
                 }
 
-                data.components().for_each(&entities, |(id, a, b)| {
+                ctx.components().for_each(&entities, |(id, a, b)| {
                     self.collect_foreach.push((*id, a.clone(), b.clone()));
                 })
             }

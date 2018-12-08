@@ -8,7 +8,7 @@ use indexmap::IndexMap;
 use std::marker::PhantomData;
 
 pub trait RunSystem {
-    type Data: ComponentQueryTup;
+    type Data: DataDef;
 
     fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
@@ -38,14 +38,18 @@ where
     type Resources = T;
 }
 
-impl<A, B> DataDef for Combo<A, B> where A: ComponentQueryTup, B: ResourceQueryTup{
+impl<A, B> DataDef for Combo<A, B>
+where
+    A: ComponentQueryTup,
+    B: ResourceQueryTup,
+{
     type Components = A;
     type Resources = B;
 }
 
 pub struct Context<'a, T>
 where
-    T: ComponentQueryTup,
+    T: DataDef,
 {
     system_data: &'a mut SystemData<T>,
     entities: &'a HashMap<EntityId, ComponentCoords>,
@@ -53,24 +57,24 @@ where
 
 impl<'a, T> Context<'a, T>
 where
-    T: ComponentQueryTup,
+    T: DataDef,
 {
     #[inline]
-    pub fn components(&mut self) -> context::ComponentContext<<T as ComponentQueryTup>::DataTup> {
+    pub fn components(&mut self) -> context::ComponentContext<<T::Components as ComponentQueryTup>::DataTup> {
         self.system_data.components(self.entities)
     }
 }
 
 pub struct SystemData<T>
 where
-    T: ComponentQueryTup,
+    T: DataDef,
 {
-    shards: IndexMap<ShardKey, T::DataTup>,
+    shards: IndexMap<ShardKey, <T::Components as ComponentQueryTup>::DataTup>,
 }
 
 impl<T> SystemData<T>
 where
-    T: ComponentQueryTup,
+    T: DataDef,
 {
     #[inline]
     fn new() -> SystemData<T> {
@@ -81,7 +85,7 @@ where
     pub fn components<'a>(
         &'a mut self,
         entities: &'a HashMap<EntityId, ComponentCoords>,
-    ) -> context::ComponentContext<<T as ComponentQueryTup>::DataTup> {
+    ) -> context::ComponentContext<<T::Components as ComponentQueryTup>::DataTup> {
         context::ComponentContext::new(&mut self.shards, entities)
     }
 
@@ -92,7 +96,7 @@ where
 
     #[inline]
     pub(crate) fn add_shard(&mut self, shard: &Shard) {
-        self.shards.insert(shard.key, T::reify_shard(shard));
+        self.shards.insert(shard.key, T::Components::reify_shard(shard));
     }
 
     #[inline]
@@ -117,7 +121,7 @@ where
     #[inline]
     pub(crate) fn new(system: T) -> SystemRuntime<T> {
         SystemRuntime {
-            shard_key: T::Data::get_shard_key(),
+            shard_key: <<T::Data as DataDef>::Components as ComponentQueryTup>::get_shard_key(),
             runstate: system,
             data: SystemData::new(),
         }
@@ -171,13 +175,11 @@ where
     }
 }
 
-pub struct Read<'a, T>
-{
+pub struct Read<'a, T> {
     _x: PhantomData<&'a T>,
 }
 
-pub struct Write<'a, T>
-{
+pub struct Write<'a, T> {
     _x: PhantomData<&'a T>,
 }
 
@@ -589,7 +591,7 @@ pub trait ResourceQueryTup {
 }
 
 pub mod resource {
-    use super::{AnyMap, PhantomData, ResourceDataTup, ResourceQueryTup, Read, Write};
+    use super::{AnyMap, PhantomData, Read, ResourceDataTup, ResourceQueryTup, Write};
     use std::ptr::NonNull;
 
     pub trait Data {
@@ -941,7 +943,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
+            type Data = Components<(Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>)>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -964,7 +966,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = Read<'a, CompB>;
+            type Data = Components<Read<'a, CompB>>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -988,7 +990,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = Read<'a, CompB>;
+            type Data = Components<Read<'a, CompB>>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -1023,7 +1025,7 @@ mod tests {
         };
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
+            type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
             fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();

@@ -372,6 +372,7 @@ mod tests {
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = (store::Read<'a, EntityId>, store::Read<'a, CompA>, store::Write<'a, CompB>);
+            type Resources = ();
 
             fn run(&mut self, _data: Context<Self::Data>, tx: &mut TransactionContext) {
                 tx.add((CompA(3), CompB(3)));

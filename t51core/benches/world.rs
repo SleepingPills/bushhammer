@@ -25,6 +25,7 @@ fn add_ents(c: &mut Criterion) {
 
     impl<'a> RunSystem for TestSystem<'a> {
         type Data = (store::Read<'a, C1>, store::Write<'a, C2>);
+        type Resources = ();
 
         #[inline]
         fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}
@@ -99,6 +100,7 @@ fn remove_ents(c: &mut Criterion) {
 
     impl<'a> RunSystem for TestSystem<'a> {
         type Data = (store::Read<'a, C1>, store::Write<'a, C2>);
+        type Resources = ();
 
         #[inline]
         fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}

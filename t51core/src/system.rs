@@ -8,8 +8,8 @@ use indexmap::IndexMap;
 use std::marker::PhantomData;
 
 pub trait RunSystem {
-    type Data: ComponentQueryTup = ();
-//    type Resources: ResourceQueryTup = ();
+    type Data: ComponentQueryTup;
+    type Resources: ResourceQueryTup;
 
     fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
 }
@@ -930,6 +930,7 @@ mod tests {
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = (store::Read<'a, CompA>, store::Read<'a, CompB>, store::Write<'a, CompC>);
+            type Resources = ();
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -953,6 +954,7 @@ mod tests {
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = store::Read<'a, CompB>;
+            type Resources = ();
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -977,6 +979,7 @@ mod tests {
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = store::Read<'a, CompB>;
+            type Resources = ();
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -1014,6 +1017,7 @@ mod tests {
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = (store::Read<'a, EntityId>, store::Read<'a, CompA>, store::Write<'a, CompB>);
+            type Resources = ();
 
             fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();

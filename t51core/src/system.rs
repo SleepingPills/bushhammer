@@ -9,9 +9,38 @@ use std::marker::PhantomData;
 
 pub trait RunSystem {
     type Data: ComponentQueryTup;
-    type Resources: ResourceQueryTup;
 
     fn run(&mut self, data: Context<Self::Data>, tx: &mut TransactionContext);
+}
+
+pub trait DataDef {
+    type Components: ComponentQueryTup;
+    type Resources: ResourceQueryTup;
+}
+
+pub struct Components<T>(PhantomData<T>);
+pub struct Resources<T>(PhantomData<T>);
+pub struct Combo<A, B>(PhantomData<A>, PhantomData<B>);
+
+impl<T> DataDef for Components<T>
+where
+    T: ComponentQueryTup,
+{
+    type Components = T;
+    type Resources = ();
+}
+
+impl<T> DataDef for Resources<T>
+where
+    T: ResourceQueryTup,
+{
+    type Components = ();
+    type Resources = T;
+}
+
+impl<A, B> DataDef for Combo<A, B> where A: ComponentQueryTup, B: ResourceQueryTup{
+    type Components = A;
+    type Resources = B;
 }
 
 pub struct Context<'a, T>
@@ -142,27 +171,14 @@ where
     }
 }
 
-pub trait Indexable {
-    type Item;
-
-    fn index(&self, idx: usize) -> Self::Item;
+pub struct Read<'a, T>
+{
+    _x: PhantomData<&'a T>,
 }
 
-pub trait Data {
-    type DataPtr: Indexable;
-    type Item;
-
-    fn len(&self) -> usize;
-    fn get(&mut self, loc: usize) -> Self::Item;
-    fn unwrap(&mut self) -> Self::DataPtr;
-    fn null() -> Self::DataPtr;
-}
-
-pub trait Query {
-    type QueryItem: Data;
-    type DataType;
-
-    fn execute(shard: &Shard) -> Self::QueryItem;
+pub struct Write<'a, T>
+{
+    _x: PhantomData<&'a T>,
 }
 
 pub trait IndexablePtrTup {
@@ -171,9 +187,49 @@ pub trait IndexablePtrTup {
     fn index(&self, idx: usize) -> Self::ItemTup;
 }
 
+pub trait ComponentDataTup {
+    type PtrTup: IndexablePtrTup;
+    type ItemTup;
+
+    fn get_entity(&mut self, loc: usize) -> Self::ItemTup;
+
+    fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup);
+    unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
+}
+
+pub trait ComponentQueryTup {
+    type DataTup: ComponentDataTup;
+
+    fn reify_shard(shard: &Shard) -> Self::DataTup;
+    fn get_shard_key() -> ShardKey;
+}
+
 pub mod store {
-    use super::{Component, Data, Indexable, PhantomData, Query, Shard};
+    use super::{Component, ComponentDataTup, ComponentQueryTup, IndexablePtrTup, PhantomData, Read, Shard, ShardKey, Write};
     use std::ptr;
+
+    pub trait Indexable {
+        type Item;
+
+        fn index(&self, idx: usize) -> Self::Item;
+    }
+
+    pub trait Data {
+        type DataPtr: Indexable;
+        type Item;
+
+        fn len(&self) -> usize;
+        fn get(&mut self, loc: usize) -> Self::Item;
+        fn unwrap(&mut self) -> Self::DataPtr;
+        fn null() -> Self::DataPtr;
+    }
+
+    pub trait Query {
+        type QueryItem: Data;
+        type DataType;
+
+        fn execute(shard: &Shard) -> Self::QueryItem;
+    }
 
     #[repr(transparent)]
     pub struct ReadPtr<'a, T>(*const T, PhantomData<&'a ()>);
@@ -310,13 +366,6 @@ pub mod store {
         }
     }
 
-    pub struct Read<'a, T>
-    where
-        T: Component,
-    {
-        _x: PhantomData<&'a T>,
-    }
-
     impl<'a, T> Query for Read<'a, T>
     where
         T: Component,
@@ -328,13 +377,6 @@ pub mod store {
         fn execute(shard: &Shard) -> ReadData<'a, T> {
             ReadData::new(shard.data_ptr::<T>())
         }
-    }
-
-    pub struct Write<'a, T>
-    where
-        T: Component,
-    {
-        _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> Query for Write<'a, T>
@@ -349,27 +391,6 @@ pub mod store {
             WriteData::new(shard.data_mut_ptr::<T>())
         }
     }
-}
-
-pub trait ComponentDataTup {
-    type PtrTup: IndexablePtrTup;
-    type ItemTup;
-
-    fn get_entity(&mut self, loc: usize) -> Self::ItemTup;
-
-    fn get_ptr_tup(&mut self) -> (usize, Self::PtrTup);
-    unsafe fn get_zero_ptr_tup() -> Self::PtrTup;
-}
-
-pub trait ComponentQueryTup {
-    type DataTup: ComponentDataTup;
-
-    fn reify_shard(shard: &Shard) -> Self::DataTup;
-    fn get_shard_key() -> ShardKey;
-}
-
-pub mod join {
-    use super::{Component, ComponentDataTup, ComponentQueryTup, Data, Indexable, IndexablePtrTup, Query, Shard, ShardKey};
 
     macro_rules! ptr_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
@@ -568,7 +589,7 @@ pub trait ResourceQueryTup {
 }
 
 pub mod resource {
-    use super::{AnyMap, PhantomData, ResourceDataTup, ResourceQueryTup};
+    use super::{AnyMap, PhantomData, ResourceDataTup, ResourceQueryTup, Read, Write};
     use std::ptr::NonNull;
 
     pub trait Data {
@@ -615,10 +636,6 @@ pub mod resource {
         fn acquire(resources: &AnyMap) -> Self::Data;
     }
 
-    pub struct Read<'a, T> {
-        _x: PhantomData<&'a T>,
-    }
-
     impl<'a, T> Query for Read<'a, T>
     where
         T: 'static,
@@ -631,10 +648,6 @@ pub mod resource {
                 _x: PhantomData,
             }
         }
-    }
-
-    pub struct Write<'a, T> {
-        _x: PhantomData<&'a T>,
     }
 
     impl<'a, T> Query for Write<'a, T>
@@ -857,7 +870,6 @@ pub mod context {
 
 #[cfg(test)]
 mod tests {
-    use super::store;
     use super::*;
     use crate::component::ComponentVec;
     use crate::identity::ComponentId;
@@ -929,8 +941,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (store::Read<'a, CompA>, store::Read<'a, CompB>, store::Write<'a, CompC>);
-            type Resources = ();
+            type Data = (Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>);
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -953,8 +964,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = store::Read<'a, CompB>;
-            type Resources = ();
+            type Data = Read<'a, CompB>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -978,8 +988,7 @@ mod tests {
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = store::Read<'a, CompB>;
-            type Resources = ();
+            type Data = Read<'a, CompB>;
 
             fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 unimplemented!()
@@ -1001,9 +1010,7 @@ mod tests {
     }
 
     #[test]
-    fn test_reify_resources() {
-
-    }
+    fn test_reify_resources() {}
 
     #[test]
     fn test_run() {
@@ -1016,8 +1023,7 @@ mod tests {
         };
 
         impl<'a> RunSystem for TestSystem<'a> {
-            type Data = (store::Read<'a, EntityId>, store::Read<'a, CompA>, store::Write<'a, CompB>);
-            type Resources = ();
+            type Data = (Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>);
 
             fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
                 let mut entities = Vec::new();

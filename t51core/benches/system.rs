@@ -152,8 +152,7 @@ fn system_loop_linear_bench(c: &mut Criterion) {
     }
 
     impl<'a> RunSystem for TestSystem<'a> {
-        type Data = (store::Read<'a, C1>, store::Write<'a, C2>);
-        type Resources = ();
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
         fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
@@ -216,8 +215,7 @@ fn system_loop_multi_shards(c: &mut Criterion) {
     }
 
     impl<'a> RunSystem for TestSystem<'a> {
-        type Data = (store::Read<'a, C1>, store::Write<'a, C2>);
-        type Resources = ();
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
         fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
@@ -283,8 +281,7 @@ fn system_loop_foreach_ent(c: &mut Criterion) {
     }
 
     impl<'a> RunSystem for TestSystem<'a> {
-        type Data = (store::Read<'a, C1>, store::Write<'a, C2>);
-        type Resources = ();
+        type Data = (Read<'a, C1>, Write<'a, C2>);
 
         #[inline]
         fn run(&mut self, mut   data: Context<Self::Data>, _tx: &mut TransactionContext) {

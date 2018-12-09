@@ -1,4 +1,4 @@
-use crate::alloc::DynVec;
+use crate::alloc::{DynVec, DynVecOps};
 use crate::component::Component;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
@@ -59,7 +59,7 @@ pub struct ShardDef {
 
 impl ShardDef {
     #[inline]
-    fn new(comp_ids: &[ComponentId], builders: &Vec<Box<dynamic::BuildDynVec>>) -> ShardDef {
+    fn new(comp_ids: &[ComponentId], builders: &Vec<Box<BuildCompDef>>) -> ShardDef {
         let map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
         ShardDef {
             entity_ids: Vec::new(),
@@ -79,7 +79,7 @@ impl ShardDef {
 pub struct TransactionContext {
     pub(crate) added: HashMap<ShardKey, ShardDef>,
     pub(crate) deleted: Vec<EntityId>,
-    pub(crate) builders: Vec<Box<dynamic::BuildDynVec>>,
+    pub(crate) builders: Vec<Box<BuildCompDef>>,
     pub(crate) id_counter: Arc<AtomicUsize>,
 }
 
@@ -141,7 +141,7 @@ impl TransactionContext {
     where
         T: 'static + Component,
     {
-        self.builders.push(Box::new(dynamic::DynVecFactory::<T>(PhantomData)));
+        self.builders.push(Box::new(CompDefFactory::<T>(PhantomData)));
     }
 }
 
@@ -396,84 +396,79 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-pub type CompDefVec = DynVec<dynamic::AnyVec>;
+pub type CompDefVec = DynVec<CompDef>;
 
-pub mod dynamic {
-    use super::*;
-    use crate::alloc::{DynVec, DynVecOps};
+pub trait CompDef: DynVecOps + Debug {
+    fn push_json(&mut self, json: &str);
+    fn clone_box(&self) -> Box<CompDef>;
+}
 
-    pub trait AnyVec: DynVecOps + Debug {
-        fn push_json(&mut self, json: &str);
-        fn clone_box(&self) -> Box<AnyVec>;
+pub trait BuildCompDef: Debug {
+    fn build(&self) -> DynVec<CompDef>;
+    fn clone_box(&self) -> Box<BuildCompDef>;
+}
+
+#[derive(Debug)]
+pub struct CompDefFactory<T>(pub PhantomData<T>)
+where
+    T: 'static + Component;
+
+impl<T> BuildCompDef for CompDefFactory<T>
+where
+    T: 'static + Component,
+{
+    #[inline]
+    fn build(&self) -> DynVec<CompDef> {
+        DynVec::new(Vec::<T>::new())
     }
 
-    pub trait BuildDynVec: Debug {
-        fn build(&self) -> DynVec<AnyVec>;
-        fn clone_box(&self) -> Box<BuildDynVec>;
+    #[inline]
+    fn clone_box(&self) -> Box<BuildCompDef> {
+        Box::new(CompDefFactory::<T>(PhantomData))
+    }
+}
+
+impl Clone for Box<BuildCompDef> {
+    fn clone(&self) -> Self {
+        self.clone_box()
+    }
+}
+
+impl<T> CompDef for Vec<T>
+where
+    T: 'static + Component,
+{
+    #[inline]
+    fn push_json(&mut self, json: &str) {
+        self.push(serde_json::from_str(json).expect("Error deserializing component"));
     }
 
-    #[derive(Debug)]
-    pub struct DynVecFactory<T>(pub PhantomData<T>)
-    where
-        T: 'static + Component;
+    #[inline]
+    fn clone_box(&self) -> Box<CompDef> {
+        Box::new(Vec::<T>::new())
+    }
+}
 
-    impl<T> BuildDynVec for DynVecFactory<T>
+impl Clone for DynVec<CompDef> {
+    fn clone(&self) -> Self {
+        DynVec::from_box(self.clone_box())
+    }
+}
+
+impl DynVec<CompDef> {
+    #[inline]
+    pub fn push<T>(&mut self, item: T)
     where
         T: 'static + Component,
     {
-        #[inline]
-        fn build(&self) -> DynVec<AnyVec> {
-            DynVec::new(Vec::<T>::new())
-        }
-
-        #[inline]
-        fn clone_box(&self) -> Box<BuildDynVec> {
-            Box::new(DynVecFactory::<T>(PhantomData))
-        }
+        self.cast_mut_vector::<T>().push(item);
     }
 
-    impl Clone for Box<BuildDynVec> {
-        fn clone(&self) -> Self {
-            self.clone_box()
-        }
-    }
-
-    impl<T> AnyVec for Vec<T>
+    #[inline]
+    pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
     where
         T: 'static + Component,
     {
-        #[inline]
-        fn push_json(&mut self, json: &str) {
-            self.push(serde_json::from_str(json).expect("Error deserializing component"));
-        }
-
-        #[inline]
-        fn clone_box(&self) -> Box<AnyVec> {
-            Box::new(Vec::<T>::new())
-        }
-    }
-
-    impl Clone for DynVec<AnyVec> {
-        fn clone(&self) -> Self {
-            DynVec::from_box(self.clone_box())
-        }
-    }
-
-    impl DynVec<AnyVec> {
-        #[inline]
-        pub fn push<T>(&mut self, item: T)
-        where
-            T: 'static + Component,
-        {
-            self.cast_mut_vector::<T>().push(item);
-        }
-
-        #[inline]
-        pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
-        where
-            T: 'static + Component,
-        {
-            &mut *(self.as_ptr().cast_checked_raw())
-        }
+        &mut *(self.as_ptr().cast_checked_raw())
     }
 }

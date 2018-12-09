@@ -1,4 +1,4 @@
-use crate::alloc::{DynVec, DynVecOps, CloneBox};
+use crate::alloc::{DynVec, DynVecOps};
 use crate::component::Component;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
@@ -141,6 +141,16 @@ impl TransactionContext {
     where
         T: 'static + Component,
     {
+        // TODO: Cleanup
+        let indexer = T::get_type_indexer();
+        let len = self.builders.len();
+
+        println!("{} {} {}", T::get_unique_id(), indexer, len);
+
+        if indexer != len {
+            panic!("Indexer mismatch - builders must be registered in lockstep with the world")
+        }
+
         self.builders.push(Box::new(CompDefBuilder::<T>(PhantomData)));
     }
 }

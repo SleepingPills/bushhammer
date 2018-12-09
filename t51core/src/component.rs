@@ -148,6 +148,9 @@ mod tests {
     }
 
     fn setup() -> (ComponentId, ComponentId) {
+        unsafe {
+            ComponentId::reset_static();
+        }
         (EntityId::acquire_unique_id(), SomeComponent::acquire_unique_id())
     }
 

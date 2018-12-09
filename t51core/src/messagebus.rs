@@ -1,8 +1,9 @@
+use crate::alloc::{DynVec, DynVecOps};
 use crate::identity::TopicId;
-use crate::alloc::{DynVecOps, DynVec};
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
+/// Designates a struct as a topic for the message bus
 pub trait Topic: DeserializeOwned + Clone + Debug {
     fn acquire_topic_id() -> TopicId;
     fn get_topic_id() -> TopicId;
@@ -18,26 +19,64 @@ pub trait Topic: DeserializeOwned + Clone + Debug {
     }
 }
 
-pub trait MessageBuffer : DynVecOps {
-    fn append(&mut self, other: &mut DynVec<MessageBuffer>);
+/// Appendable and cloneable message queue
+pub trait MessageQueue: DynVecOps {
+    fn append(&mut self, other: &mut DynVec<MessageQueue>);
+    fn clone_box(&self) -> Box<MessageQueue>;
 }
 
-impl<T> MessageBuffer for Vec<T>
+impl<T> MessageQueue for Vec<T>
 where
     T: 'static + Topic,
 {
-    fn append(&mut self, other: &mut DynVec<MessageBuffer>) {
+    #[inline]
+    fn append(&mut self, other: &mut DynVec<MessageQueue>) {
         let other_vec = other.cast_mut_vector::<T>();
         self.append(other_vec);
     }
+
+    #[inline]
+    fn clone_box(&self) -> Box<MessageQueue> {
+        Box::new(Vec::<T>::new())
+    }
 }
 
+impl Clone for DynVec<MessageQueue> {
+    #[inline]
+    fn clone(&self) -> Self {
+        DynVec::from_box(self.clone_box())
+    }
+}
+
+/// A message bus based on a directly indexable registry of queues
+#[derive(Clone)]
 pub struct Bus {
-    topics: Vec<DynVec<MessageBuffer>>,
+    topics: Vec<DynVec<MessageQueue>>,
 }
-
 
 impl Bus {
+    #[inline]
+    pub fn register<T>(&mut self) where T: 'static + Topic {
+        if T::get_indexer() != self.topics.len() {
+            panic!("Indexer mismatch - topics must be registered in lockstep with the world")
+        }
+
+        self.topics.push(DynVec::empty::<T>());
+    }
+
+    /// Transfer the messages in the `other` `Bus` into the current `Bus`.
+    #[inline]
+    pub fn transfer(&mut self, other: &mut Bus) {
+        for (target, source) in self.topics.iter_mut().zip(other.topics.iter_mut()) {
+            target.append(source);
+        }
+    }
+
+    /// Read the messages for a particular topic
+    #[inline]
+    pub fn read<T>(&self) -> &[T] where T: 'static + Topic {
+        self.topics[T::get_indexer()].cast_vector::<T>()
+    }
 }
 
 /*

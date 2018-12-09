@@ -293,6 +293,24 @@ where
     {
         unsafe { &mut *self.inst_ptr.cast_checked::<Vec<R>>().as_ptr() }
     }
+
+    /// Retrieve a reference to the inner typed vector. Panics if there is a type mismatch.
+    #[inline]
+    pub unsafe fn cast_vector_unchecked<R>(&self) -> &Vec<R>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        &*self.inst_ptr.cast::<Vec<R>>().as_ptr()
+    }
+
+    /// Retrieve a mutable reference to the inner typed vector. Panics if there is a type mismatch.
+    #[inline]
+    pub unsafe fn cast_mut_vector_unchecked<R>(&mut self) -> &mut Vec<R>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        &mut *self.inst_ptr.cast::<Vec<R>>().as_ptr()
+    }
 }
 
 impl<T> Deref for DynVec<T>

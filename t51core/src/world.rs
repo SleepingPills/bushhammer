@@ -1,7 +1,7 @@
 use crate::component::Component;
 use crate::component::{ComponentCoords, ComponentVec, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
-use crate::identity::{ComponentId, ShardKey, SystemId};
+use crate::identity::{ComponentId, ShardKey, SystemId, TopicId};
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
@@ -40,6 +40,12 @@ impl World {
     /// FPS: 20
     #[inline]
     pub fn default() -> Self {
+        unsafe {
+            ComponentId::reset_static();
+            SystemId::reset_static();
+            TopicId::reset_static();
+        }
+
         let mut world = World {
             frame_time: time::Duration::from_millis(50),
             state: GameState::new(),
@@ -278,8 +284,8 @@ mod tests {
     use crate::system::{Components, Read, Resources, Write};
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
-    use t51core_proc::Component;
     use std::ptr::NonNull;
+    use t51core_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -421,7 +427,7 @@ mod tests {
 
         let resource_val = world.state.resources.get::<NonNull<TestResource2>>().unwrap();
 
-        assert_eq!(unsafe {resource_val.as_ref()}.x, 100)
+        assert_eq!(unsafe { resource_val.as_ref() }.x, 100)
     }
 
     #[test]

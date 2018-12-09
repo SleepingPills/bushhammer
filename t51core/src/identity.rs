@@ -22,6 +22,12 @@ macro_rules! custom_type_id {
             pub unsafe fn get_id_vec() -> &'static mut Vec<$name> {
                 &mut $id_vec
             }
+
+            #[inline]
+            pub unsafe fn reset_static() {
+                Self::get_name_vec().clear();
+                Self::get_id_vec().clear();
+            }
         }
 
         impl fmt::Display for $name {

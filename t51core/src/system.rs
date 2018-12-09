@@ -918,6 +918,10 @@ mod tests {
     struct CompD(u8);
 
     fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId) {
+        unsafe {
+            ComponentId::reset_static();
+        }
+
         EntityId::acquire_unique_id();
 
         (

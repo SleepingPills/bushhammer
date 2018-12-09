@@ -1,3 +1,4 @@
+use crate::alloc::DynVec;
 use crate::component::Component;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
@@ -53,7 +54,7 @@ pub struct Entity {
 #[derive(Debug, Clone)]
 pub struct ShardDef {
     pub(crate) entity_ids: Vec<EntityId>,
-    pub(crate) components: HashMap<ComponentId, dynamic::DynVec>,
+    pub(crate) components: HashMap<ComponentId, CompDefVec>,
 }
 
 impl ShardDef {
@@ -67,7 +68,7 @@ impl ShardDef {
     }
 
     #[inline]
-    fn get_mut_vec(&mut self, comp_id: &ComponentId) -> &mut dynamic::DynVec {
+    fn get_mut_vec(&mut self, comp_id: &ComponentId) -> &mut CompDefVec {
         self.components.get_mut(comp_id).unwrap()
     }
 }
@@ -340,7 +341,7 @@ macro_rules! comp_tup {
                 // Get a cached shard builder or create a new one if necessary
                 ctx.added.entry(shard_key).or_insert_with(|| {
                     let mut map = HashMap::new();
-                    $(map.insert(ids.$field_seq, dynamic::DynVec::new(Vec::<$field_type>::new())));*;
+                    $(map.insert(ids.$field_seq, DynVec::new(Vec::<$field_type>::new())));*;
                     ShardDef {entity_ids: Vec::new(), components: map}
                 })
             }
@@ -395,11 +396,19 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
+pub type CompDefVec = DynVec<dynamic::AnyVec>;
+
 pub mod dynamic {
     use super::*;
+    use crate::alloc::{DynVec, DynVecOps};
+
+    pub trait AnyVec: DynVecOps + Debug {
+        fn push_json(&mut self, json: &str);
+        fn clone_box(&self) -> Box<AnyVec>;
+    }
 
     pub trait BuildDynVec: Debug {
-        fn build(&self) -> DynVec;
+        fn build(&self) -> DynVec<AnyVec>;
         fn clone_box(&self) -> Box<BuildDynVec>;
     }
 
@@ -413,7 +422,7 @@ pub mod dynamic {
         T: 'static + Component,
     {
         #[inline]
-        fn build(&self) -> DynVec {
+        fn build(&self) -> DynVec<AnyVec> {
             DynVec::new(Vec::<T>::new())
         }
 
@@ -429,21 +438,10 @@ pub mod dynamic {
         }
     }
 
-    pub trait AnyVec: Debug {
-        unsafe fn get_ptr(&mut self) -> *mut ();
-        fn push_json(&mut self, json: &str);
-        fn clone_box(&self) -> Box<AnyVec>;
-    }
-
     impl<T> AnyVec for Vec<T>
     where
         T: 'static + Component,
     {
-        #[inline]
-        unsafe fn get_ptr(&mut self) -> *mut () {
-            self as *mut Vec<T> as *mut ()
-        }
-
         #[inline]
         fn push_json(&mut self, json: &str) {
             self.push(serde_json::from_str(json).expect("Error deserializing component"));
@@ -455,71 +453,27 @@ pub mod dynamic {
         }
     }
 
-    #[derive(Debug)]
-    pub struct DynVec {
-        inst: Box<AnyVec>,
-        ptr: *mut (),
-    }
-
-    impl Clone for DynVec {
+    impl Clone for DynVec<AnyVec> {
         fn clone(&self) -> Self {
-            unsafe {
-                let mut inst = self.inst.clone_box();
-                let ptr = inst.get_ptr();
-                DynVec { inst, ptr }
-            }
+            DynVec::from_box(self.clone_box())
         }
     }
 
-    // TODO: Check typecheck performance impact
-    impl DynVec {
-        pub fn new<T>(instance: Vec<T>) -> DynVec
-        where
-            T: 'static + Component,
-        {
-            unsafe {
-                let mut inst: Box<AnyVec> = Box::new(instance);
-                let ptr = inst.get_ptr();
-
-                DynVec { inst, ptr }
-            }
-        }
-
+    impl DynVec<AnyVec> {
         #[inline]
         pub fn push<T>(&mut self, item: T)
         where
-            T: Component,
+            T: 'static + Component,
         {
-            self.cast_mut::<T>().push(item);
-        }
-
-        #[inline]
-        pub fn push_json(&mut self, json: &str) {
-            self.inst.push_json(json);
-        }
-
-        #[inline]
-        pub fn cast<T>(&self) -> &Vec<T>
-        where
-            T: Component,
-        {
-            unsafe { &*(self.ptr as *const Vec<T>) }
-        }
-
-        #[inline]
-        pub fn cast_mut<T>(&mut self) -> &mut Vec<T>
-        where
-            T: Component,
-        {
-            unsafe { &mut *(self.ptr as *mut Vec<T>) }
+            self.cast_mut_vector::<T>().push(item);
         }
 
         #[inline]
         pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
         where
-            T: Component,
+            T: 'static + Component,
         {
-            &mut *(self.ptr as *mut Vec<T>)
+            &mut *(self.as_ptr().cast_checked_raw())
         }
     }
 }

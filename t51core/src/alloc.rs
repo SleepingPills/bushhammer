@@ -4,6 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 /// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
+#[derive(Debug, Clone)]
 pub struct DynPtr(NonNull<()>, TypeId);
 
 impl DynPtr {
@@ -14,7 +15,9 @@ impl DynPtr {
         T: 'static,
     {
         DynPtr(
-            NonNull::new(inst as *mut T).expect("Dynamic pointer can't be null").cast::<()>(),
+            NonNull::new(inst as *mut T)
+                .expect("Dynamic pointer can't be null")
+                .cast::<()>(),
             TypeId::of::<T>(),
         )
     }
@@ -46,8 +49,8 @@ impl DynPtr {
     /// desired type does not match the original.
     #[inline]
     pub fn cast_checked_raw<T>(&self) -> *mut T
-        where
-            T: 'static,
+    where
+        T: 'static,
     {
         self.cast_checked::<T>().as_ptr()
     }
@@ -229,6 +232,7 @@ where
 }
 
 /// Dynamically typed, heap allocated vector
+#[derive(Debug)]
 pub struct DynVec<T>
 where
     T: ?Sized + DynVecOps,
@@ -241,17 +245,33 @@ impl<T> DynVec<T>
 where
     T: 'static + ?Sized + DynVecOps,
 {
-    pub fn new<R>() -> DynVec<T>
+    #[inline]
+    pub fn new<R>(data: Vec<R>) -> DynVec<T>
     where
         Vec<R>: 'static + Unsize<T>,
     {
         unsafe {
-            let inst = Box::<Vec<R>>::new(Vec::new());
+            let inst = Box::<Vec<R>>::new(data);
             let inst_ptr = inst.get_inner_ptr();
 
+            DynVec { inst, inst_ptr }
+        }
+    }
+
+    #[inline]
+    pub fn empty<R>() -> DynVec<T>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        DynVec::new(Vec::new())
+    }
+
+    #[inline]
+    pub fn from_box(inst: Box<T>) -> DynVec<T> {
+        unsafe {
             DynVec {
+                inst_ptr: inst.get_inner_ptr(),
                 inst,
-                inst_ptr,
             }
         }
     }
@@ -272,6 +292,11 @@ where
         Vec<R>: 'static + Unsize<T>,
     {
         unsafe { &mut *self.inst_ptr.cast_checked::<Vec<R>>().as_ptr() }
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> DynPtr {
+        self.inst_ptr.clone()
     }
 }
 

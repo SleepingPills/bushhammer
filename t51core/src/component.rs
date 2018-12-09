@@ -1,6 +1,5 @@
 use crate::alloc::DynPtr;
-use crate::entity::dynamic;
-use crate::entity::{EntityId, ShardDef};
+use crate::entity::{CompDefVec, EntityId, ShardDef};
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
@@ -24,7 +23,7 @@ pub trait Component: DeserializeOwned + Debug {
 }
 
 pub trait ComponentVec {
-    fn append(&mut self, data: &mut dynamic::DynVec);
+    fn append(&mut self, data: &mut CompDefVec);
     fn remove(&mut self, loc: usize);
     fn len(&self) -> usize;
     unsafe fn get_ptr(&self) -> DynPtr;
@@ -35,8 +34,8 @@ where
     T: 'static + Component,
 {
     #[inline]
-    fn append(&mut self, data: &mut dynamic::DynVec) {
-        let data_vec = data.cast_mut::<T>();
+    fn append(&mut self, data: &mut CompDefVec) {
+        let data_vec = data.cast_mut_vector::<T>();
         self.append(data_vec);
     }
 
@@ -171,7 +170,7 @@ mod tests {
             SomeComponent { x: 2, y: 2 },
         ];
 
-        shard_def.components.insert(some_comp_id, dynamic::DynVec::new(data));
+        shard_def.components.insert(some_comp_id, CompDefVec::new(data));
 
         assert_eq!(shard.ingest(&mut shard_def), 0);
         assert_eq!(shard.entities.len(), 3);

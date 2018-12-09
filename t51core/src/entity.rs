@@ -141,7 +141,7 @@ impl TransactionContext {
     where
         T: 'static + Component,
     {
-        self.builders.push(Box::new(CompDefFactory::<T>(PhantomData)));
+        self.builders.push(Box::new(CompDefBuilder::<T>(PhantomData)));
     }
 }
 
@@ -396,47 +396,14 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
-pub type CompDefVec = DynVec<CompDef>;
-
 pub trait CompDef: DynVecOps + Debug {
     fn push_json(&mut self, json: &str);
     fn clone_box(&self) -> Box<CompDef>;
 }
 
-pub trait BuildCompDef: Debug {
-    fn build(&self) -> CompDefVec;
-    fn clone_box(&self) -> Box<BuildCompDef>;
-}
-
-#[derive(Debug)]
-pub struct CompDefFactory<T>(pub PhantomData<T>)
-where
-    T: 'static + Component;
-
-impl<T> BuildCompDef for CompDefFactory<T>
-where
-    T: 'static + Component,
-{
-    #[inline]
-    fn build(&self) -> CompDefVec {
-        DynVec::new(Vec::<T>::new())
-    }
-
-    #[inline]
-    fn clone_box(&self) -> Box<BuildCompDef> {
-        Box::new(CompDefFactory::<T>(PhantomData))
-    }
-}
-
-impl Clone for Box<BuildCompDef> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
-}
-
 impl<T> CompDef for Vec<T>
-where
-    T: 'static + Component,
+    where
+        T: 'static + Component,
 {
     #[inline]
     fn push_json(&mut self, json: &str) {
@@ -449,26 +416,59 @@ where
     }
 }
 
-impl Clone for CompDefVec {
-    fn clone(&self) -> Self {
-        DynVec::from_box(self.clone_box())
-    }
-}
+pub type CompDefVec = DynVec<CompDef>;
 
 impl CompDefVec {
     #[inline]
     pub fn push<T>(&mut self, item: T)
-    where
-        T: 'static + Component,
+        where
+            T: 'static + Component,
     {
         self.cast_mut_vector::<T>().push(item);
     }
 
     #[inline]
     pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
-    where
-        T: 'static + Component,
+        where
+            T: 'static + Component,
     {
         &mut *(self.as_ptr().cast_checked_raw())
+    }
+}
+
+impl Clone for CompDefVec {
+    fn clone(&self) -> Self {
+        DynVec::from_box(self.clone_box())
+    }
+}
+
+pub trait BuildCompDef: Debug {
+    fn build(&self) -> CompDefVec;
+    fn clone_box(&self) -> Box<BuildCompDef>;
+}
+
+#[derive(Debug)]
+pub struct CompDefBuilder<T>(pub PhantomData<T>)
+where
+    T: 'static + Component;
+
+impl<T> BuildCompDef for CompDefBuilder<T>
+where
+    T: 'static + Component,
+{
+    #[inline]
+    fn build(&self) -> CompDefVec {
+        DynVec::new(Vec::<T>::new())
+    }
+
+    #[inline]
+    fn clone_box(&self) -> Box<BuildCompDef> {
+        Box::new(CompDefBuilder::<T>(PhantomData))
+    }
+}
+
+impl Clone for Box<BuildCompDef> {
+    fn clone(&self) -> Self {
+        self.clone_box()
     }
 }

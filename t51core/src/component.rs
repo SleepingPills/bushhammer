@@ -139,6 +139,7 @@ impl Shard {
 mod tests {
     use super::*;
     use serde_derive::{Deserialize, Serialize};
+    use std::sync::MutexGuard;
     use t51core_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Debug)]
@@ -147,16 +148,19 @@ mod tests {
         y: i32,
     }
 
-    fn setup() -> (ComponentId, ComponentId) {
-        unsafe {
-            ComponentId::reset_static();
-        }
-        (EntityId::acquire_unique_id(), SomeComponent::acquire_unique_id())
+    fn setup() -> (ComponentId, ComponentId, MutexGuard<'static, ()>) {
+        let lock = ComponentId::static_init();
+
+        (
+            EntityId::acquire_unique_id(),
+            SomeComponent::acquire_unique_id(),
+            lock
+        )
     }
 
     #[test]
     fn test_ingest() {
-        let (some_comp_id, _) = setup();
+        let (some_comp_id, _, _) = setup();
 
         let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
         shard.store.insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
@@ -182,7 +186,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let (some_comp_id, _) = setup();
+        let (some_comp_id, _, _) = setup();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
 
@@ -220,7 +224,7 @@ mod tests {
 
     #[test]
     fn test_data_ptr() {
-        setup();
+        let _ = setup();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
@@ -233,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_data_mut_ptr() {
-        setup();
+        let _ = setup();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));

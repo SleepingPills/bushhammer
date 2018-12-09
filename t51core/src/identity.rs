@@ -1,11 +1,13 @@
+use lazy_static::lazy_static;
 use std::fmt;
 use std::intrinsics::type_name;
 use std::mem;
 use std::ops;
+use std::sync::{MutexGuard, Mutex};
 
 #[macro_export]
 macro_rules! custom_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident) => {
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $lock: ident) => {
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         #[repr(transparent)]
         pub struct $name {
@@ -24,9 +26,13 @@ macro_rules! custom_type_id {
             }
 
             #[inline]
-            pub unsafe fn reset_static() {
-                Self::get_name_vec().clear();
-                Self::get_id_vec().clear();
+            pub fn static_init() -> MutexGuard<'static, ()> {
+                unsafe {
+                    let lock = $lock.lock().unwrap();
+                    Self::get_name_vec().clear();
+                    Self::get_id_vec().clear();
+                    lock
+                }
             }
         }
 
@@ -37,6 +43,12 @@ macro_rules! custom_type_id {
             }
         }
 
+        lazy_static! {
+            static ref $lock: Mutex<()> = {
+                Mutex::new(())
+            };
+        }
+
         static mut $name_vec: Vec<&'static str> = Vec::new();
         static mut $id_vec: Vec<$name> = Vec::new();
     };
@@ -44,8 +56,8 @@ macro_rules! custom_type_id {
 
 #[macro_export]
 macro_rules! bitflag_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident) => {
-        custom_type_id!($name, $type, $name_vec, $id_vec);
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident, $lock: ident) => {
+        custom_type_id!($name, $type, $name_vec, $id_vec, $lock);
 
         impl $name {
             /// Creates a new instance. Unique ids are distinguished by a bitmask, there is thus a limit to the
@@ -208,6 +220,6 @@ macro_rules! bitflag_type_id {
 pub(crate) type BitFlagId = u64;
 const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
-bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey);
-bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey);
-custom_type_id!(TopicId, i16, TOPIC_NAME_VEC, TOPIC_ID_VEC);
+bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey, ComponentIdMutex);
+bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey, SystemIdMutex);
+custom_type_id!(TopicId, i16, TOPIC_NAME_VEC, TOPIC_ID_VEC, TopicIdMutex);

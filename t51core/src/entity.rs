@@ -141,13 +141,7 @@ impl TransactionContext {
     where
         T: 'static + Component,
     {
-        // TODO: Cleanup
-        let indexer = T::get_type_indexer();
-        let len = self.builders.len();
-
-        println!("{} {} {}", T::get_unique_id(), indexer, len);
-
-        if indexer != len {
+        if T::get_type_indexer() != self.builders.len() {
             panic!("Indexer mismatch - builders must be registered in lockstep with the world")
         }
 

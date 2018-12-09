@@ -8,8 +8,11 @@ use anymap::AnyMap;
 use hashbrown::HashMap;
 use std::sync::atomic::ATOMIC_USIZE_INIT;
 use std::sync::Arc;
+use std::sync::MutexGuard;
 use std::thread;
 use std::time;
+
+type StaticGuards = (MutexGuard<'static, ()>, MutexGuard<'static, ()>, MutexGuard<'static, ()>);
 
 pub struct World {
     // Global Settings
@@ -22,6 +25,9 @@ pub struct World {
     system_transactions: Vec<TransactionContext>,
     transactions: TransactionContext,
     finalized: bool,
+
+    // Static State Guard
+    _static_guard: StaticGuards,
 }
 
 impl World {
@@ -40,18 +46,13 @@ impl World {
     /// FPS: 20
     #[inline]
     pub fn default() -> Self {
-        unsafe {
-            ComponentId::reset_static();
-            SystemId::reset_static();
-            TopicId::reset_static();
-        }
-
         let mut world = World {
             frame_time: time::Duration::from_millis(50),
             state: GameState::new(),
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
+            _static_guard: (ComponentId::static_init(), SystemId::static_init(), TopicId::static_init()),
         };
         // Entity ID is always a registered component
         world.register_component::<EntityId>();

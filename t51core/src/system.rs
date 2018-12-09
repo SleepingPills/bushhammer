@@ -901,6 +901,7 @@ mod tests {
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
     use t51core_proc::Component;
+    use std::sync::MutexGuard;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -917,10 +918,8 @@ mod tests {
     #[derive(Component, Serialize, Deserialize, Debug, Eq, PartialEq)]
     struct CompD(u8);
 
-    fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId) {
-        unsafe {
-            ComponentId::reset_static();
-        }
+    fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId, MutexGuard<'static, ()>) {
+        let lock = ComponentId::static_init();
 
         EntityId::acquire_unique_id();
 
@@ -929,6 +928,7 @@ mod tests {
             CompB::acquire_unique_id(),
             CompC::acquire_unique_id(),
             CompD::acquire_unique_id(),
+            lock
         )
     }
 
@@ -961,9 +961,7 @@ mod tests {
 
     #[test]
     fn test_check_shard() {
-        setup();
-
-        let (a_id, b_id, c_id, d_id) = setup();
+        let (a_id, b_id, c_id, d_id, _) = setup();
 
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
@@ -986,7 +984,7 @@ mod tests {
 
     #[test]
     fn test_add_shard() {
-        setup();
+        let _ = setup();
 
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
@@ -1038,7 +1036,7 @@ mod tests {
 
     #[test]
     fn test_run() {
-        setup();
+        let _ = setup();
 
         struct TestSystem<'a> {
             collect_run: Vec<(EntityId, CompA, CompB)>,

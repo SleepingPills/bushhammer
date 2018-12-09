@@ -404,7 +404,7 @@ pub trait CompDef: DynVecOps + Debug {
 }
 
 pub trait BuildCompDef: Debug {
-    fn build(&self) -> DynVec<CompDef>;
+    fn build(&self) -> CompDefVec;
     fn clone_box(&self) -> Box<BuildCompDef>;
 }
 
@@ -418,7 +418,7 @@ where
     T: 'static + Component,
 {
     #[inline]
-    fn build(&self) -> DynVec<CompDef> {
+    fn build(&self) -> CompDefVec {
         DynVec::new(Vec::<T>::new())
     }
 
@@ -449,13 +449,13 @@ where
     }
 }
 
-impl Clone for DynVec<CompDef> {
+impl Clone for CompDefVec {
     fn clone(&self) -> Self {
         DynVec::from_box(self.clone_box())
     }
 }
 
-impl DynVec<CompDef> {
+impl CompDefVec {
     #[inline]
     pub fn push<T>(&mut self, item: T)
     where

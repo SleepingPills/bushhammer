@@ -391,7 +391,7 @@ pub mod store {
 
     impl<'a, T> Query for Read<'a, T>
     where
-        T: Component,
+        T: 'static + Component,
     {
         type QueryItem = ReadData<'a, T>;
         type DataType = T;
@@ -404,7 +404,7 @@ pub mod store {
 
     impl<'a, T> Query for Write<'a, T>
     where
-        T: Component,
+        T: 'static + Component,
     {
         type QueryItem = WriteData<'a, T>;
         type DataType = T;
@@ -460,7 +460,7 @@ pub mod store {
         }
     }
 
-    macro_rules! data_tup {
+    macro_rules! component_tup {
         ($( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> ComponentDataTup for ($($field_type,)*)
             where
@@ -487,14 +487,14 @@ pub mod store {
         };
     }
 
-    data_tup!(A:0);
-    data_tup!(A:0, B:1);
-    data_tup!(A:0, B:1, C:2);
-    data_tup!(A:0, B:1, C:2, D:3);
-    data_tup!(A:0, B:1, C:2, D:3, E:4);
-    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
-    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-    data_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+    component_tup!(A:0);
+    component_tup!(A:0, B:1);
+    component_tup!(A:0, B:1, C:2);
+    component_tup!(A:0, B:1, C:2, D:3);
+    component_tup!(A:0, B:1, C:2, D:3, E:4);
+    component_tup!(A:0, B:1, C:2, D:3, E:4, F:5);
+    component_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    component_tup!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
     impl ComponentDataTup for () {
         type PtrTup = ();
@@ -536,7 +536,7 @@ pub mod store {
         }
     }
 
-    macro_rules! system_def {
+    macro_rules! component_def {
         ($( $field_type:ident:$field_seq:tt ),*) => {
             impl<$($field_type),*> ComponentQueryTup for ($($field_type,)*)
             where
@@ -558,14 +558,14 @@ pub mod store {
         };
     }
 
-    system_def!(A:0);
-    system_def!(A:0, B:1);
-    system_def!(A:0, B:1, C:2);
-    system_def!(A:0, B:1, C:2, D:3);
-    system_def!(A:0, B:1, C:2, D:3, E:4);
-    system_def!(A:0, B:1, C:2, D:3, E:4, F:5);
-    system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
-    system_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
+    component_def!(A:0);
+    component_def!(A:0, B:1);
+    component_def!(A:0, B:1, C:2);
+    component_def!(A:0, B:1, C:2, D:3);
+    component_def!(A:0, B:1, C:2, D:3, E:4);
+    component_def!(A:0, B:1, C:2, D:3, E:4, F:5);
+    component_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
+    component_def!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
 
     impl ComponentQueryTup for () {
         type DataTup = ();

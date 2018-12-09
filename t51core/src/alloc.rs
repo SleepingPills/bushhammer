@@ -1,3 +1,74 @@
+use std::any::TypeId;
+use std::marker::Unsize;
+use std::ops::{Deref, DerefMut};
+use std::ptr::NonNull;
+
+/// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
+pub struct DynPtr(NonNull<()>, TypeId);
+
+impl DynPtr {
+    /// New dynamic non-null pointer.
+    #[inline]
+    pub fn new<T>(inst: *const T) -> DynPtr
+    where
+        T: 'static,
+    {
+        DynPtr(
+            NonNull::new(inst as *mut T).expect("Dynamic pointer can't be null").cast::<()>(),
+            TypeId::of::<T>(),
+        )
+    }
+
+    /// New dynamic non-null pointer, skipping the null check.
+    #[inline]
+    pub unsafe fn new_unchecked<T>(inst: *const T) -> DynPtr
+    where
+        T: 'static,
+    {
+        DynPtr(NonNull::new_unchecked(inst as *mut T).cast::<()>(), TypeId::of::<T>())
+    }
+
+    /// Cast the pointer to the specified type. Will panic if the desired type does not match
+    /// the original.
+    #[inline]
+    pub fn cast_checked<T>(&self) -> NonNull<T>
+    where
+        T: 'static,
+    {
+        if TypeId::of::<T>() != self.1 {
+            panic!("Type mismatch")
+        }
+
+        self.0.cast::<T>()
+    }
+
+    /// Cast the pointer to the specified type and return a raw pointer. Will panic if the
+    /// desired type does not match the original.
+    #[inline]
+    pub fn cast_checked_raw<T>(&self) -> *mut T
+        where
+            T: 'static,
+    {
+        self.cast_checked::<T>().as_ptr()
+    }
+}
+
+impl Deref for DynPtr {
+    type Target = NonNull<()>;
+
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for DynPtr {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
+}
+
 /// A pool allocator that keeps all items in an efficient dense vector. New elements will be
 /// used to fill up holes created by previous reclamation.
 #[derive(Debug)]
@@ -143,9 +214,108 @@ impl<T> SlotPool<T> {
     }
 }
 
+/// Trait for retrieving the pointer to the actual object implementing the trait
+pub trait DynVecOps {
+    unsafe fn get_inner_ptr(&self) -> DynPtr;
+}
+
+impl<T> DynVecOps for Vec<T>
+where
+    T: 'static,
+{
+    unsafe fn get_inner_ptr(&self) -> DynPtr {
+        DynPtr::new_unchecked(self as *const Vec<T>)
+    }
+}
+
+/// Dynamically typed, heap allocated vector
+pub struct DynVec<T>
+where
+    T: ?Sized + DynVecOps,
+{
+    inst: Box<T>,
+    inst_ptr: DynPtr,
+}
+
+impl<T> DynVec<T>
+where
+    T: 'static + ?Sized + DynVecOps,
+{
+    pub fn new<R>() -> DynVec<T>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        unsafe {
+            let inst = Box::<Vec<R>>::new(Vec::new());
+            let inst_ptr = inst.get_inner_ptr();
+
+            DynVec {
+                inst,
+                inst_ptr,
+            }
+        }
+    }
+
+    /// Retrieve a reference to the inner typed vector. Panics if there is a type mismatch.
+    #[inline]
+    pub fn cast_vector<R>(&self) -> &Vec<R>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        unsafe { &*self.inst_ptr.cast_checked::<Vec<R>>().as_ptr() }
+    }
+
+    /// Retrieve a mutable reference to the inner typed vector. Panics if there is a type mismatch.
+    #[inline]
+    pub fn cast_mut_vector<R>(&mut self) -> &mut Vec<R>
+    where
+        Vec<R>: 'static + Unsize<T>,
+    {
+        unsafe { &mut *self.inst_ptr.cast_checked::<Vec<R>>().as_ptr() }
+    }
+}
+
+impl<T> Deref for DynVec<T>
+where
+    T: 'static + ?Sized + DynVecOps,
+{
+    type Target = Box<T>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inst
+    }
+}
+
+impl<T> DerefMut for DynVec<T>
+where
+    T: 'static + ?Sized + DynVecOps,
+{
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inst
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    #[should_panic(expected = "Type mismatch")]
+    fn test_dynptr_cast_checked_panic_on_wrong_type() {
+        let value = 15;
+        let ptr = DynPtr::new(&value as *const i32);
+
+        ptr.cast_checked::<usize>();
+    }
+
+    #[test]
+    #[should_panic(expected = "Type mismatch")]
+    fn test_dynptr_cast_checked_raw_panic_on_wrong_type() {
+        let value = 15;
+        let ptr = DynPtr::new(&value as *const i32);
+
+        ptr.cast_checked_raw::<usize>();
+    }
 
     #[test]
     fn test_vec_pool() {

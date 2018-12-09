@@ -2,13 +2,37 @@ extern crate proc_macro;
 
 use syn;
 
+#[proc_macro_derive(Topic)]
+pub fn derive_topic(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+    let ast: syn::DeriveInput = syn::parse(item).unwrap();
+    derive_core(
+        &ast.ident.to_string(),
+        "Topic",
+        "TopicId",
+        "acquire_topic_id",
+        "get_topic_id",
+    )
+}
+
 #[proc_macro_derive(Component)]
 pub fn derive_component(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast: syn::DeriveInput = syn::parse(item).unwrap();
-    derive_core(&ast.ident.to_string(), "Component", "ComponentId")
+    derive_core(
+        &ast.ident.to_string(),
+        "Component",
+        "ComponentId",
+        "acquire_unique_id",
+        "get_unique_id",
+    )
 }
 
-fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro::TokenStream {
+fn derive_core(
+    struct_name: &str,
+    main_trait: &str,
+    id_type: &str,
+    acquire_name: &str,
+    getter_name: &str,
+) -> proc_macro::TokenStream {
     let static_mod = format!("__{}Module", struct_name.to_uppercase());
     let static_id = format!("__{}_ID", struct_name.to_uppercase());
     let static_once = format!("__{}_INIT", struct_name.to_uppercase());
@@ -26,7 +50,7 @@ fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro
 
         impl {main_trait} for {struct_name} {{
             #[inline]
-            fn acquire_unique_id() -> {id_type} {{
+            fn {acquire_name}() -> {id_type} {{
                 unsafe {{
                     {static_mod}::{static_once}.call_once(|| {{
                         let counter = {id_type}::get_name_vec().len();
@@ -41,7 +65,7 @@ fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro
             }}
 
             #[inline]
-            fn get_unique_id() -> {id_type} {{
+            fn {getter_name}() -> {id_type} {{
                 unsafe {{
                     {static_mod}::{static_id}
                 }}
@@ -52,7 +76,9 @@ fn derive_core(struct_name: &str, main_trait: &str, id_type: &str) -> proc_macro
         id_type = id_type,
         static_once = static_once,
         main_trait = main_trait,
-        struct_name = struct_name
+        struct_name = struct_name,
+        acquire_name = acquire_name,
+        getter_name = getter_name
     );
 
     tokens.parse().unwrap()

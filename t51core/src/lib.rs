@@ -7,6 +7,7 @@
 #![feature(associated_type_defaults)]
 
 pub mod alloc;
+pub mod messagebus;
 pub mod component;
 pub mod entity;
 pub mod identity;

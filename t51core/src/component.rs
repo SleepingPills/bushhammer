@@ -1,4 +1,5 @@
-use crate::entity::dynamic::DynVec;
+use crate::alloc::DynPtr;
+use crate::entity::dynamic;
 use crate::entity::{EntityId, ShardDef};
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
@@ -23,18 +24,18 @@ pub trait Component: DeserializeOwned + Debug {
 }
 
 pub trait ComponentVec {
-    fn ingest(&mut self, data: &mut DynVec);
+    fn append(&mut self, data: &mut dynamic::DynVec);
     fn remove(&mut self, loc: usize);
     fn len(&self) -> usize;
-    unsafe fn get_ptr(&self) -> *mut ();
+    unsafe fn get_ptr(&self) -> DynPtr;
 }
 
 impl<T> ComponentVec for Vec<T>
 where
-    T: Component,
+    T: 'static + Component,
 {
     #[inline]
-    fn ingest(&mut self, data: &mut DynVec) {
+    fn append(&mut self, data: &mut dynamic::DynVec) {
         let data_vec = data.cast_mut::<T>();
         self.append(data_vec);
     }
@@ -50,8 +51,8 @@ where
     }
 
     #[inline]
-    unsafe fn get_ptr(&self) -> *mut () {
-        self as *const Vec<T> as *mut ()
+    unsafe fn get_ptr(&self) -> DynPtr {
+        DynPtr::new_unchecked(self as *const Vec<T>)
     }
 }
 
@@ -84,7 +85,7 @@ impl Shard {
         }
 
         for (id, data) in shard_def.components.iter_mut() {
-            self.store.get_mut(id).unwrap().ingest(data);
+            self.store.get_mut(id).unwrap().append(data);
         }
 
         let loc_start = self.entities.len();
@@ -113,25 +114,25 @@ impl Shard {
     #[inline]
     pub fn data_ptr<T>(&self) -> *const Vec<T>
     where
-        T: Component,
+        T: 'static + Component,
     {
         if T::get_unique_id() == EntityId::get_unique_id() {
-            unsafe { self.entities.get_ptr() as *const Vec<T> }
+            unsafe { self.entities.get_ptr().cast_checked_raw() }
         } else {
-            unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *const Vec<T> }
+            unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr().cast_checked_raw() }
         }
     }
 
     #[inline]
     pub fn data_mut_ptr<T>(&self) -> *mut Vec<T>
     where
-        T: Component,
+        T: 'static + Component,
     {
         if T::get_unique_id() == EntityId::get_unique_id() {
             panic!("Entity ID vector is not writeable")
         }
 
-        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr() as *mut Vec<T> }
+        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr().cast_checked_raw() }
     }
 }
 
@@ -170,7 +171,7 @@ mod tests {
             SomeComponent { x: 2, y: 2 },
         ];
 
-        shard_def.components.insert(some_comp_id, DynVec::new(data));
+        shard_def.components.insert(some_comp_id, dynamic::DynVec::new(data));
 
         assert_eq!(shard.ingest(&mut shard_def), 0);
         assert_eq!(shard.entities.len(), 3);

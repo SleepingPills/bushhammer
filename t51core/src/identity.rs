@@ -4,13 +4,42 @@ use std::mem;
 use std::ops;
 
 #[macro_export]
-macro_rules! bitflag_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident) => {
+macro_rules! custom_type_id {
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident) => {
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         #[repr(transparent)]
         pub struct $name {
             pub id: $type,
         }
+
+        impl $name {
+            #[inline]
+            pub unsafe fn get_name_vec() -> &'static mut Vec<&'static str> {
+                &mut $name_vec
+            }
+
+            #[inline]
+            pub unsafe fn get_id_vec() -> &'static mut Vec<$name> {
+                &mut $id_vec
+            }
+        }
+
+        impl fmt::Display for $name {
+            #[inline(always)]
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{}({:?})", stringify!($name), self.id)
+            }
+        }
+
+        static mut $name_vec: Vec<&'static str> = Vec::new();
+        static mut $id_vec: Vec<$name> = Vec::new();
+    };
+}
+
+#[macro_export]
+macro_rules! bitflag_type_id {
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident) => {
+        custom_type_id!($name, $type, $name_vec, $id_vec);
 
         impl $name {
             /// Creates a new instance. Unique ids are distinguished by a bitmask, there is thus a limit to the
@@ -36,27 +65,7 @@ macro_rules! bitflag_type_id {
             pub fn indexer(&self) -> usize {
                 self.id.trailing_zeros() as usize
             }
-
-            #[inline]
-            pub unsafe fn get_name_vec() -> &'static mut Vec<&'static str> {
-                &mut $name_vec
-            }
-
-            #[inline]
-            pub unsafe fn get_id_vec() -> &'static mut Vec<$name> {
-                &mut $id_vec
-            }
         }
-
-        impl fmt::Display for $name {
-            #[inline(always)]
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "{}({:?})", stringify!($name), self.id)
-            }
-        }
-
-        static mut $name_vec: Vec<&'static str> = Vec::new();
-        static mut $id_vec: Vec<$name> = Vec::new();
 
         #[repr(transparent)]
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
@@ -195,3 +204,4 @@ const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
 bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey);
 bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey);
+custom_type_id!(TopicId, i16, TOPIC_NAME_VEC, TOPIC_ID_VEC);

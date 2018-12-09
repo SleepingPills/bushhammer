@@ -1,4 +1,4 @@
-use crate::alloc::{DynVec, DynVecOps};
+use crate::alloc::{DynVec, DynVecOps, CloneBox};
 use crate::component::Component;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
@@ -432,7 +432,7 @@ impl CompDefVec {
         where
             T: 'static + Component,
     {
-        &mut *(self.as_ptr().cast_checked_raw())
+        &mut *(self.get_inner_ptr().cast_checked_raw())
     }
 }
 

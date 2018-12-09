@@ -293,11 +293,6 @@ where
     {
         unsafe { &mut *self.inst_ptr.cast_checked::<Vec<R>>().as_ptr() }
     }
-
-    #[inline]
-    pub fn as_ptr(&self) -> DynPtr {
-        self.inst_ptr.clone()
-    }
 }
 
 impl<T> Deref for DynVec<T>

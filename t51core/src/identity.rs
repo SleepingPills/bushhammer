@@ -109,7 +109,7 @@ macro_rules! bitflag_type_id {
             pub fn decompose(&self) -> impl Iterator<Item = $name> {
                 let mut field = self.0;
 
-                let first_index = self.0.leading_zeros() as usize;
+                let first_index = self.0.trailing_zeros() as usize;
                 let last_index = ID_BIT_LENGTH - self.0.leading_zeros() as usize;
 
                 (first_index..last_index).filter_map(move |index| unsafe {
@@ -222,4 +222,4 @@ const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
 bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey, ComponentIdMutex);
 bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey, SystemIdMutex);
-custom_type_id!(TopicId, i16, TOPIC_NAME_VEC, TOPIC_ID_VEC, TopicIdMutex);
+bitflag_type_id!(TopicId, BitFlagId, TOPIC_NAME_VEC, TOPIC_ID_VEC, TopicBundle, TopicIdMutex);

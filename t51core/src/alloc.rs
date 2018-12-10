@@ -219,6 +219,7 @@ impl<T> SlotPool<T> {
 
 /// Trait for retrieving the pointer to the actual object implementing the trait
 pub trait DynVecOps {
+    fn clear(&mut self);
     unsafe fn get_inner_ptr(&self) -> DynPtr;
 }
 
@@ -226,6 +227,10 @@ impl<T> DynVecOps for Vec<T>
 where
     T: 'static,
 {
+    fn clear(&mut self) {
+        self.clear();
+    }
+
     unsafe fn get_inner_ptr(&self) -> DynPtr {
         DynPtr::new_unchecked(self as *const Vec<T>)
     }

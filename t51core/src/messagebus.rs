@@ -1,5 +1,5 @@
 use crate::alloc::{DynVec, DynVecOps};
-use crate::identity::TopicId;
+use crate::identity::{TopicId, TopicBundle};
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
@@ -52,11 +52,17 @@ impl Clone for DynVec<MessageQueue> {
 #[derive(Clone)]
 pub struct Bus {
     topics: Vec<DynVec<MessageQueue>>,
+    activity: TopicBundle
 }
 
 impl Bus {
+
+
     #[inline]
-    pub fn register<T>(&mut self) where T: 'static + Topic {
+    pub fn register<T>(&mut self)
+    where
+        T: 'static + Topic,
+    {
         if T::get_indexer() != self.topics.len() {
             panic!("Indexer mismatch - topics must be registered in lockstep with the world")
         }
@@ -67,49 +73,106 @@ impl Bus {
     /// Transfer the messages in the `other` `Bus` into the current `Bus`.
     #[inline]
     pub fn transfer(&mut self, other: &mut Bus) {
-        for (target, source) in self.topics.iter_mut().zip(other.topics.iter_mut()) {
-            target.append(source);
+        // Iter all the active topics in the other bus and move over the messages to the current.
+        for topic in other.activity.decompose() {
+            self.activity += topic;
+            self.topics[topic.id as usize].append(&mut other.topics[topic.id as usize]);
         }
+        // Clear out the activity in the other bus
+        other.activity = TopicBundle::empty();
     }
 
     /// Read the messages for a particular topic
     #[inline]
-    pub fn read<T>(&self) -> &[T] where T: 'static + Topic {
+    pub fn read<T>(&self) -> &[T]
+    where
+        T: 'static + Topic,
+    {
         self.topics[T::get_indexer()].cast_vector::<T>()
+    }
+
+    /// Publish the supplied message on the bus.
+    #[inline]
+    pub fn publish<T>(&mut self, message: T)
+    where
+        T: 'static + Topic,
+    {
+        self.activity += T::get_topic_id();
+        self.topics[T::get_indexer()].cast_mut_vector::<T>().push(message);
+    }
+
+    /// Batch publish messages of a given type.
+    #[inline]
+    pub fn batch<T>(&mut self) -> Batcher<T>
+    where
+        T: 'static + Topic,
+    {
+        self.activity += T::get_topic_id();
+        Batcher::new(self.topics[T::get_indexer()].cast_mut_vector::<T>())
+    }
+
+    #[inline]
+    pub fn clear(&mut self) {
+        for topic in self.activity.decompose() {
+            self.topics[topic.id as usize].clear();
+        }
+
+        self.activity = TopicBundle::empty();
+    }
+}
+
+pub struct Batcher<'a, T> where T: Topic{
+    buffer: &'a mut Vec<T>,
+}
+
+impl<'a, T> Batcher<'a, T> where T: Topic {
+    #[inline]
+    fn new(buffer: &'a mut Vec<T>) -> Batcher<'a, T> {
+        Batcher { buffer }
+    }
+
+    /// Publish the supplied message on the bus.
+    #[inline]
+    pub fn publish(&mut self, message: T) {
+        self.buffer.push(message)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_register_topic() {
+
+    }
+
+    fn test_register_fail_lockstep() {
+
+    }
+
+    fn test_transfer() {
+
+    }
+
+    fn test_read() {
+
+    }
+
+    fn test_publish() {
+
+    }
+
+    fn test_batch() {
+
+    }
+
+    fn test_clear() {
+
     }
 }
 
 /*
 ### Messaging ###
-Use Cases:
- - System <-> System
-  - Can be frame lock step
- - Network <-> System
-  - No lock step (messages can arrive at any time)
-
-Required Features
- - Send Message
- - Send Message Batch (can be optimized to bulk distribute)
- - Recieve Message
- - Drain all Messages. This blocks the queue until all messages are drained into another vector. Can be used to
-   absorb all outstanding messages into an internal buffer and then process them.
-
-Option #1
-Disruptor queue with pool allocated message buffer. When sending, the publisher requests a message buffer from
-the pool, fills it and sends it to a destination. When the buffer is dropped, the internal vector gets returned
-to the pool.
-
-The pool needs to be a concurrent stack/queue, whichever is more performant.
-
-Check the disruptor queue or crossbeam queues and grab the one that allows draining all messages efficiently.
-
-Option #2
-Message bus built as a MPSC queue connected to a vector of SPSC queues to broadcast the message to each consumer.
-
-Make the message bus owned by the world and finalized when the world is built to avoid new subscriptions. There
-is no need for extra synchronisation then.
-
-Option #3
 Inter system comms where systems write messages in a local buffer that then gets redistributed by the world each frame.
 
 Has the benefit of inherently batching messages per frame and requiring no locking mechanisms at all.
@@ -119,16 +182,14 @@ Messages:
     but slower for collection (have to loop through all possible types, as opposed to only those submitted by system)
 
 System Side:
-BatchNode
- - Collects messages into DynVecs by type
-Consumers
- - Tuple of pointers to vectors (make sure the vectors are boxed)
- - Pointers are extracted at initialization (like for resources)
- - At execution time, the pointers get dereffed into slices (to avoid mutation)
+ - Collect all messages into local bus (passed as mutable ref)
+ - Read from common bus (passed as immutable ref)
 
 World Side:
- - Collect all messages from system BatchNodes into a central BatchNode before each frame
- - After systems finish processing, clear all vectors in the central BatchNode
+ - Pass in common bus to systems for frame processing
+ - Frame processing
+ - Clear out common bus
+ - Transfer all system bus contents to common bus
 
 The above setup gets us completely allocation free broadcast.
 

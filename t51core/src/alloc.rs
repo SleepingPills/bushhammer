@@ -220,6 +220,7 @@ impl<T> SlotPool<T> {
 /// Trait for retrieving the pointer to the actual object implementing the trait
 pub trait DynVecOps {
     fn clear(&mut self);
+    fn len(&self) -> usize;
     unsafe fn get_inner_ptr(&self) -> DynPtr;
 }
 
@@ -227,8 +228,14 @@ impl<T> DynVecOps for Vec<T>
 where
     T: 'static,
 {
+    #[inline]
     fn clear(&mut self) {
         self.clear();
+    }
+
+    #[inline]
+    fn len(&self) -> usize {
+        self.len()
     }
 
     unsafe fn get_inner_ptr(&self) -> DynPtr {

@@ -28,7 +28,12 @@ macro_rules! custom_type_id {
             #[inline]
             pub fn static_init() -> MutexGuard<'static, ()> {
                 unsafe {
-                    let lock = $lock.lock().unwrap();
+                    // The lock guards ID generation only, which is safe to restart
+                    // in case the previous lock-holder thread paniced.
+                    let lock =  match $lock.lock() {
+                        Ok(guard) => guard,
+                        Err(poisoned) => poisoned.into_inner(),
+                    };
                     Self::get_name_vec().clear();
                     Self::get_id_vec().clear();
                     lock

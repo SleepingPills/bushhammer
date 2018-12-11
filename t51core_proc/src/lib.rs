@@ -2,12 +2,12 @@ extern crate proc_macro;
 
 use syn;
 
-#[proc_macro_derive(Topic)]
-pub fn derive_topic(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
+#[proc_macro_derive(Message)]
+pub fn derive_message(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
     let ast: syn::DeriveInput = syn::parse(item).unwrap();
     derive_core(
         &ast.ident.to_string(),
-        "Topic",
+        "Message",
         "TopicId",
         "acquire_topic_id",
         "get_topic_id",

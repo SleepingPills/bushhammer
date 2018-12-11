@@ -2,6 +2,7 @@ use crate::component::Component;
 use crate::component::{ComponentCoords, Shard};
 use crate::entity::{EntityId, TransactionContext};
 use crate::identity::ShardKey;
+use crate::messagebus::{Batcher, Bus, Message};
 use crate::sentinel::Take;
 use anymap::AnyMap;
 use hashbrown::HashMap;
@@ -11,7 +12,7 @@ use std::marker::PhantomData;
 pub trait RunSystem {
     type Data: DataDef;
 
-    fn run(&mut self, ctx: Context<Self::Data>, tx: &mut TransactionContext);
+    fn run(&mut self, ctx: Context<Self::Data>, tx: &mut TransactionContext, msg: Router);
 }
 
 pub trait DataDef {
@@ -127,6 +128,7 @@ where
     shard_key: ShardKey,
     runstate: T,
     data: SystemData<T::Data>,
+    messages: Bus,
 }
 
 impl<T> SystemRuntime<T>
@@ -139,6 +141,7 @@ where
             shard_key: <<T::Data as DataDef>::Components as ComponentQueryTup>::get_shard_key(),
             runstate: system,
             data: SystemData::new(),
+            messages: Bus::new(),
         }
     }
 
@@ -149,8 +152,9 @@ where
 }
 
 pub trait System {
-    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext);
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext, incoming: &Bus);
     fn init(&mut self, resources: &AnyMap);
+    fn transfer_messages(&mut self, central_bus: &mut Bus);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
     fn check_shard(&self, shard_key: ShardKey) -> bool;
@@ -161,19 +165,27 @@ where
     T: RunSystem,
 {
     #[inline]
-    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext) {
+    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext, incoming: &Bus) {
         self.runstate.run(
             Context {
                 system_data: &mut self.data,
                 entities,
             },
             transactions,
+            Router {
+                incoming,
+                outgoing: &mut self.messages,
+            },
         );
     }
 
     #[inline]
     fn init(&mut self, resources: &AnyMap) {
         self.data.init_resources(resources);
+    }
+
+    fn transfer_messages(&mut self, central_bus: &mut Bus) {
+        central_bus.transfer(&mut self.messages);
     }
 
     #[inline]
@@ -193,6 +205,41 @@ where
     #[inline]
     fn check_shard(&self, shard_key: ShardKey) -> bool {
         shard_key.contains_key(self.shard_key)
+    }
+}
+
+/// Routes messages to the correct bus.
+pub struct Router<'a> {
+    incoming: &'a Bus,
+    outgoing: &'a mut Bus,
+}
+
+impl<'a> Router<'_> {
+    /// Read the messages for a particular topic.
+    #[inline]
+    pub fn read<T>(&self) -> &[T]
+    where
+        T: 'static + Message,
+    {
+        self.incoming.read::<T>()
+    }
+
+    /// Publish the supplied message on the bus.
+    #[inline]
+    pub fn publish<T>(&mut self, message: T)
+    where
+        T: 'static + Message,
+    {
+        self.outgoing.publish(message);
+    }
+
+    /// Batch publish messages of a given type.
+    #[inline]
+    pub fn batch<T>(&mut self) -> Batcher<T>
+    where
+        T: 'static + Message,
+    {
+        self.outgoing.batch::<T>()
     }
 }
 
@@ -900,8 +947,8 @@ mod tests {
     use std::marker::PhantomData;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
-    use t51core_proc::Component;
     use std::sync::MutexGuard;
+    use t51core_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -928,7 +975,7 @@ mod tests {
             CompB::acquire_unique_id(),
             CompC::acquire_unique_id(),
             CompD::acquire_unique_id(),
-            lock
+            lock,
         )
     }
 
@@ -968,7 +1015,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, CompA>, Read<'a, CompB>, Write<'a, CompC>)>;
 
-            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
                 unimplemented!()
             }
         }
@@ -991,7 +1038,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<Read<'a, CompB>>;
 
-            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
                 unimplemented!()
             }
         }
@@ -1015,7 +1062,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<Read<'a, CompB>>;
 
-            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
                 unimplemented!()
             }
         }
@@ -1047,7 +1094,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
-            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
                 let mut entities = Vec::new();
 
                 for (&id, a, b) in ctx.components() {
@@ -1078,7 +1125,9 @@ mod tests {
 
         let mut transactions = TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT));
 
-        system.run(&entities, &mut transactions);
+        let messages = Bus::new();
+
+        system.run(&entities, &mut transactions, &messages);
 
         assert_eq!(system.runstate.collect_run.len(), 3);
         assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));

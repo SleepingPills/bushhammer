@@ -2,6 +2,7 @@ use crate::component::Component;
 use crate::component::{ComponentCoords, ComponentVec, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
 use crate::identity::{ComponentId, ShardKey, SystemId, TopicId};
+use crate::messagebus::Bus;
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
@@ -25,6 +26,9 @@ pub struct World {
     system_transactions: Vec<TransactionContext>,
     transactions: TransactionContext,
     finalized: bool,
+
+    // Messaging
+    messages: Bus,
 
     // Static State Guard
     _static_guard: StaticGuards,
@@ -52,6 +56,7 @@ impl World {
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
+            messages: Bus::new(),
             _static_guard: (ComponentId::static_init(), SystemId::static_init(), TopicId::static_init()),
         };
         // Entity ID is always a registered component
@@ -79,6 +84,15 @@ impl World {
         for tx in self.system_transactions.iter_mut() {
             self.state.process_context(tx);
         }
+    }
+
+    /// Process messages
+    pub fn process_messages(&mut self) {
+        for (_, mut system) in self.state.systems.iter_mut::<System>() {
+            system.transfer_messages(&mut self.messages);
+        }
+
+        self.messages.clear();
     }
 
     /// Runs one game iteration
@@ -145,7 +159,11 @@ impl World {
     pub fn process_systems(&mut self) {
         for (id, mut system) in self.state.systems.iter_mut::<System>() {
             unsafe {
-                system.run(&self.state.entities, self.get_system_transactions(id.indexer()));
+                system.run(
+                    &self.state.entities,
+                    self.get_system_transactions(id.indexer()),
+                    &self.messages,
+                );
             }
         }
     }
@@ -195,7 +213,6 @@ pub struct GameState {
     entities: HashMap<EntityId, ComponentCoords>,
     systems: Registry<SystemId>,
     resources: AnyMap,
-
     shards: HashMap<ShardKey, Shard>,
     builders: HashMap<ComponentId, Box<Fn() -> Box<ComponentVec>>>,
 }
@@ -282,7 +299,7 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::system::Context;
-    use crate::system::{Components, Read, Resources, Write};
+    use crate::system::{Components, Read, Resources, Write, Router};
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::ptr::NonNull;
@@ -412,7 +429,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Resources<(Read<'a, TestResource1>, Write<'a, TestResource2>)>;
 
-            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext) {
+            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
                 let (r1, mut r2) = ctx.resources();
                 r2.x = r1.x;
             }
@@ -441,7 +458,7 @@ mod tests {
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
-            fn run(&mut self, _ctx: Context<Self::Data>, tx: &mut TransactionContext) {
+            fn run(&mut self, _ctx: Context<Self::Data>, tx: &mut TransactionContext, _msg: Router) {
                 tx.add((CompA(3), CompB(3)));
                 tx.remove(0.into());
             }

@@ -20,6 +20,7 @@ pub trait Message: Clone + Debug {
 
 /// Appendable and cloneable message queue
 pub trait MessageQueue: DynVecOps {
+    fn get_topic_id(&self) -> TopicId;
     fn append(&mut self, other: &mut DynVec<MessageQueue>);
     fn clone_box(&self) -> Box<MessageQueue>;
 }
@@ -28,6 +29,10 @@ impl<T> MessageQueue for Vec<T>
 where
     T: 'static + Message,
 {
+    fn get_topic_id(&self) -> TopicId {
+        T::get_topic_id()
+    }
+
     #[inline]
     fn append(&mut self, other: &mut DynVec<MessageQueue>) {
         let other_vec = other.cast_mut_vector::<T>();
@@ -63,6 +68,7 @@ impl Bus {
         }
     }
 
+    /// Register a new topic on the bus.
     #[inline]
     pub fn register<T>(&mut self)
     where
@@ -73,6 +79,17 @@ impl Bus {
         }
 
         self.topics.push(DynVec::empty::<T>());
+    }
+
+    /// Restructure the current bus to match the setup of the template.
+    #[inline]
+    pub fn restructure(&mut self, template: &Bus) {
+        self.activity = TopicBundle::empty();
+        self.topics.clear();
+
+        for dyn_vec in template.topics.iter() {
+            self.topics.push(dyn_vec.clone());
+        }
     }
 
     /// Transfer the messages in the `other` `Bus` into the current `Bus`.
@@ -87,7 +104,7 @@ impl Bus {
         other.activity = TopicBundle::empty();
     }
 
-    /// Read the messages for a particular topic
+    /// Read the messages for a particular topic.
     #[inline]
     pub fn read<T>(&self) -> &[T]
     where
@@ -197,6 +214,33 @@ mod tests {
     }
 
     #[test]
+    fn test_restructure() {
+        let _state = setup();
+
+        let mut bus1 = Bus::new();
+        bus1.register::<T1>();
+        bus1.publish(T1(1));
+        bus1.publish(T1(2));
+
+        let mut bus2 = Bus::new();
+        bus2.register::<T1>();
+        bus2.register::<T2>();
+
+        bus1.restructure(&bus2);
+        bus1.publish(T1(4));
+        bus1.publish(T2(5));
+
+        assert_eq!(bus1.topics.len(), 2);
+        assert_eq!(bus1.topics[0].cast_vector::<T1>().len(), 1);
+        assert_eq!(bus1.topics[0].cast_vector::<T1>()[0].0, 4);
+        assert_eq!(bus1.topics[1].cast_vector::<T2>().len(), 1);
+        assert_eq!(bus1.topics[1].cast_vector::<T2>()[0].0, 5);
+
+        assert_eq!(bus2.topics[0].cast_vector::<T1>().len(), 0);
+        assert_eq!(bus2.topics[1].cast_vector::<T2>().len(), 0);
+    }
+
+    #[test]
     fn test_transfer() {
         let _state = setup();
 
@@ -218,11 +262,10 @@ mod tests {
         assert_eq!(bus1.topics[1].len(), 0);
         assert_eq!(bus1.activity, TopicBundle::empty());
 
-        assert_eq!(bus2.activity, T1::get_topic_id() + T2::get_topic_id());
-
         assert_eq!(bus2.topics[0].cast_vector::<T1>()[0].0, 0);
         assert_eq!(bus2.topics[0].cast_vector::<T1>()[1].0, 1);
         assert_eq!(bus2.topics[1].cast_vector::<T2>()[0].0, 1);
+        assert_eq!(bus2.activity, T1::get_topic_id() + T2::get_topic_id());
     }
 
     #[test]

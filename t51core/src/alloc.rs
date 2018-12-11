@@ -4,7 +4,7 @@ use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
 /// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct DynPtr(NonNull<()>, TypeId);
 
 impl DynPtr {

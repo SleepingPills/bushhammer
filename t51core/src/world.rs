@@ -70,7 +70,7 @@ impl World {
         self.finalized = true;
 
         for (_, mut system) in self.state.systems.iter_mut::<System>() {
-            system.init(&self.state.resources);
+            system.init(&self.state.resources, &self.messages);
 
             // Create a copy of the main transaction context for each system so they can be run in parallel
             self.system_transactions.push(self.transactions.clone());
@@ -88,11 +88,11 @@ impl World {
 
     /// Process messages
     pub fn process_messages(&mut self) {
+        self.messages.clear();
+
         for (_, mut system) in self.state.systems.iter_mut::<System>() {
             system.transfer_messages(&mut self.messages);
         }
-
-        self.messages.clear();
     }
 
     /// Runs one game iteration
@@ -100,6 +100,7 @@ impl World {
     pub fn run_once(&mut self) -> bool {
         self.process_transactions();
         self.process_systems();
+        self.process_messages();
 
         // Eventually, process stopping conditions from various triggers (local or via network).
         true

@@ -153,7 +153,7 @@ where
 
 pub trait System {
     fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext, incoming: &Bus);
-    fn init(&mut self, resources: &AnyMap);
+    fn init(&mut self, resources: &AnyMap, central_bus: &Bus);
     fn transfer_messages(&mut self, central_bus: &mut Bus);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
@@ -180,8 +180,9 @@ where
     }
 
     #[inline]
-    fn init(&mut self, resources: &AnyMap) {
+    fn init(&mut self, resources: &AnyMap, central_bus: &Bus) {
         self.data.init_resources(resources);
+        self.messages.restructure(central_bus);
     }
 
     fn transfer_messages(&mut self, central_bus: &mut Bus) {

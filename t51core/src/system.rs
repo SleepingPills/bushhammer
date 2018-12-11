@@ -943,13 +943,13 @@ pub mod context {
 mod tests {
     use super::*;
     use crate::component::ComponentVec;
-    use crate::identity::ComponentId;
+    use crate::identity::{ComponentId, TopicId};
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
     use std::sync::MutexGuard;
-    use t51core_proc::Component;
+    use t51core_proc::{Component, Message};
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -966,6 +966,9 @@ mod tests {
     #[derive(Component, Serialize, Deserialize, Debug, Eq, PartialEq)]
     struct CompD(u8);
 
+    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    struct Msg(i32);
+
     fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId, MutexGuard<'static, ()>) {
         let lock = ComponentId::static_init();
 
@@ -978,6 +981,11 @@ mod tests {
             CompD::acquire_unique_id(),
             lock,
         )
+    }
+
+    fn setup_messaging() -> (TopicId, MutexGuard<'static, ()>) {
+        let lock = TopicId::static_init();
+        (Msg::acquire_topic_id(), lock)
     }
 
     fn make_shard_1() -> Shard {
@@ -1084,18 +1092,20 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let _ = setup();
+        let _comp_state = setup();
+        let _msg_state = setup_messaging();
 
         struct TestSystem<'a> {
             collect_run: Vec<(EntityId, CompA, CompB)>,
             collect_foreach: Vec<(EntityId, CompA, CompB)>,
+            collect_messages: Vec<Msg>,
             _p: PhantomData<&'a ()>,
         };
 
         impl<'a> RunSystem for TestSystem<'a> {
             type Data = Components<(Read<'a, EntityId>, Read<'a, CompA>, Write<'a, CompB>)>;
 
-            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
+            fn run(&mut self, mut ctx: Context<Self::Data>, _tx: &mut TransactionContext, mut msg: Router) {
                 let mut entities = Vec::new();
 
                 for (&id, a, b) in ctx.components() {
@@ -1105,13 +1115,22 @@ mod tests {
 
                 ctx.components().for_each(&entities, |(id, a, b)| {
                     self.collect_foreach.push((*id, a.clone(), b.clone()));
-                })
+                });
+
+                for message in msg.read::<Msg>() {
+                    self.collect_messages.push(message.clone());
+                }
+
+                msg.publish(Msg(100));
+                msg.publish(Msg(101));
+                msg.publish(Msg(102));
             }
         }
 
         let mut system = SystemRuntime::new(TestSystem {
             collect_run: Vec::new(),
             collect_foreach: Vec::new(),
+            collect_messages: Vec::new(),
             _p: PhantomData,
         });
 
@@ -1126,7 +1145,14 @@ mod tests {
 
         let mut transactions = TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT));
 
-        let messages = Bus::new();
+        // Set up central bus with some messages
+        let mut messages = Bus::new();
+        messages.register::<Msg>();
+        messages.publish(Msg(1));
+        messages.publish(Msg(2));
+
+        // Adjust the system messages to mirror the central bus structure
+        system.messages.restructure(&messages);
 
         system.run(&entities, &mut transactions, &messages);
 
@@ -1139,5 +1165,8 @@ mod tests {
         assert_eq!(system.runstate.collect_foreach[0], (0.into(), CompA(0), CompB(0)));
         assert_eq!(system.runstate.collect_foreach[1], (1.into(), CompA(1), CompB(1)));
         assert_eq!(system.runstate.collect_foreach[2], (2.into(), CompA(2), CompB(2)));
+
+        assert_eq!(system.messages.read::<Msg>(), &vec![Msg(100), Msg(101), Msg(102)][..]);
+        assert_eq!(system.runstate.collect_messages, vec![Msg(1), Msg(2)])
     }
 }

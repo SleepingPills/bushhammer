@@ -3,7 +3,7 @@ use std::fmt;
 use std::intrinsics::type_name;
 use std::mem;
 use std::ops;
-use std::sync::{MutexGuard, Mutex};
+use std::sync::{Mutex, MutexGuard};
 
 #[macro_export]
 macro_rules! custom_type_id {
@@ -30,7 +30,7 @@ macro_rules! custom_type_id {
                 unsafe {
                     // The lock guards ID generation only, which is safe to restart
                     // in case the previous lock-holder thread paniced.
-                    let lock =  match $lock.lock() {
+                    let lock = match $lock.lock() {
                         Ok(guard) => guard,
                         Err(poisoned) => poisoned.into_inner(),
                     };
@@ -49,9 +49,7 @@ macro_rules! custom_type_id {
         }
 
         lazy_static! {
-            static ref $lock: Mutex<()> = {
-                Mutex::new(())
-            };
+            static ref $lock: Mutex<()> = { Mutex::new(()) };
         }
 
         static mut $name_vec: Vec<&'static str> = Vec::new();
@@ -112,10 +110,17 @@ macro_rules! bitflag_type_id {
 
             #[inline]
             pub fn decompose(&self) -> impl Iterator<Item = $name> {
-                let mut field = self.0;
+                // Trailing zeros returns 64 when the variable is 0, just skip that
+                // branch in this case.
+                let (first_index, last_index) = match self.0 {
+                    0 => (0usize, 0usize),
+                    _ => {
+                        (self.0.trailing_zeros() as usize,
+                         ID_BIT_LENGTH - self.0.leading_zeros() as usize)
+                    }
+                };
 
-                let first_index = self.0.trailing_zeros() as usize;
-                let last_index = ID_BIT_LENGTH - self.0.leading_zeros() as usize;
+                let mut field = self.0 >> first_index;
 
                 (first_index..last_index).filter_map(move |index| unsafe {
                     let result = match field & 1 {

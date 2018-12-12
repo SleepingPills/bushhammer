@@ -24,6 +24,11 @@ pub struct Components<T>(PhantomData<T>);
 pub struct Resources<T>(PhantomData<T>);
 pub struct Combo<A, B>(PhantomData<A>, PhantomData<B>);
 
+impl DataDef for () {
+    type Components = ();
+    type Resources = ();
+}
+
 impl<T> DataDef for Components<T>
 where
     T: ComponentQueryTup,

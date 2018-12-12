@@ -3,6 +3,7 @@ use crate::component::{ComponentCoords, ComponentVec, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
 use crate::identity::{ComponentId, ShardKey, SystemId, TopicId};
 use crate::messagebus::Bus;
+use crate::messagebus::Message;
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
@@ -208,6 +209,15 @@ impl World {
         let boxed = Box::new(resource);
         self.state.resources.insert(Box::into_raw_non_null(boxed));
     }
+
+    /// Register the supplied message type.
+    pub fn register_topic<T>(&mut self)
+    where
+        T: 'static + Message,
+    {
+        T::acquire_topic_id();
+        self.messages.register::<T>();
+    }
 }
 
 pub struct GameState {
@@ -300,11 +310,13 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::system::Context;
-    use crate::system::{Components, Read, Resources, Write, Router};
+    use crate::system::{Components, Read, Resources, Router, Write};
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::ptr::NonNull;
-    use t51core_proc::Component;
+    use t51core_proc::{Component, Message};
+    use std::rc::Rc;
+    use std::cell::RefCell;
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -323,6 +335,12 @@ mod tests {
             CompC { x, y }
         }
     }
+
+    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    struct Msg1(i32);
+
+    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    struct Msg2(i32);
 
     #[test]
     fn test_add_entity() {
@@ -496,5 +514,74 @@ mod tests {
         assert_eq!(world.state.entities[&1.into()].1, 1);
         assert_eq!(world.state.entities[&2.into()].1, 0);
         assert_eq!(world.state.entities[&3.into()].1, 2);
+    }
+
+    #[test]
+    fn test_system_messaging() {
+        struct TestSystem1<'a> {
+            _p: PhantomData<&'a ()>,
+            messages: Rc<RefCell<Vec<Msg1>>>,
+        }
+
+        impl<'a> RunSystem for TestSystem1<'a> {
+            type Data = ();
+
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, mut msg: Router) {
+                for message in msg.read::<Msg1>() {
+                    self.messages.borrow_mut().push(message.clone());
+                }
+
+                msg.publish(Msg2(0));
+                msg.publish(Msg2(1));
+                msg.publish(Msg2(2));
+            }
+        }
+
+        struct TestSystem2<'a> {
+            _p: PhantomData<&'a ()>,
+            messages: Rc<RefCell<Vec<Msg2>>>,
+        }
+
+        impl<'a> RunSystem for TestSystem2<'a> {
+            type Data = ();
+
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, mut msg: Router) {
+                for message in msg.read::<Msg2>() {
+                    self.messages.borrow_mut().push(message.clone());
+                }
+
+                msg.publish(Msg1(0));
+                msg.publish(Msg1(1));
+            }
+        }
+
+        let system_messages1 = Rc::new(RefCell::new(Vec::new()));
+        let system_messages2 = Rc::new(RefCell::new(Vec::new()));
+
+        let mut world = World::default();
+        world.register_topic::<Msg1>();
+        world.register_topic::<Msg2>();
+
+        world.register_system(TestSystem1 {
+            _p: PhantomData,
+            messages: system_messages1.clone(),
+        });
+        world.register_system(TestSystem2 {
+            _p: PhantomData,
+            messages: system_messages2.clone(),
+        });
+        world.build();
+
+        // Run the world iteration once, propagating the messages
+        world.run_once();
+
+        assert_eq!(world.messages.read::<Msg1>(), &vec![Msg1(0), Msg1(1)][..]);
+        assert_eq!(world.messages.read::<Msg2>(), &vec![Msg2(0), Msg2(1), Msg2(2)][..]);
+
+        // Run the world iteration the second time, allowing the systems to ingest the messages
+        world.run_once();
+
+        assert_eq!(*system_messages1.borrow(), vec![Msg1(0), Msg1(1)]);
+        assert_eq!(*system_messages2.borrow(), vec![Msg2(0), Msg2(1), Msg2(2)]);
     }
 }

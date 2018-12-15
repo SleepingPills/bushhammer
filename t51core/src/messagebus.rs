@@ -97,9 +97,10 @@ impl Bus {
     pub fn transfer(&mut self, other: &mut Bus) {
         // Iter all the active topics in the other bus and move over the messages to the current.
         for topic_id in other.activity.decompose() {
-            self.activity += topic_id;
             self.topics[topic_id.indexer()].append(&mut other.topics[topic_id.indexer()]);
         }
+        self.activity = other.activity;
+
         // Clear out the activity in the other bus
         other.activity = TopicBundle::empty();
     }
@@ -343,47 +344,3 @@ mod tests {
         assert_eq!(messages.len(), 0);
     }
 }
-
-/*
-### Messaging ###
-Inter system comms where systems write messages in a local buffer that then gets redistributed by the world each frame.
-
-Has the benefit of inherently batching messages per frame and requiring no locking mechanisms at all.
-
-Messages:
- Q: Use sequential IDs so that we can preallocate vector storages, or just use hashmaps? Former is faster for lookups
-    but slower for collection (have to loop through all possible types, as opposed to only those submitted by system)
-
-System Side:
- - Collect all messages into local bus (passed as mutable ref)
- - Read from common bus (passed as immutable ref)
-
-World Side:
- - Pass in common bus to systems for frame processing
- - Frame processing
- - Clear out common bus
- - Transfer all system bus contents to common bus
-
-The above setup gets us completely allocation free broadcast.
-
-Requires special system that handles networking... but this could be a benefit. There'd be a networking/authentication
- and authorization system, which recieves messages into a queue and then broadcasts them for other systems.
-
-The final architecture is thus as follows:
-
-|-      Network Thread    -|                   |-            World             -|
-(network) <-> Network Manager <-> (crossbeam) <-> Networking System -> (message bus)
-
-* Network Manager *
- - Maintains connections
- - Ensures basic message protocol adherence
-
-* Networking System *
- - Authentication (read/save)
- - Authorization (read/save)
- - Submission to message bus
- - Recieve messages by admin system about permission changes and bans
-
-Q: Where do we deserialize messages?
-Q: Can we avoid allocating for messages - e.g. use a pool for each type?
-*/

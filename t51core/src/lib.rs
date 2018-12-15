@@ -15,6 +15,8 @@ pub mod sentinel;
 pub mod sync;
 
 pub mod system;
+pub mod world;
+
+pub mod networking;
 
 pub mod prelude;
-pub mod world;

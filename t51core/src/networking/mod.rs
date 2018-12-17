@@ -88,12 +88,12 @@ Channel
  - Contains a ReadBuffer and WriteBuffer, for recieving and sending data (respectively).
  - Handles the sequencing of incoming data and the transmission of outgoing data.
  - fn write(&mut self, serializable: &S) writes the supplied serializable item into the buffer and
-   attempst to send as much of it as possible.
+   attempts to send as much of it as possible.
  - fn recieve(&mut self) recieve all the data it can from the socket and write it into the
    read buffer.
- - fn read(&mut self) -> Result<Frame> returns a frame if one is available, or None if there
-   isn't enough data. The error results will be either some fatal error resulting in disconnect,
-   or a simple note that there isn't enough data for the full frame yet.
+ - fn read(&mut self) -> Result<Frame> returns a frame if one is available. The error results
+   will be either some fatal error resulting in disconnect, or a simple note that there isn't
+   enough data for the full frame yet.
 
 Frame
  - Packet type: control or payload
@@ -102,7 +102,7 @@ Frame
    payload packet.
 
 Chunk
- - Contains a preset array of [u8; BUF_SIZE]. BUF_SIZE will be something like 8192 bytes.
+ - Contains a preset array of Box<[u8; BUF_SIZE]>. BUF_SIZE will be something like 8192 bytes.
  - Tracks the beginning of the data slice
  - Tracks the end of the data slice
  - Tracks the total capacity
@@ -110,7 +110,7 @@ Chunk
    empty state.
 
 Buffer
- - Contains a Vec<Box<Chunk>> with at least one chunk always present.
+ - Contains a Vec<Chunk> with at least one chunk always present.
  - Incoming data goes to the last chunk. If it fills up, a new chunk is retrieved from the pool.
  - Outgoing data is read from the first chunk, until it becomes empty, at which point it is put
    back in the pool, unless this is the last chunk in the buffer, in which case it remains.
@@ -121,10 +121,10 @@ Buffer
    the writer until it errors or all the data in the buffer is exhausted.
 
 ChunkPool
- - A simple Vec<Chunk> wrapper that contains unused buffers.
- - When a buffer is requested, we check if there are any in the pool before allocating a new one.
+ - A simple Vec<Chunk> wrapper that contains unused chunks.
+ - When a chunk is requested, we check if there are any in the pool before allocating a new one.
 
-* Connection *
+* Connecting *
  - Client establishes TCP connection
  - Channel is created in AwaitingAuth state and the connection id is put in a set of awaitingconnection
  - Client sends ConnectionToken
@@ -166,3 +166,7 @@ Payload<P>
  - This will be just a wrapper over Vec<P> containing individual payload messages
  - We'll use the inplace deserialization to avoid allocating a new vector for each packet.
 */
+
+pub mod chunk;
+pub mod chunkpool;
+pub mod endpoint;

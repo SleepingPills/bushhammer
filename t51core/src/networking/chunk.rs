@@ -49,7 +49,7 @@ impl Chunk {
     /// Write data to the chunk and advance the end cursor
     #[inline]
     pub fn write(&mut self, slice: &[u8]) {
-        self.data[self.end..CHUNK_SIZE].copy_from_slice(slice);
+        self.data[self.end..(self.end + slice.len())].copy_from_slice(slice);
         self.end += slice.len();
     }
 
@@ -75,7 +75,7 @@ impl Chunk {
     #[inline]
     fn validate_advance(&self, count: usize) {
         if self.start + count > self.end {
-            panic!("Attempted to advance past buffer edge.")
+            panic!("Attempted to advance past chunk edge.")
         }
     }
 }
@@ -100,23 +100,127 @@ impl DerefMut for Chunk {
 mod tests {
     use super::*;
 
-    fn test_new_pool() {}
+    #[test]
+    fn test_new_chunk() {
+        let chunk = Chunk::new();
 
-    fn test_capacity() {}
+        assert_eq!(chunk.data.len(), CHUNK_SIZE);
+        assert_eq!(chunk.start, 0);
+        assert_eq!(chunk.end, 0);
+    }
 
-    fn test_remaining_data() {}
+    #[test]
+    fn test_capacity() {
+        let mut chunk = Chunk::new();
 
-    fn test_read() {}
+        assert_eq!(chunk.capacity(), CHUNK_SIZE);
 
-    fn test_read_past_end_fails() {}
+        chunk.end = 1000;
 
-    fn test_write() {}
+        assert_eq!(chunk.capacity(), CHUNK_SIZE - 1000)
+    }
 
-    fn test_write_past_capacity_fails() {}
+    #[test]
+    fn test_remaining_data() {
+        let mut chunk = Chunk::new();
 
-    fn test_advance() {}
+        assert_eq!(chunk.remaining_data(), 0);
 
-    fn test_deref_immut() {}
+        chunk.end = 1000;
 
-    fn test_deref_mut() {}
+        assert_eq!(chunk.remaining_data(), 1000);
+    }
+
+    #[test]
+    fn test_read() {
+        let mut chunk = Chunk::new();
+
+        chunk.data[..4].copy_from_slice(&vec![1, 2, 3, 4]);
+        chunk.end = 4;
+
+        assert_eq!(chunk.read(2), vec![1u8, 2u8].as_slice());
+        assert_eq!(chunk.start, 2);
+        assert_eq!(chunk.end, 4);
+
+        // Reading to the end resets the chunk to the empty state
+        assert_eq!(chunk.read(2), vec![3u8, 4u8].as_slice());
+        assert_eq!(chunk.start, 0);
+        assert_eq!(chunk.end, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to advance past chunk edge.")]
+    fn test_read_past_end_fails() {
+        let mut chunk = Chunk::new();
+
+        chunk.data[..4].copy_from_slice(&vec![1, 2, 3, 4]);
+        chunk.end = 4;
+
+        chunk.read(5);
+    }
+
+    #[test]
+    fn test_write() {
+        let mut chunk = Chunk::new();
+
+        let items: Vec<u8> = (1..5).collect();
+
+        chunk.write(&items);
+
+        assert_eq!(&chunk.data[..4], items.as_slice());
+        assert_eq!(chunk.start, 0);
+        assert_eq!(chunk.end, 4);
+    }
+
+    #[test]
+    #[should_panic(expected = "index 8193 out of range for slice of length 8192")]
+    fn test_write_past_capacity_fails() {
+        let mut chunk = Chunk::new();
+
+        let items: Vec<u8> = (0..(CHUNK_SIZE + 1)).map(|item| item as u8).collect();
+
+        chunk.write(&items);
+    }
+
+    #[test]
+    fn test_advance() {
+        let mut chunk = Chunk::new();
+
+        chunk.end = 5;
+
+        chunk.advance(2);
+        assert_eq!(chunk.start, 2);
+        assert_eq!(chunk.end, 5);
+
+        chunk.advance(3);
+        assert_eq!(chunk.start, 0);
+        assert_eq!(chunk.end, 0);
+    }
+
+    #[test]
+    fn test_deref_immut() {
+        let mut chunk = Chunk::new();
+
+        let chunk_slice: &[u8] = &chunk;
+        assert_eq!(chunk_slice, Vec::<u8>::new().as_slice());
+
+        let data = vec![1, 2, 3, 4];
+        chunk.write(&data);
+
+        let chunk_slice: &[u8] = &chunk;
+        assert_eq!(chunk_slice, data.as_slice());
+    }
+
+    #[test]
+    fn test_deref_mut() {
+        let mut chunk = Chunk::new();
+
+        let chunk_slice: &mut [u8] = &mut chunk;
+        assert_eq!(chunk_slice.len(), CHUNK_SIZE);
+
+        chunk.write(&vec![1, 2, 3, 4]);
+
+        let chunk_slice: &mut [u8] = &mut chunk;
+        assert_eq!(chunk_slice.len(), CHUNK_SIZE - 4);
+    }
 }

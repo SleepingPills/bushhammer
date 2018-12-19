@@ -27,13 +27,13 @@ impl Chunk {
         CHUNK_SIZE - self.end
     }
 
-    /// Remaining data in the chunk
+    /// Remaining data in the chunk.
     #[inline]
     pub fn remaining_data(&self) -> usize {
         self.end - self.start
     }
 
-    /// Read data from the chunk and advance the start cursor
+    /// Read data from the chunk and advance the start cursor.
     #[inline]
     pub fn read(&mut self, count: usize) -> &[u8] {
         let orig_start = self.start;
@@ -46,21 +46,31 @@ impl Chunk {
         &self.data[orig_start..offset]
     }
 
-    /// Write data to the chunk and advance the end cursor
+    /// Write data to the chunk and advance the end cursor.
     #[inline]
     pub fn write(&mut self, slice: &[u8]) {
         self.data[self.end..(self.end + slice.len())].copy_from_slice(slice);
         self.end += slice.len();
     }
 
-    /// Advance the start cursor, as if a read has happened
+    /// Advance the start cursor, as if a read has happened.
     #[inline]
-    pub fn advance(&mut self, count: usize) -> usize {
-        let orig_start = self.start;
+    pub fn advance(&mut self, count: usize) {
         self.validate_advance(count);
         self.start += count;
         self.check_clear();
-        orig_start
+    }
+
+    /// Advance the end cursor, as if a write has happened.
+    #[inline]
+    pub fn expand(&mut self, count: usize) {
+        let new_end = self.end + count;
+
+        if new_end > CHUNK_SIZE {
+            panic!("Attempted to expand beyond chunk size")
+        }
+
+        self.end = new_end;
     }
 
     #[inline]
@@ -75,7 +85,7 @@ impl Chunk {
     #[inline]
     fn validate_advance(&self, count: usize) {
         if self.start + count > self.end {
-            panic!("Attempted to advance past chunk edge.")
+            panic!("Attempted to advance past chunk edge")
         }
     }
 }
@@ -149,7 +159,7 @@ mod tests {
     }
 
     #[test]
-    #[should_panic(expected = "Attempted to advance past chunk edge.")]
+    #[should_panic(expected = "Attempted to advance past chunk edge")]
     fn test_read_past_end_fails() {
         let mut chunk = Chunk::new();
 
@@ -195,6 +205,32 @@ mod tests {
         chunk.advance(3);
         assert_eq!(chunk.start, 0);
         assert_eq!(chunk.end, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to advance past chunk edge")]
+    fn test_advance_past_end_fails() {
+        let mut chunk = Chunk::new();
+
+        chunk.end = 5;
+        chunk.advance(6);
+    }
+
+    #[test]
+    fn test_expand() {
+        let mut chunk = Chunk::new();
+
+        chunk.expand(5);
+        assert_eq!(chunk.start, 0);
+        assert_eq!(chunk.end, 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "Attempted to expand beyond chunk size")]
+    fn test_expand_past_chunk_size_fails() {
+        let mut chunk = Chunk::new();
+
+        chunk.expand(CHUNK_SIZE + 1);
     }
 
     #[test]

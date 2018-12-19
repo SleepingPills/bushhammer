@@ -169,4 +169,5 @@ Payload<P>
 
 pub mod chunk;
 pub mod chunkpool;
+pub mod buffer;
 pub mod endpoint;

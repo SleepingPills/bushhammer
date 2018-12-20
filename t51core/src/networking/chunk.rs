@@ -1,6 +1,4 @@
-use std::ops::{Deref, DerefMut};
-
-const CHUNK_SIZE: usize = 8192;
+pub(crate) const CHUNK_SIZE: usize = 8192;
 
 /// A linear byte memory pool. Consuming data from the chunk will advance the start cursor, while
 /// writing to the chunk will advance the end cursor. When the start cursor reaches the same
@@ -73,6 +71,18 @@ impl Chunk {
         self.end = new_end;
     }
 
+    /// Slice of the readable part of the chunk
+    #[inline]
+    pub fn readable_slice(&self) -> &[u8] {
+        &self.data[self.start..self.end]
+    }
+
+    /// Slice of the writeable part of the chunk
+    #[inline]
+    pub fn writeable_slice(&mut self) -> &mut [u8] {
+        &mut self.data[self.end..CHUNK_SIZE]
+    }
+
     #[inline]
     fn check_clear(&mut self) {
         // Clear the buffer in case we advance to the end
@@ -87,22 +97,6 @@ impl Chunk {
         if self.start + count > self.end {
             panic!("Attempted to advance past chunk edge")
         }
-    }
-}
-
-/// The chunk immutably derefs to the available data slice
-impl Deref for Chunk {
-    type Target = [u8];
-
-    fn deref(&self) -> &[u8] {
-        &self.data[self.start..self.end]
-    }
-}
-
-/// The chunk mutably derefs to the available capacity slice
-impl DerefMut for Chunk {
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.data[self.end..CHUNK_SIZE]
     }
 }
 
@@ -234,29 +228,25 @@ mod tests {
     }
 
     #[test]
-    fn test_deref_immut() {
+    fn test_readable_slice() {
         let mut chunk = Chunk::new();
 
-        let chunk_slice: &[u8] = &chunk;
-        assert_eq!(chunk_slice, Vec::<u8>::new().as_slice());
+        assert_eq!(chunk.readable_slice(), Vec::<u8>::new().as_slice());
 
         let data = vec![1, 2, 3, 4];
         chunk.write(&data);
 
-        let chunk_slice: &[u8] = &chunk;
-        assert_eq!(chunk_slice, data.as_slice());
+        assert_eq!(chunk.readable_slice(), data.as_slice());
     }
 
     #[test]
-    fn test_deref_mut() {
+    fn test_writeable_slice() {
         let mut chunk = Chunk::new();
 
-        let chunk_slice: &mut [u8] = &mut chunk;
-        assert_eq!(chunk_slice.len(), CHUNK_SIZE);
+        assert_eq!(chunk.writeable_slice().len(), CHUNK_SIZE);
 
         chunk.write(&vec![1, 2, 3, 4]);
 
-        let chunk_slice: &mut [u8] = &mut chunk;
-        assert_eq!(chunk_slice.len(), CHUNK_SIZE - 4);
+        assert_eq!(chunk.writeable_slice().len(), CHUNK_SIZE - 4);
     }
 }

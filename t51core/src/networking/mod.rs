@@ -164,7 +164,7 @@ Disconnect
 * Payload Packets *
 Payload<P>
  - This will be just a wrapper over Vec<P> containing individual payload messages
- - We'll use the inplace deserialization to avoid allocating a new vector for each packet.
+ - We'll use the inplace deserialization in serde to avoid allocating a new vector for each packet.
 */
 
 pub mod chunk;

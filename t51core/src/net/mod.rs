@@ -84,7 +84,7 @@ Replicator
 Channel
  - Control messages used internally will be a separate enum. The packet header can distinguish
    between the two types.
- - Wraps a TCPStream
+ - Wraps a TCPStream and a Vec<u8> encryption/decryption buffer.
  - Contains a ReadBuffer and WriteBuffer, for recieving and sending data (respectively).
  - Handles the sequencing of incoming data and the transmission of outgoing data.
  - fn write(&mut self, serializable: &S) writes the supplied serializable item into the buffer and
@@ -95,8 +95,11 @@ Channel
    will be either some fatal error resulting in disconnect, or a simple note that there isn't
    enough data for the full frame yet.
 
+   Parsing will happen by using serde to deserialize a Header object and then decrypt the contents
+   into the decrypt buffer.
+
 Frame
- - Packet type: control or payload
+ - Header
  - Will contain the validated slice with all the data for a packet.
  - The frame has to be then immediately deserialized into either a control packet or
    payload packet.
@@ -170,4 +173,5 @@ Payload<P>
 pub mod chunk;
 pub mod chunkpool;
 pub mod buffer;
+pub mod channel;
 pub mod endpoint;

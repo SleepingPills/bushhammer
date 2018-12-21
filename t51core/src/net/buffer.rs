@@ -1,5 +1,5 @@
-use crate::networking::chunk::Chunk;
-use crate::networking::chunkpool::ChunkPool;
+use crate::net::chunk::Chunk;
+use crate::net::chunkpool::ChunkPool;
 use std::io;
 
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
@@ -106,7 +106,7 @@ impl Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::networking::chunk::CHUNK_SIZE;
+    use crate::net::chunk::CHUNK_SIZE;
     use std::cmp::min;
     use std::io::Cursor;
 

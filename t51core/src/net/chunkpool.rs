@@ -1,4 +1,4 @@
-use crate::networking::chunk::Chunk;
+use crate::net::chunk::Chunk;
 
 /// Simple pool of chunks.
 pub struct ChunkPool {

@@ -8,8 +8,14 @@ use std::net::TcpStream;
 
 pub enum Error {
     NeedMore,
-    DataCorrupted,
+    CorruptData,
     Network(io::Error),
+}
+
+impl From<bincode::Error> for Error {
+    fn from(_: Box<bincode::ErrorKind>) -> Self {
+        Error::CorruptData
+    }
 }
 
 pub type TxResult<T> = Result<T, Error>;
@@ -31,17 +37,20 @@ impl Channel {
         }
     }
 
-    pub fn read(&mut self, pool: &mut ChunkPool) -> TxResult<&Frame> {
-        let header: Header = match bincode::deserialize_from(&mut self.read_buffer) {
-            Ok(header) => header,
-            _ => return Err(Error::DataCorrupted),
-        };
+    pub fn read(&mut self) -> TxResult<&Frame> {
+        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
         unimplemented!()
     }
 }
 
-pub trait AwaitToken {}
+pub trait AwaitToken {
+    fn read_token(&mut self, secret_key: &[u8; 32]) -> TxResult<&Frame>;
+}
 
-pub trait Challenge {}
+pub trait Challenge {
+    fn read_challenge(&mut self) -> TxResult<&Frame>;
+}
 
-pub trait Connected {}
+pub trait Connected {
+    fn read_frame(&mut self) -> TxResult<&Frame>;
+}

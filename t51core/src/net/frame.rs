@@ -1,5 +1,13 @@
 use serde_derive::{Deserialize, Serialize};
 
+
+#[derive(Serialize, Deserialize)]
+pub struct ConnectToken {
+    pub class: u8,
+    pub sequence: u64,
+    pub size: u16,
+}
+
 #[derive(Serialize, Deserialize)]
 pub struct Header {
     pub class: u8,

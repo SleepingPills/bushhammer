@@ -89,8 +89,9 @@ Channel
  - Handles the sequencing of incoming data and the transmission of outgoing data.
  - fn write(&mut self, serializable: &S) writes the supplied serializable item into the buffer and
    attempts to send as much of it as possible.
- - fn recieve(&mut self) recieve all the data it can from the socket and write it into the
-   read buffer.
+ - fn recieve(&mut self) -> Result<()> recieve all the data it can from the socket and write it into the
+   read buffer. If there is an error, the connection will be immediately terminated, since all
+   recoverable errors (e.g. WouldBlock) are handled by the channel/buffer.
  - fn read(&mut self) -> Result<Frame> returns a frame if one is available. The error results
    will be either some fatal error resulting in disconnect, or a simple note that there isn't
    enough data for the full frame yet.
@@ -185,6 +186,9 @@ Payload<P>
    The endpoint will simply know what sort of control message to expect at each stage, which will
    be decrypted and then deserialized using bincode. If the deserialization fails, the connection
    will be dropped.
+
+
+(net) -> ReadBuffer -> Header -> (size check) -> CryptoBuf -> (decrypt) -> Frame
 */
 
 pub mod chunk;

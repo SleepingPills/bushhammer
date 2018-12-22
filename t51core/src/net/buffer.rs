@@ -103,6 +103,17 @@ impl Buffer {
     }
 }
 
+// TODO: Refactor buffer such that egress/ingress return the number of written bytes and
+// that they use an internal pool with a method called gc() that will reclaim any unused
+// chunks.
+impl io::Read for Buffer {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        let mut pool = ChunkPool::new();
+        self.egress(buf, &mut pool)?;
+        Ok(100)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

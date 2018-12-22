@@ -1,6 +1,7 @@
 use crate::net::buffer::Buffer;
 use crate::net::chunkpool::ChunkPool;
 use crate::net::frame::Frame;
+use crate::net::frame::Header;
 use bincode;
 use std::io;
 use std::net::TcpStream;
@@ -8,7 +9,7 @@ use std::net::TcpStream;
 pub enum Error {
     NeedMore,
     DataCorrupted,
-    Network(io::Error)
+    Network(io::Error),
 }
 
 pub type TxResult<T> = Result<T, Error>;
@@ -23,15 +24,18 @@ pub struct Channel {
 }
 
 impl Channel {
-    fn recieve(&mut self, pool: &mut ChunkPool) -> TxResult<()> {
-        match self.read_buffer.ingress(&mut self.stream, pool) {
+    pub fn recieve(&mut self) -> TxResult<()> {
+        match self.read_buffer.ingress(&mut self.stream) {
             Err(e) => Err(Error::Network(e)),
-            _ => Ok(())
+            _ => Ok(()),
         }
     }
 
-    fn read(&mut self, pool: &mut ChunkPool) -> TxResult<&Frame> {
-//        let header = bincode::deserialize_from()
+    pub fn read(&mut self, pool: &mut ChunkPool) -> TxResult<&Frame> {
+        let header: Header = match bincode::deserialize_from(&mut self.read_buffer) {
+            Ok(header) => header,
+            _ => return Err(Error::DataCorrupted),
+        };
         unimplemented!()
     }
 }

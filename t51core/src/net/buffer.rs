@@ -1,19 +1,20 @@
 use crate::net::chunk::Chunk;
 use crate::net::chunkpool::ChunkPool;
+use std::collections::VecDeque;
 use std::io;
 
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.
 pub struct Buffer {
-    chunks: Vec<Chunk>,
+    chunks: VecDeque<Chunk>,
 }
 
 impl Buffer {
     #[inline]
     pub fn new(pool: &mut ChunkPool) -> Buffer {
-        Buffer {
-            chunks: vec![pool.alloc()],
-        }
+        let mut chunks = VecDeque::new();
+        chunks.push_back(pool.alloc());
+        Buffer { chunks }
     }
 
     /// Write the data from the buffer to the supplied writer. Returns Ok(()) in case all
@@ -24,7 +25,7 @@ impl Buffer {
             match self.write(writer) {
                 Ok(_) => {
                     if self.chunks.len() > 1 {
-                        pool.reclaim(self.chunks.swap_remove(0));
+                        pool.reclaim(self.chunks.pop_front().unwrap());
                     } else {
                         // All data has been exhausted, nothing more to write.
                         return Ok(());
@@ -47,7 +48,7 @@ impl Buffer {
         loop {
             // Keep adding chunks as long as there is data coming in or there is an error
             match self.read(reader) {
-                Ok(_) => self.chunks.push(pool.alloc()),
+                Ok(_) => self.chunks.push_back(pool.alloc()),
                 Err(e) => {
                     if e.kind() == io::ErrorKind::WouldBlock {
                         return Ok(());
@@ -61,7 +62,7 @@ impl Buffer {
 
     #[inline]
     fn write<W: io::Write>(&mut self, writer: &mut W) -> io::Result<()> {
-        let chunk = unsafe { self.chunks.get_unchecked_mut(0) };
+        let chunk = self.chunks.front_mut().unwrap();
 
         // Write to the writer as long as it is accepted or there is data in the chunk.
         loop {
@@ -69,7 +70,7 @@ impl Buffer {
 
             if write_count == 0 && chunk.remaining_data() > 0 {
                 // No data written to the writer - operation should block but didn't
-                return Err(io::ErrorKind::WouldBlock.into())
+                return Err(io::ErrorKind::WouldBlock.into());
             }
 
             chunk.advance(write_count);
@@ -82,8 +83,7 @@ impl Buffer {
 
     #[inline]
     fn read<R: io::Read>(&mut self, reader: &mut R) -> io::Result<()> {
-        let chunks_len = self.chunks.len();
-        let chunk = unsafe { self.chunks.get_unchecked_mut(chunks_len - 1) };
+        let chunk = self.chunks.back_mut().unwrap();
 
         // Read from the reader as long as there is data to read or the chunk has capacity.
         loop {
@@ -91,7 +91,7 @@ impl Buffer {
 
             // No data read from the reader - operation should block but didn't
             if read_count == 0 && chunk.capacity() > 0 {
-                return Err(io::ErrorKind::WouldBlock.into())
+                return Err(io::ErrorKind::WouldBlock.into());
             }
 
             chunk.expand(read_count);

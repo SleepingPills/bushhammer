@@ -113,7 +113,7 @@ Chunk
    empty state.
 
 Buffer
- - Contains a Vec<Chunk> with at least one chunk always present.
+ - Contains a Deque<Chunk> with at least one chunk always present.
  - Incoming data goes to the last chunk. If it fills up, a new chunk is retrieved from the pool.
  - Outgoing data is read from the first chunk, until it becomes empty, at which point it is put
    back in the pool, unless this is the last chunk in the buffer, in which case it remains.
@@ -148,30 +148,48 @@ ChunkPool
 
 * Packet Layout *
  <header>
- - Protocol Id: u16 (#0a55)
- - Version: u16 (#0001)
- - Type: u8 (control or payload)
- - Sequence: u16
- - Size in bytes: u16
+ - class: u8,
+ - sequence: u64,
+ - size: u16,
  <data>
- - HMAC: 16 bytes
  - Payload
+ - HMAC: 16 bytes
 
 The protocol id, version, sequence and size are all used as additional information in encrypting
 the payload, meaning that tampering with any of these will result in the message being invalid.
 
 * Control Packets *
 ConnectionToken
+ - protocol: u16 (#0a55)
+ - version: u16 (#0001)
+ - expire timestamp: unix timestamp
+ - challenge sequence: u64
+ - private data
+
 Disconnect
+ - Reason code: u8
 
 * Payload Packets *
 Payload<P>
  - This will be just a wrapper over Vec<P> containing individual payload messages
  - We'll use the inplace deserialization in serde to avoid allocating a new vector for each packet.
+
+!!! 21.12.2018 !!!
+ - Each state for a channel: created, challenge, connected will be implemented as a trait. The
+   endpoint will have a vector for each, and as the handshake process progresses, the channel
+   will be moved between collections.
+ - There will be a separate poll for each state. Each poll will be run in turn.
+ - This ensures that a single channel object can handle all states. They'll be distinguished
+   by each state being handled as a separate trait.
+ - The Frame structure will be used for both control and payload messages, along with the header.
+   The endpoint will simply know what sort of control message to expect at each stage, which will
+   be decrypted and then deserialized using bincode. If the deserialization fails, the connection
+   will be dropped.
 */
 
 pub mod chunk;
 pub mod chunkpool;
 pub mod buffer;
+pub mod frame;
 pub mod channel;
 pub mod endpoint;

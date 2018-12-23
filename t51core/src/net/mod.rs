@@ -187,10 +187,14 @@ Payload<P>
    be decrypted and then deserialized using bincode. If the deserialization fails, the connection
    will be dropped.
 
+!!! 23.12.2018 !!!
+ - Headers and fixed size packets will be manually serialized/deserialized. This way we can
+   ensure there are enough bytes in the buffer to recieve them.
 
 (net) -> ReadBuffer -> Header -> (size check) -> CryptoBuf -> (decrypt) -> Frame
 */
 
+pub mod error;
 pub mod chunk;
 pub mod chunkpool;
 pub mod buffer;

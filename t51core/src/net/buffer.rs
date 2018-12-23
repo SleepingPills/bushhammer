@@ -21,6 +21,21 @@ impl Buffer {
         }
     }
 
+    /// Checks whether there is enough data in the buffer for the given requirement.
+    pub fn size_check(&self, required: usize) -> bool {
+        let mut count = 0usize;
+
+        for chunk in self.chunks.iter() {
+            count += chunk.remaining_data();
+
+            if count >= required {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     /// Write the data from the buffer to the supplied writer. Returns Ok(()) in case all
     /// the data is written out, or the next write would block.
     pub fn egress<W: io::Write>(&mut self, mut writer: W) -> io::Result<usize> {

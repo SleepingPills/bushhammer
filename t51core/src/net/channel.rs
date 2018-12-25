@@ -1,8 +1,8 @@
 use crate::net::buffer::Buffer;
 use crate::net::error::{Error, TxResult};
-use crate::net::frame::Frame;
-use crate::net::frame::{ConnectionToken, PayloadHeader, PrivateData};
+use crate::net::frame::{ConnectionHeader, PayloadHeader, PrivateData, Frame};
 use bincode;
+use std::io;
 use std::net::TcpStream;
 
 pub struct Channel {
@@ -22,52 +22,48 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn send(&mut self) -> TxResult<()> {
-        self.write_buffer.egress(&mut self.stream)?;
-        Ok(())
+    pub fn send(&mut self) -> io::Result<usize> {
+        self.write_buffer.egress(&mut self.stream)
     }
 
-    pub fn recieve(&mut self) -> TxResult<()> {
-        self.read_buffer.ingress(&mut self.stream)?;
-        Ok(())
+    pub fn recieve(&mut self) -> io::Result<usize> {
+        self.read_buffer.ingress(&mut self.stream)
     }
 }
 
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> TxResult<u64>;
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> io::Result<u64>;
 
     /// Writes the connection challenge to the channel.
-    fn write_connection_challenge(&mut self) -> TxResult<()>;
+    fn write_connection_challenge(&mut self) -> io::Result<()>;
 }
 
 impl AwaitToken for Channel {
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> TxResult<u64> {
-        /*
-        Additional data for decryption
-        [version info] (16 bytes)       // "NETCODE 1.02" ASCII with null terminator.
-        [protocol id] (uint64)          // 64 bit value unique to this particular game/application
-        [expire timestamp] (uint64)     // 64 bit unix timestamp when this connect token expires
-        */
-        //        let token_header: ConnectionHeader = bincode::deserialize_from(&mut self.read_buffer)?;
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> io::Result<u64> {
+//        let token_header: ConnectionHeader = match bincode::deserialize_from(&mut self.read_buffer) {
+//            Ok(header) => header,
+//            Err(bincode::ErrorKind::) => return Err(io::ErrorKind::)
+//        };
+
         Ok(100)
     }
 
-    fn write_connection_challenge(&mut self) -> TxResult<()> {
+    fn write_connection_challenge(&mut self) -> io::Result<()> {
         unimplemented!()
     }
 }
 
 pub trait Challenge {
-    fn read_challenge_response(&mut self) -> TxResult<&Frame>;
+    fn read_challenge_response(&mut self) -> io::Result<&Frame>;
 }
 
 pub trait Connected {
-    fn read_frame(&mut self) -> TxResult<&Frame>;
+    fn read_frame(&mut self) -> io::Result<&Frame>;
 }
 
 impl Connected for Channel {
-    fn read_frame(&mut self) -> TxResult<&Frame> {
+    fn read_frame(&mut self) -> io::Result<&Frame> {
         //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
         unimplemented!()
     }

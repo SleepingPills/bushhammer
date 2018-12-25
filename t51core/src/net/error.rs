@@ -1,5 +1,6 @@
 use std::io;
 
+// TODO: Delete unless needed
 pub enum Error {
     NeedMore,
     CorruptData,

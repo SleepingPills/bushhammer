@@ -1,149 +1,126 @@
-use crate::net::chunk::Chunk;
-use crate::net::chunkpool::ChunkPool;
-use std::collections::VecDeque;
+use slice_deque::SliceDeque;
+use std::cmp::min;
 use std::io;
+use std::ptr;
+
+type ByteDeque = SliceDeque<u8>;
+const BUF_SIZE: usize = 32768;
 
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.
 pub struct Buffer {
-    chunks: VecDeque<Chunk>,
-    pool: ChunkPool,
+    offset: usize,
+    data: ByteDeque,
 }
 
 impl Buffer {
     #[inline]
     pub fn new() -> Buffer {
-        let mut chunks = VecDeque::new();
-        chunks.push_back(Chunk::new());
-        Buffer {
-            chunks,
-            pool: ChunkPool::new(),
-        }
+        let mut data = ByteDeque::new();
+        data.reserve(BUF_SIZE);
+        Buffer { offset: 0, data }
     }
 
-    /// Checks whether there is enough data in the buffer for the given requirement.
-    pub fn size_check(&self, required: usize) -> bool {
-        let mut count = 0usize;
-
-        for chunk in self.chunks.iter() {
-            count += chunk.remaining_data();
-
-            if count >= required {
-                return true;
-            }
-        }
-
-        return false;
+    /// Advance the cursor to the current read offset.
+    #[inline]
+    pub fn advance(&mut self) {
+        unsafe { self.data.move_head(self.offset as isize) }
+        self.offset = 0;
     }
 
-    /// Write the data from the buffer to the supplied writer. Returns Ok(()) in case all
-    /// the data is written out, or the next write would block.
+    /// Roll back the read offset to the position last advanced to.
+    #[inline]
+    pub fn rollback(&mut self) {
+        self.offset = 0;
+    }
+
+    /// Write the contents of the buffer to the supplied writer, advancing the read offset.
     pub fn egress<W: io::Write>(&mut self, mut writer: W) -> io::Result<usize> {
-        let mut total_count = 0usize;
+        let prev_offset = self.offset;
 
-        loop {
-            // Consume chunks from the buffer until there is only one remaining
-            match self.write(&mut writer) {
-                Ok(write_count) => {
-                    total_count += write_count;
+        while self.offset < self.data.len() {
+            let write_count = writer.write(&self.data[self.offset..])?;
 
-                    if self.chunks.len() > 1 {
-                        self.pool.reclaim(self.chunks.pop_front().unwrap());
-                    } else {
-                        // All data has been exhausted, nothing more to write.
-                        return Ok(total_count);
-                    }
-                }
-                Err(e) => {
-                    if e.kind() == io::ErrorKind::WouldBlock {
-                        return Ok(total_count);
-                    } else {
-                        return Err(e);
-                    }
-                }
+            if write_count == 0 {
+                return match self.data.len() {
+                    0 => Ok(self.offset - prev_offset),
+                    _ => Err(io::ErrorKind::WriteZero.into()),
+                };
             }
+
+            self.offset += write_count;
         }
+
+        Ok(self.offset - prev_offset)
     }
 
-    /// Read the data from the reader into the buffer. Returns Ok(()) in case all the available
-    /// data is read out and the next read would block.
+    /// Read in data from the supplied reader to the buffer.
     pub fn ingress<R: io::Read>(&mut self, mut reader: R) -> io::Result<usize> {
         let mut total_count = 0usize;
 
         loop {
-            // Keep adding chunks as long as there is data coming in or there is an error
-            match self.read(&mut reader) {
-                Ok(read_count) => {
-                    total_count += read_count;
-                    self.chunks.push_back(self.pool.alloc())
-                },
-                Err(e) => {
-                    if e.kind() == io::ErrorKind::WouldBlock {
-                        return Ok(total_count);
-                    } else {
-                        return Err(e);
-                    }
+            unsafe {
+                let read_count = reader.read(self.data.tail_head_slice())?;
+
+                if read_count == 0 {
+                    return match self.data.len() < BUF_SIZE {
+                        true => Ok(total_count),
+                        _ => Err(io::Error::new(io::ErrorKind::Other, "Buffer overrun")),
+                    };
                 }
-            }
-        }
-    }
 
-    #[inline]
-    fn write<W: io::Write>(&mut self, writer: &mut W) -> io::Result<usize> {
-        let mut total_count = 0usize;
-        let chunk = self.chunks.front_mut().unwrap();
-
-        // Write to the writer as long as it is accepted or there is data in the chunk.
-        loop {
-            let write_count = writer.write(chunk.readable_slice())?;
-            total_count += write_count;
-
-            if write_count == 0 && chunk.remaining_data() > 0 {
-                // No data written to the writer - operation should block but didn't
-                return Err(io::ErrorKind::WouldBlock.into());
-            }
-
-            chunk.advance(write_count);
-
-            if chunk.remaining_data() == 0 {
-                return Ok(total_count);
-            }
-        }
-    }
-
-    #[inline]
-    fn read<R: io::Read>(&mut self, reader: &mut R) -> io::Result<usize> {
-        let mut total_count = 0usize;
-        let chunk = self.chunks.back_mut().unwrap();
-
-        // Read from the reader as long as there is data to read or the chunk has capacity.
-        loop {
-            let read_count = reader.read(chunk.writeable_slice())?;
-            total_count += read_count;
-
-            // No data read from the reader - operation should block but didn't
-            if read_count == 0 && chunk.capacity() > 0 {
-                return Err(io::ErrorKind::WouldBlock.into());
-            }
-
-            chunk.expand(read_count);
-
-            if chunk.capacity() == 0 {
-                return Ok(total_count);
+                self.data.move_tail(read_count as isize);
+                total_count += read_count;
             }
         }
     }
 }
 
 impl io::Read for Buffer {
+    #[inline]
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.egress(buf)
+        // Count is the smaller of the buffer length and the remaining data.
+        let count = min(self.data.len() - self.offset, buf.len());
+
+        // Memcpy the data directly
+        unsafe {
+            ptr::copy_nonoverlapping(self.data.as_ptr().add(self.offset), buf.as_mut_ptr(), count);
+        }
+
+        // Bump the read offset
+        self.offset += count;
+        Ok(count)
+    }
+
+    #[inline]
+    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
+        // Bail out early in case there isn't enough data to fill the buffer
+        if (self.offset + buf.len()) > self.data.len() {
+            return Err(io::ErrorKind::UnexpectedEof.into());
+        }
+
+        unsafe {
+            ptr::copy_nonoverlapping(self.data.as_ptr().add(self.offset), buf.as_mut_ptr(), buf.len());
+        }
+
+        // Bump the read offset
+        self.offset += buf.len();
+        Ok(())
     }
 }
 
 impl io::Write for Buffer {
+    #[inline]
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.ingress(buf)
+        unsafe {
+            let write_slice = self.data.tail_head_slice();
+            let count = min(write_slice.len(), buf.len());
+
+            // Write directly into the tail slice
+            ptr::copy_nonoverlapping(buf.as_ptr(), write_slice.as_mut_ptr(), count);
+
+            Ok(count)
+        }
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -154,9 +131,9 @@ impl io::Write for Buffer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::chunk::CHUNK_SIZE;
     use std::cmp::min;
     use std::io::Cursor;
+
 
     struct MockChannel {
         data: Vec<u8>,
@@ -212,47 +189,76 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let mock_data: Vec<_> = (0..(CHUNK_SIZE * 3)).map(|item| item as u8).collect();
+        let mock_data: Vec<_> = (0..BUF_SIZE).map(|item| item as u8).collect();
         let mut channel = MockChannel::new(mock_data.clone(), 500, mock_data.len());
 
         let mut buffer = Buffer::new();
 
-        buffer.ingress(&mut channel).unwrap();
+        let result = buffer.ingress(&mut channel);
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::WouldBlock);
+        assert_eq!(buffer.data.len(), BUF_SIZE);
+        assert_eq!(buffer.data.as_slice(), &mock_data[..]);
 
         channel.clear();
-
-        assert_eq!(buffer.chunks.len(), 4);
-        assert_eq!(buffer.chunks[0].readable_slice(), &mock_data[0..CHUNK_SIZE]);
-        assert_eq!(buffer.chunks[1].readable_slice(), &mock_data[CHUNK_SIZE..CHUNK_SIZE * 2]);
-        assert_eq!(buffer.chunks[2].readable_slice(), &mock_data[CHUNK_SIZE * 2..CHUNK_SIZE * 3]);
-
         buffer.egress(&mut channel).unwrap();
 
-        assert_eq!(buffer.chunks.len(), 1);
-        assert_eq!(buffer.chunks[0].capacity(), CHUNK_SIZE);
-        assert_eq!(buffer.chunks[0].remaining_data(), 0);
+        assert_eq!(buffer.offset, BUF_SIZE);
+        assert_eq!(buffer.data.as_slice(), &mock_data[..]);
 
+        buffer.advance();
+
+        assert_eq!(buffer.data.len(), 0);
         assert_eq!(channel.data[..], mock_data[..]);
+    }
+
+    #[test]
+    fn test_egress_error_on_zero_write() {
+
+    }
+
+    #[test]
+    fn test_ingress_buffer_overrun() {
+
     }
 
     #[test]
     fn test_no_err() {
         let mut cursor = Cursor::new(vec![1, 2, 3]);
-
         let mut buffer = Buffer::new();
 
         buffer.ingress(&mut cursor).unwrap();
 
-        assert_eq!(buffer.chunks.len(), 1);
-        assert_eq!(buffer.chunks[0].readable_slice(), &vec![1, 2, 3][..]);
+        assert_eq!(buffer.data.as_slice(), &vec![1, 2, 3][..]);
 
         let mut cursor = Cursor::new(Vec::<u8>::new());
 
         buffer.egress(&mut cursor).unwrap();
 
-        assert_eq!(buffer.chunks.len(), 1);
-        assert_eq!(buffer.chunks[0].readable_slice(), &Vec::<u8>::new()[..]);
+        assert_eq!(buffer.offset, 3);
+        assert_eq!(buffer.data.as_slice(), &vec![1, 2, 3][..]);
+
+        buffer.advance();
+
+        assert_eq!(buffer.offset, 0);
+        assert_eq!(buffer.data.as_slice(), &Vec::<u8>::new()[..]);
 
         assert_eq!(&cursor.get_ref()[..], &vec![1, 2, 3][..]);
+    }
+
+    #[test]
+    fn test_read() {
+
+    }
+
+    #[test]
+    fn test_read_exact() {
+
+    }
+
+    #[test]
+    fn test_write() {
+
     }
 }

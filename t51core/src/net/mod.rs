@@ -12,7 +12,7 @@ Master Server
 
 Dedicated Server
  - Register with master using a configured token
- - Upon successful registration, the server recieves a secret key from the master that will
+ - Upon successful registration, the server receives a secret key from the master that will
    be used to decrypt client authentication information.
 
 ### V1 ###
@@ -27,7 +27,7 @@ In the first implementation, the authenticator will just live in-process
 Use TCP. UDP could be made more optimal, but would require significantly more babysitting.
 
 E.g. many things, like terraforming or atmospherics could result in desynch if things are dropped
-or recieved unordered (e.g. the packet that clears some fire arrives before the last fire packet
+or received unordered (e.g. the packet that clears some fire arrives before the last fire packet
 will result in the fire getting hung).
 
 Initially, all network related things and state replication will be handled by the endpoint.
@@ -89,7 +89,7 @@ Channel
  - Handles the sequencing of incoming data and the transmission of outgoing data.
  - fn write(&mut self, serializable: &S) writes the supplied serializable item into the buffer and
    attempts to send as much of it as possible.
- - fn recieve(&mut self) -> Result<()> recieve all the data it can from the socket and write it into the
+ - fn receive(&mut self) -> Result<()> receive all the data it can from the socket and write it into the
    read buffer. If there is an error, the connection will be immediately terminated, since all
    recoverable errors (e.g. WouldBlock) are handled by the channel/buffer.
  - fn read(&mut self) -> Result<Frame> returns a frame if one is available. The error results
@@ -137,7 +137,7 @@ ChunkPool
 * Reception *
  - Readability is indicated for a token
  - Relevant channel is retrieved
- - recieve() is called to get all available data
+ - receive() is called to get all available data
  - read() is called until NoData is returned.
 
 * Error Conditions *
@@ -187,16 +187,27 @@ Payload<P>
    be decrypted and then deserialized using bincode. If the deserialization fails, the connection
    will be dropped.
 
-!!! 23.12.2018 !!!
- - Headers and fixed size packets will be manually serialized/deserialized. This way we can
-   ensure there are enough bytes in the buffer to recieve them.
+(net) -> ReadBuffer -> Header -> (size check) -> CryptoBuf -> (decrypt) -> Frame -> NetSys
+Payload Packet -> Serialize -> Frame -> CryptoBuf -> WriteBuffer -> (net)
 
-(net) -> ReadBuffer -> Header -> (size check) -> CryptoBuf -> (decrypt) -> Frame
+
+!!! 25.12.2018 !!!
+(net) -> ReadBuffer -> Header -> (size check) -> (decrypt to frame) -> Frame -> NetSys
+Payload Packet -> (serialize) -> SendBuffer -> Header -> (encrypt in-place) -> (net)
+
+ - Putting the networking and state system in separate threads using message passing will incur
+   way too much overhead that is probably not worth it. We'll stick to keeping everything in
+   one Network System. Eventually we can separate out state delta calculation into a separate system
+   and then they can communicate through a special resource that flips between two state objects based
+   on a frame counter (e.g. system A accesses buffer 1 on even frames, and system B accesses it on odd frames).
+
+Disconnect Logic
+ - If we receive 0 bytes, we assume the connection died and the client is dropped.
+ - If no disconnection message comes in, and the last transmission is non-zero, the client
+   will get dropped by the time-out handler
 */
 
 pub mod error;
-pub mod chunk;
-pub mod chunkpool;
 pub mod buffer;
 pub mod frame;
 pub mod channel;

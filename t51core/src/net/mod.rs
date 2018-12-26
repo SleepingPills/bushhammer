@@ -200,19 +200,37 @@ Payload Packet -> (serialize) -> SendBuffer -> Header -> (encrypt in-place) -> (
    one Network System. Eventually we can separate out state delta calculation into a separate system
    and then they can communicate through a special resource that flips between two state objects based
    on a frame counter (e.g. system A accesses buffer 1 on even frames, and system B accesses it on odd frames).
- - Can't use bincode. The client side most likely won't run rust and needs to be able to communicate.
- - The State manager will buffer state changes if one cannot be sent due to downtime on the connection.
  - If the client stays unreachable for 30 seconds or more, it will be disconnected.
 
 Disconnect Logic
  - If we receive 0 bytes, we assume the connection died and the client is dropped.
  - If no disconnection message comes in, and the last transmission is non-zero, the client
    will get dropped by the time-out handler
+
+!!! 26.12.2018 !!!
+ - Use manual serialization/deserialization. This simplifies the buffer interface greatly and we
+   can just operate directly on the buffer slices and move the head/tail in batches.
+ - Can't use bincode. The client side most likely won't run rust and needs to be able to communicate.
+ - The State manager will buffer state changes if one cannot be sent due to downtime on the connection.
+
+ Serialization:
+ 1. Serialize the payload packet/buffer into the frame
+ 2. Set the header
+ 3. Serialize the frame into the write buffer.
+   1. Serialize the header
+   2. Encrypt the frame bytes in to the write buffer
+
+ The channel will only return the actual packet payload, not a Frame or similar thing since there
+ is no need for downstream things to deal with headers et. al.
+
+ The frame extraction will be done by the channel. It will read the header, check that all the
+ data is available in the buffer, and then decrypt the data into the data buffer (formerly frame).
 */
 
 pub mod error;
 pub mod buffer;
 pub mod frame;
+pub mod crypto;
 pub mod shared;
 pub mod channel;
 pub mod endpoint;

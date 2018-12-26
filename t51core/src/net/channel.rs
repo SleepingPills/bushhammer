@@ -11,12 +11,17 @@ pub struct Channel {
     stream: TcpStream,
 
     // Crypto
+    version: [u8; 16],
+    protocol: u64,
+    sequence: u64,
+
     server_key: [u8; 32],
     client_key: [u8; 32],
     crypto_buffer: Vec<u8>,
 
+    secret_key: [u8; 32],
+
     // Channel State
-    sequence: u64,
     read_buffer: Buffer,
     write_buffer: Buffer,
 //    frame: Frame,

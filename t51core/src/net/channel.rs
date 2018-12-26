@@ -1,5 +1,5 @@
 use crate::net::buffer::Buffer;
-use crate::net::error::{Error, TxResult};
+use crate::net::error::{Error, Result};
 use crate::net::frame::{ConnectionHeader, PayloadHeader, PrivateData, Frame};
 use bincode;
 use std::io;

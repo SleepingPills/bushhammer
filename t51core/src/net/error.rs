@@ -1,16 +1,21 @@
 use std::io;
+use bincode;
 
-// TODO: Delete unless needed
 pub enum Error {
-    NeedMore,
-    CorruptData,
-    Network(io::Error),
+    Data(Box<bincode::ErrorKind>),
+    Io(io::Error),
 }
 
 impl From<io::Error> for Error {
     fn from(io_error: io::Error) -> Self {
-        Error::Network(io_error)
+        Error::Io(io_error)
     }
 }
 
-pub type TxResult<T> = Result<T, Error>;
+impl From<bincode::Error> for Error {
+    fn from(bincode_error: Box<bincode::ErrorKind>) -> Self {
+        Error::Data(bincode_error)
+    }
+}
+
+pub type Result<T> = ::std::result::Result<T, Error>;

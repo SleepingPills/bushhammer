@@ -4,7 +4,9 @@ use std::io;
 use std::ptr;
 
 type ByteDeque = SliceDeque<u8>;
-const BUF_SIZE: usize = 32768;
+
+// Buffer size set to be a multiple of the
+const BUF_SIZE: usize = 65536;
 
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.
@@ -118,6 +120,7 @@ impl io::Write for Buffer {
 
             // Write directly into the tail slice
             ptr::copy_nonoverlapping(buf.as_ptr(), write_slice.as_mut_ptr(), count);
+            self.data.move_tail(count as isize);
 
             Ok(count)
         }
@@ -132,8 +135,7 @@ impl io::Write for Buffer {
 mod tests {
     use super::*;
     use std::cmp::min;
-    use std::io::Cursor;
-
+    use std::io::{Cursor, Read, Write};
 
     struct MockChannel {
         data: Vec<u8>,
@@ -165,6 +167,7 @@ mod tests {
             }
 
             let offset = min(self.chunk, buf.len());
+            println!("{} {} {}", offset, self.cursor, buf.len());
             buf[0..offset].copy_from_slice(&self.data[self.cursor..(self.cursor + offset)]);
             self.cursor += offset;
             Ok(offset)
@@ -215,12 +218,33 @@ mod tests {
 
     #[test]
     fn test_egress_error_on_zero_write() {
+        let mut zero_vec = vec![];
 
+        let mut buffer = Buffer::new();
+
+        // The buffer has to have at least some data to trigger the zero write error
+        buffer.data.push_back(1);
+
+        let result = buffer.egress(&mut zero_vec[..]);
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::WriteZero);
     }
 
     #[test]
     fn test_ingress_buffer_overrun() {
+        let mock_data: Vec<_> = (0..BUF_SIZE * 2).map(|item| item as u8).collect();
 
+        let mut buffer = Buffer::new();
+
+        let result = buffer.ingress(&mock_data[..]);
+
+        assert!(result.is_err());
+
+        let err = result.err().unwrap();
+
+        assert_eq!(err.kind(), io::ErrorKind::Other);
+        assert_eq!(err.to_string(), "Buffer overrun")
     }
 
     #[test]
@@ -230,35 +254,71 @@ mod tests {
 
         buffer.ingress(&mut cursor).unwrap();
 
-        assert_eq!(buffer.data.as_slice(), &vec![1, 2, 3][..]);
+        assert_eq!(buffer.data.as_slice(), &[1, 2, 3]);
 
         let mut cursor = Cursor::new(Vec::<u8>::new());
 
         buffer.egress(&mut cursor).unwrap();
 
         assert_eq!(buffer.offset, 3);
-        assert_eq!(buffer.data.as_slice(), &vec![1, 2, 3][..]);
+        assert_eq!(buffer.data.as_slice(), &[1, 2, 3]);
 
         buffer.advance();
 
         assert_eq!(buffer.offset, 0);
         assert_eq!(buffer.data.as_slice(), &Vec::<u8>::new()[..]);
 
-        assert_eq!(&cursor.get_ref()[..], &vec![1, 2, 3][..]);
+        assert_eq!(&cursor.get_ref()[..], &[1, 2, 3]);
     }
 
     #[test]
     fn test_read() {
+        let mut mock_data = [1u8, 2u8, 3u8];
+        let mut buffer = Buffer::new();
+        buffer.data.push_back(100);
+        buffer.data.push_back(200);
 
+        let count = buffer.read(&mut mock_data).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(mock_data, [100u8, 200u8, 3u8]);
+        assert_eq!(buffer.offset, 2);
     }
 
     #[test]
     fn test_read_exact() {
+        let mut mock_data = [1u8, 2u8, 3u8];
+        let mut buffer = Buffer::new();
+        buffer.data.push_back(100);
+        buffer.data.push_back(200);
 
+        let count = buffer.read(&mut mock_data[1..]).unwrap();
+
+        assert_eq!(count, 2);
+        assert_eq!(mock_data, [1u8, 100u8, 200u8]);
+        assert_eq!(buffer.offset, 2);
+    }
+
+    #[test]
+    fn test_read_exact_fail() {
+        let mut mock_data = [1u8, 2u8, 3u8];
+        let mut buffer = Buffer::new();
+
+        let result = buffer.read_exact(&mut mock_data[1..]);
+
+        assert!(result.is_err());
+        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(buffer.offset, 0);
     }
 
     #[test]
     fn test_write() {
+        let mock_data = [1u8, 2u8, 3u8];
+        let mut buffer = Buffer::new();
 
+        let count = buffer.write(&mock_data).unwrap();
+
+        assert_eq!(count, 3);
+        assert_eq!(buffer.data.as_slice(), &[1u8, 2u8, 3u8]);
     }
 }

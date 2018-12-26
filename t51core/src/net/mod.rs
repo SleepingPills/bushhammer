@@ -210,5 +210,6 @@ Disconnect Logic
 pub mod error;
 pub mod buffer;
 pub mod frame;
+pub mod client;
 pub mod channel;
 pub mod endpoint;

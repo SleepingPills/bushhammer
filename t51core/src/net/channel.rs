@@ -1,6 +1,7 @@
 use crate::net::buffer::Buffer;
+use crate::net::client::ClientId;
 use crate::net::error::{Error, Result};
-use crate::net::frame::{ConnectionHeader, PayloadHeader, PrivateData, Frame};
+use crate::net::frame::{ConnectionHeader, Frame, PayloadHeader, PrivateData};
 use bincode;
 use std::io;
 use std::net::TcpStream;
@@ -22,48 +23,45 @@ pub struct Channel {
 }
 
 impl Channel {
-    pub fn send(&mut self) -> io::Result<usize> {
-        self.write_buffer.egress(&mut self.stream)
+    pub fn send(&mut self) -> Result<usize> {
+        self.write_buffer.egress(&mut self.stream).map_err(Into::into)
     }
 
-    pub fn recieve(&mut self) -> io::Result<usize> {
-        self.read_buffer.ingress(&mut self.stream)
+    pub fn recieve(&mut self) -> Result<usize> {
+        self.read_buffer.ingress(&mut self.stream).map_err(Into::into)
     }
 }
 
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> io::Result<u64>;
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId>;
 
     /// Writes the connection challenge to the channel.
-    fn write_connection_challenge(&mut self) -> io::Result<()>;
+    fn write_connection_challenge(&mut self) -> Result<()>;
 }
 
 impl AwaitToken for Channel {
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> io::Result<u64> {
-//        let token_header: ConnectionHeader = match bincode::deserialize_from(&mut self.read_buffer) {
-//            Ok(header) => header,
-//            Err(bincode::ErrorKind::) => return Err(io::ErrorKind::)
-//        };
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId> {
+        let token_header: ConnectionHeader = bincode::deserialize_from(&mut self.read_buffer)?;
 
         Ok(100)
     }
 
-    fn write_connection_challenge(&mut self) -> io::Result<()> {
+    fn write_connection_challenge(&mut self) -> Result<()> {
         unimplemented!()
     }
 }
 
 pub trait Challenge {
-    fn read_challenge_response(&mut self) -> io::Result<&Frame>;
+    fn read_challenge_response(&mut self) -> Result<&Frame>;
 }
 
 pub trait Connected {
-    fn read_frame(&mut self) -> io::Result<&Frame>;
+    fn read_frame(&mut self) -> Result<&Frame>;
 }
 
 impl Connected for Channel {
-    fn read_frame(&mut self) -> io::Result<&Frame> {
+    fn read_frame(&mut self) -> Result<&Frame> {
         //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
         unimplemented!()
     }

@@ -1171,7 +1171,7 @@ mod tests {
         assert_eq!(system.runstate.collect_foreach[1], (1.into(), CompA(1), CompB(1)));
         assert_eq!(system.runstate.collect_foreach[2], (2.into(), CompA(2), CompB(2)));
 
-        assert_eq!(system.messages.read::<Msg>(), &vec![Msg(100), Msg(101), Msg(102)][..]);
+        assert_eq!(system.messages.read::<Msg>(), &[Msg(100), Msg(101), Msg(102)]);
         assert_eq!(system.runstate.collect_messages, vec![Msg(1), Msg(2)])
     }
 }

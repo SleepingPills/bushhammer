@@ -575,8 +575,8 @@ mod tests {
         // Run the world iteration once, propagating the messages
         world.run_once();
 
-        assert_eq!(world.messages.read::<Msg1>(), &vec![Msg1(0), Msg1(1)][..]);
-        assert_eq!(world.messages.read::<Msg2>(), &vec![Msg2(0), Msg2(1), Msg2(2)][..]);
+        assert_eq!(world.messages.read::<Msg1>(), &[Msg1(0), Msg1(1)]);
+        assert_eq!(world.messages.read::<Msg2>(), &[Msg2(0), Msg2(1), Msg2(2)]);
 
         // Run the world iteration the second time, allowing the systems to ingest the messages
         world.run_once();

@@ -11,7 +11,6 @@ const BUF_SIZE: usize = 65536;
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.
 pub struct Buffer {
-    offset: usize,
     data: ByteDeque,
 }
 
@@ -20,114 +19,75 @@ impl Buffer {
     pub fn new() -> Buffer {
         let mut data = ByteDeque::new();
         data.reserve(BUF_SIZE);
-        Buffer { offset: 0, data }
+        Buffer { data }
     }
 
-    /// Advance the cursor to the current read offset.
+    /// Remaining free capacity in the buffer.
     #[inline]
-    pub fn advance(&mut self) {
-        unsafe { self.data.move_head(self.offset as isize) }
-        self.offset = 0;
+    pub fn free_capacity(&self) -> usize {
+        self.data.capacity() - self.data.len()
     }
 
-    /// Roll back the read offset to the position last advanced to.
+    /// Advance the head.
     #[inline]
-    pub fn rollback(&mut self) {
-        self.offset = 0;
+    pub fn move_head(&mut self, count: usize) {
+        unsafe { self.data.move_head(count as isize) }
+    }
+
+    /// Advance the tail.
+    #[inline]
+    pub fn move_tail(&mut self, count: usize) {
+        unsafe { self.data.move_tail(count as isize) }
+    }
+
+    /// Slice containing data.
+    #[inline]
+    pub fn read_slice(&self) -> &[u8] {
+        self.data.as_slice()
+    }
+
+    /// Slice containing free capacity to be written.
+    #[inline]
+    pub fn write_slice(&mut self) -> &mut [u8] {
+        unsafe { self.data.tail_head_slice() }
     }
 
     /// Write the contents of the buffer to the supplied writer, advancing the read offset.
+    #[inline]
     pub fn egress<W: io::Write>(&mut self, mut writer: W) -> io::Result<usize> {
-        let prev_offset = self.offset;
+        let orig_len = self.data.len();
 
-        while self.offset < self.data.len() {
-            let write_count = writer.write(&self.data[self.offset..])?;
+        while self.data.len() > 0 {
+            let write_count = writer.write(&self.data)?;
 
             if write_count == 0 {
-                return match self.data.len() {
-                    0 => Ok(self.offset - prev_offset),
-                    _ => Err(io::ErrorKind::WriteZero.into()),
-                };
+                return Err(io::ErrorKind::WriteZero.into());
             }
 
-            self.offset += write_count;
+            self.move_head(write_count);
         }
 
-        Ok(self.offset - prev_offset)
+        Ok(orig_len - self.data.len())
     }
 
     /// Read in data from the supplied reader to the buffer.
+    #[inline]
     pub fn ingress<R: io::Read>(&mut self, mut reader: R) -> io::Result<usize> {
-        let mut total_count = 0usize;
+        let orig_capacity = self.free_capacity();
 
-        loop {
+        while self.data.len() < BUF_SIZE {
             unsafe {
                 let read_count = reader.read(self.data.tail_head_slice())?;
 
                 if read_count == 0 {
-                    return match self.data.len() < BUF_SIZE {
-                        true => Ok(total_count),
-                        _ => Err(io::Error::new(io::ErrorKind::Other, "Buffer overrun")),
-                    };
+                    return Ok(orig_capacity - self.free_capacity());
                 }
 
-                self.data.move_tail(read_count as isize);
-                total_count += read_count;
+                self.move_tail(read_count);
             }
         }
-    }
-}
 
-impl io::Read for Buffer {
-    #[inline]
-    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        // Count is the smaller of the buffer length and the remaining data.
-        let count = min(self.data.len() - self.offset, buf.len());
-
-        // Memcpy the data directly
-        unsafe {
-            ptr::copy_nonoverlapping(self.data.as_ptr().add(self.offset), buf.as_mut_ptr(), count);
-        }
-
-        // Bump the read offset
-        self.offset += count;
-        Ok(count)
-    }
-
-    #[inline]
-    fn read_exact(&mut self, buf: &mut [u8]) -> io::Result<()> {
-        // Bail out early in case there isn't enough data to fill the buffer
-        if (self.offset + buf.len()) > self.data.len() {
-            return Err(io::ErrorKind::UnexpectedEof.into());
-        }
-
-        unsafe {
-            ptr::copy_nonoverlapping(self.data.as_ptr().add(self.offset), buf.as_mut_ptr(), buf.len());
-        }
-
-        // Bump the read offset
-        self.offset += buf.len();
-        Ok(())
-    }
-}
-
-impl io::Write for Buffer {
-    #[inline]
-    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        unsafe {
-            let write_slice = self.data.tail_head_slice();
-            let count = min(write_slice.len(), buf.len());
-
-            // Write directly into the tail slice
-            ptr::copy_nonoverlapping(buf.as_ptr(), write_slice.as_mut_ptr(), count);
-            self.data.move_tail(count as isize);
-
-            Ok(count)
-        }
-    }
-
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+        Err(io::Error::new(io::ErrorKind::Other, "Buffer overrun"))
     }
 }
 
@@ -166,9 +126,8 @@ mod tests {
                 return Err(io::ErrorKind::WouldBlock.into());
             }
 
-            let offset = min(self.chunk, buf.len());
-            println!("{} {} {}", offset, self.cursor, buf.len());
-            buf[0..offset].copy_from_slice(&self.data[self.cursor..(self.cursor + offset)]);
+            let offset = min(min(self.chunk, buf.len()), self.data.len() - self.cursor);
+            buf[..offset].copy_from_slice(&self.data[self.cursor..(self.cursor + offset)]);
             self.cursor += offset;
             Ok(offset)
         }
@@ -181,7 +140,8 @@ mod tests {
             }
 
             let count = min(self.chunk, buf.len());
-            self.data.extend(&buf[0..count]);
+            self.data.extend(&buf[..count]);
+
             Ok(count)
         }
 
@@ -192,7 +152,7 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let mock_data: Vec<_> = (0..BUF_SIZE).map(|item| item as u8).collect();
+        let mock_data: Vec<_> = (0..BUF_SIZE / 2).map(|item| item as u8).collect();
         let mut channel = MockChannel::new(mock_data.clone(), 500, mock_data.len());
 
         let mut buffer = Buffer::new();
@@ -201,17 +161,13 @@ mod tests {
 
         assert!(result.is_err());
         assert_eq!(result.err().unwrap().kind(), io::ErrorKind::WouldBlock);
-        assert_eq!(buffer.data.len(), BUF_SIZE);
+        assert_eq!(buffer.data.len(), mock_data.len());
         assert_eq!(buffer.data.as_slice(), &mock_data[..]);
 
         channel.clear();
-        buffer.egress(&mut channel).unwrap();
+        let count = buffer.egress(&mut channel).unwrap();
 
-        assert_eq!(buffer.offset, BUF_SIZE);
-        assert_eq!(buffer.data.as_slice(), &mock_data[..]);
-
-        buffer.advance();
-
+        assert_eq!(count, mock_data.len());
         assert_eq!(buffer.data.len(), 0);
         assert_eq!(channel.data[..], mock_data[..]);
     }
@@ -260,65 +216,8 @@ mod tests {
 
         buffer.egress(&mut cursor).unwrap();
 
-        assert_eq!(buffer.offset, 3);
-        assert_eq!(buffer.data.as_slice(), &[1, 2, 3]);
-
-        buffer.advance();
-
-        assert_eq!(buffer.offset, 0);
         assert_eq!(buffer.data.as_slice(), &Vec::<u8>::new()[..]);
 
         assert_eq!(&cursor.get_ref()[..], &[1, 2, 3]);
-    }
-
-    #[test]
-    fn test_read() {
-        let mut mock_data = [1u8, 2u8, 3u8];
-        let mut buffer = Buffer::new();
-        buffer.data.push_back(100);
-        buffer.data.push_back(200);
-
-        let count = buffer.read(&mut mock_data).unwrap();
-
-        assert_eq!(count, 2);
-        assert_eq!(mock_data, [100u8, 200u8, 3u8]);
-        assert_eq!(buffer.offset, 2);
-    }
-
-    #[test]
-    fn test_read_exact() {
-        let mut mock_data = [1u8, 2u8, 3u8];
-        let mut buffer = Buffer::new();
-        buffer.data.push_back(100);
-        buffer.data.push_back(200);
-
-        let count = buffer.read(&mut mock_data[1..]).unwrap();
-
-        assert_eq!(count, 2);
-        assert_eq!(mock_data, [1u8, 100u8, 200u8]);
-        assert_eq!(buffer.offset, 2);
-    }
-
-    #[test]
-    fn test_read_exact_fail() {
-        let mut mock_data = [1u8, 2u8, 3u8];
-        let mut buffer = Buffer::new();
-
-        let result = buffer.read_exact(&mut mock_data[1..]);
-
-        assert!(result.is_err());
-        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::UnexpectedEof);
-        assert_eq!(buffer.offset, 0);
-    }
-
-    #[test]
-    fn test_write() {
-        let mock_data = [1u8, 2u8, 3u8];
-        let mut buffer = Buffer::new();
-
-        let count = buffer.write(&mock_data).unwrap();
-
-        assert_eq!(count, 3);
-        assert_eq!(buffer.data.as_slice(), &[1u8, 2u8, 3u8]);
     }
 }

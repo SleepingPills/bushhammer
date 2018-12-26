@@ -1,33 +1,55 @@
-use serde_derive::{Deserialize, Serialize};
+use std::io;
+use crate::net::buffer::Buffer;
 
-#[derive(Serialize, Deserialize)]
-pub struct ConnectionHeader {
+pub struct ConnectionToken {
     pub version: [u8; 16],
     pub protocol: u64,
     pub created: u64,
     pub expires: u64,
     pub sequence: u64,
+    pub nonce: [u8; 24],
+    pub data: PrivateData,
 }
 
-#[derive(Serialize, Deserialize)]
+impl ConnectionToken {
+    pub fn deserialize<R: io::Read>(buffer: &mut R) -> io::Result<ConnectionToken> {
+        unimplemented!()
+    }
+}
+
 pub struct PrivateData {
     pub client_id: u64,
     pub server_key: [u8; 32],
     pub client_key: [u8; 32],
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct ChallengeHeader {
-    pub sequence: u64,
+impl PrivateData {
+    pub fn deserialize<R: io::Read>(buffer: &mut R) -> io::Result<PrivateData> {
+        unimplemented!()
+    }
 }
 
-#[derive(Serialize, Deserialize)]
-pub struct PayloadHeader {
+pub struct Header {
     pub class: u8,
     pub sequence: u64,
     pub size: u16,
 }
+
+impl Header {
+    pub const SIZE: usize = 11;
+}
+
 pub struct Frame {
-    pub header: PayloadHeader,
+    pub header: Header,
     pub data: Vec<u8>,
+}
+
+impl Frame {
+    pub fn serialize(&self, buffer: &mut Buffer) -> io::Result<()> {
+        // Check that the buffer is big enough to send the frame, reject sending otherwise
+        // We can do this because we know the data size and the header size is constant.
+        // Write out the header
+        // Encrypt the data into the buffer
+        unimplemented!()
+    }
 }

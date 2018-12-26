@@ -1,7 +1,7 @@
 use crate::net::buffer::Buffer;
-use crate::net::client::ClientId;
+use crate::net::shared::ClientId;
 use crate::net::error::{Error, Result};
-use crate::net::frame::{ConnectionHeader, Frame, PayloadHeader, PrivateData};
+//use crate::net::frame::{Frame, PayloadHeader, PrivateData};
 use bincode;
 use std::io;
 use std::net::TcpStream;
@@ -19,7 +19,7 @@ pub struct Channel {
     sequence: u64,
     read_buffer: Buffer,
     write_buffer: Buffer,
-    frame: Frame,
+//    frame: Frame,
 }
 
 impl Channel {
@@ -42,7 +42,7 @@ pub trait AwaitToken {
 
 impl AwaitToken for Channel {
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId> {
-        let token_header: ConnectionHeader = bincode::deserialize_from(&mut self.read_buffer)?;
+//        let token_header: ConnectionHeader = bincode::deserialize_from(&mut self.read_buffer)?;
 
         Ok(100)
     }
@@ -52,17 +52,13 @@ impl AwaitToken for Channel {
     }
 }
 
-pub trait Challenge {
-    fn read_challenge_response(&mut self) -> Result<&Frame>;
-}
-
-pub trait Connected {
-    fn read_frame(&mut self) -> Result<&Frame>;
-}
-
-impl Connected for Channel {
-    fn read_frame(&mut self) -> Result<&Frame> {
-        //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
-        unimplemented!()
-    }
-}
+//pub trait Connected {
+//    fn read_frame(&mut self) -> Result<&Frame>;
+//}
+//
+//impl Connected for Channel {
+//    fn read_frame(&mut self) -> Result<&Frame> {
+//        //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
+//        unimplemented!()
+//    }
+//}

@@ -200,6 +200,9 @@ Payload Packet -> (serialize) -> SendBuffer -> Header -> (encrypt in-place) -> (
    one Network System. Eventually we can separate out state delta calculation into a separate system
    and then they can communicate through a special resource that flips between two state objects based
    on a frame counter (e.g. system A accesses buffer 1 on even frames, and system B accesses it on odd frames).
+ - Can't use bincode. The client side most likely won't run rust and needs to be able to communicate.
+ - The State manager will buffer state changes if one cannot be sent due to downtime on the connection.
+ - If the client stays unreachable for 30 seconds or more, it will be disconnected.
 
 Disconnect Logic
  - If we receive 0 bytes, we assume the connection died and the client is dropped.
@@ -210,6 +213,6 @@ Disconnect Logic
 pub mod error;
 pub mod buffer;
 pub mod frame;
-pub mod client;
+pub mod shared;
 pub mod channel;
 pub mod endpoint;

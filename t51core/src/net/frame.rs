@@ -8,7 +8,7 @@ use std::mem;
 pub struct ConnectionToken {
     pub class: u8,
     pub version: [u8; 16],
-    pub protocol: u64,
+    pub protocol: u16,
     pub created: u64,
     pub expires: u64,
     pub sequence: u64,
@@ -17,12 +17,12 @@ pub struct ConnectionToken {
 
 impl ConnectionToken {
     pub const CLASS: u8 = 0;
-    pub const SIZE: usize = 49 + PrivateData::SIZE + crypto::MAC_SIZE;
+    pub const SIZE: usize = 43 + PrivateData::SIZE + crypto::MAC_SIZE;
 
     pub fn deserialize(buffer: &mut Buffer, secret_key: &[u8; 32]) -> io::Result<ConnectionToken> {
         // Bail out immediately in case there isn't enough data in the buffer.
         if buffer.len() < Self::SIZE {
-            return Err(io::ErrorKind::UnexpectedEof.into());
+            return Err(io::ErrorKind::WouldBlock.into());
         }
 
         // Get the slice for the available data.
@@ -37,7 +37,7 @@ impl ConnectionToken {
 
         instance.class = Self::CLASS;
         stream.read_exact(&mut instance.version)?;
-        instance.protocol = stream.read_u64::<BigEndian>()?;
+        instance.protocol = stream.read_u16::<BigEndian>()?;
         instance.created = stream.read_u64::<BigEndian>()?;
         instance.expires = stream.read_u64::<BigEndian>()?;
         instance.sequence = stream.read_u64::<BigEndian>()?;
@@ -46,12 +46,12 @@ impl ConnectionToken {
         let mut plain = [0u8; PrivateData::SIZE];
 
         // Construct the additional data used for the encryption.
-        let mut additional_data = [0u8; 32];
+        let mut additional_data = [0u8; 26];
         {
             let mut additional_data_slice = &mut additional_data[..];
 
             additional_data_slice.write_all(&instance.version)?;
-            additional_data_slice.write_u64::<LittleEndian>(instance.protocol)?;
+            additional_data_slice.write_u16::<LittleEndian>(instance.protocol)?;
             additional_data_slice.write_u64::<LittleEndian>(instance.created)?;
         }
 
@@ -104,12 +104,10 @@ impl Header {
     pub const CLASS: u8 = 1;
     pub const SIZE: usize = 11;
 
-    pub fn deserialize(buffer: &mut Buffer) -> io::Result<Header> {
-        if buffer.len() < Self::SIZE {
+    pub fn deserialize(mut stream: &[u8]) -> io::Result<Header> {
+        if stream.len() < Self::SIZE {
             return Err(io::ErrorKind::UnexpectedEof.into());
         }
-
-        let mut stream = buffer.read_slice();
 
         if stream.read_u8()? != Self::CLASS {
             return Err(io::ErrorKind::InvalidData.into());

@@ -6,7 +6,7 @@ use std::ptr;
 type ByteDeque = SliceDeque<u8>;
 
 // Buffer size set to be a multiple of the
-const BUF_SIZE: usize = 65536;
+pub const BUF_SIZE: usize = 65536;
 
 /// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.

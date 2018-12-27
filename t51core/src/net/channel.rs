@@ -1,7 +1,7 @@
 use crate::net::buffer::Buffer;
-use crate::net::shared::ClientId;
 use crate::net::error::{Error, Result};
-//use crate::net::frame::{Frame, PayloadHeader, PrivateData};
+use crate::net::frame::{ConnectionToken, Header};
+use crate::net::shared::{ClientId, current_timestamp};
 use bincode;
 use std::io;
 use std::net::TcpStream;
@@ -15,16 +15,16 @@ pub struct Channel {
     protocol: u64,
     sequence: u64,
 
+    // TODO: The constructor will fill these with random bytes, ensuring that usage before
+    // connecting will fail the decryption.
     server_key: [u8; 32],
     client_key: [u8; 32],
-    crypto_buffer: Vec<u8>,
-
-    secret_key: [u8; 32],
 
     // Channel State
     read_buffer: Buffer,
     write_buffer: Buffer,
-//    frame: Frame,
+    payload: Vec<u8>,
+    //    frame: Frame,
 }
 
 impl Channel {
@@ -40,30 +40,38 @@ impl Channel {
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId>;
-
-    /// Writes the connection challenge to the channel.
-    fn write_connection_challenge(&mut self) -> Result<()>;
 }
 
 impl AwaitToken for Channel {
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId> {
-//        let token_header: ConnectionHeader = bincode::deserialize_from(&mut self.read_buffer)?;
+        let token = ConnectionToken::deserialize(&mut self.read_buffer, secret_key)?;
 
-        Ok(100)
-    }
+        if token.expires < current_timestamp() {
+            return Err(Error::Expired);
+        }
 
-    fn write_connection_challenge(&mut self) -> Result<()> {
-        unimplemented!()
+        if token.protocol != self.protocol {
+            return Err(Error::ProtocolMismatch);
+        }
+
+        if token.version != self.version {
+            return Err(Error::VersionMismatch);
+        }
+
+        self.server_key = token.data.server_key;
+        self.client_key = token.data.client_key;
+
+        Ok(token.data.client_id)
     }
 }
 
-//pub trait Connected {
-//    fn read_frame(&mut self) -> Result<&Frame>;
-//}
-//
-//impl Connected for Channel {
-//    fn read_frame(&mut self) -> Result<&Frame> {
-//        //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
-//        unimplemented!()
-//    }
-//}
+pub trait Connected {
+    fn read_frame(&mut self) -> Result<&Vec<u8>>;
+}
+
+impl Connected for Channel {
+    fn read_frame(&mut self) -> Result<&Vec<u8>> {
+        //        let header: Header = bincode::deserialize_from(&mut self.read_buffer)?;
+        unimplemented!()
+    }
+}

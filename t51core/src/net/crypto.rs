@@ -17,20 +17,21 @@ fn nonce_to_bytes(nonce: u64) -> [u8; NONCE_SIZE] {
 }
 
 #[inline]
-pub fn encrypt(
-    cipher: &mut [u8],
-    mac: &mut [u8; MAC_SIZE],
-    plain: &[u8],
-    additional_data: &[u8],
-    nonce: u64,
-    key: &[u8; KEY_SIZE],
-) -> bool {
+pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
+    if cipher.len() != plain.len() + MAC_SIZE {
+        panic!(
+            "Encryption: cipher data length ({}) must be plain data length ({}) + MAC size ({})",
+            cipher.len(),
+            plain.len(),
+            MAC_SIZE
+        )
+    }
+
     unsafe {
-        let result = libsodium_sys::crypto_aead_chacha20poly1305_ietf_encrypt_detached(
+        let result = libsodium_sys::crypto_aead_chacha20poly1305_ietf_encrypt(
             cipher.as_mut_ptr(),
-            mac.as_mut_ptr(),
             ::std::ptr::null_mut(),
             plain.as_ptr(),
             plain.len() as u64,
@@ -45,28 +46,38 @@ pub fn encrypt(
 }
 
 #[inline]
-pub fn decrypt(
-    plain: &mut [u8],
-    cipher: &[u8],
-    mac: &[u8; MAC_SIZE],
-    additional_data: &[u8],
-    nonce: u64,
-    key: &[u8; KEY_SIZE],
-) -> bool {
+pub fn decrypt(plain: &mut [u8], cipher: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
+    if cipher.len() != plain.len() + MAC_SIZE {
+        panic!(
+            "Decryption: cipher data length ({}) must be plain data length ({}) + MAC size ({})",
+            cipher.len(),
+            plain.len(),
+            MAC_SIZE
+        )
+    }
+
     unsafe {
-        let result = libsodium_sys::crypto_aead_chacha20poly1305_ietf_decrypt_detached(
+        let result = libsodium_sys::crypto_aead_chacha20poly1305_ietf_decrypt(
             plain.as_mut_ptr(),
+            ::std::ptr::null_mut(),
             ::std::ptr::null_mut(),
             cipher.as_ptr(),
             cipher.len() as u64,
-            mac.as_ptr(),
             additional_data.as_ptr(),
             additional_data.len() as u64,
             nonce_bytes.as_ptr(),
             key.as_ptr(),
         );
         result != -1
+    }
+}
+
+/// Fills the provided buffer with cryptographically secure random bytes
+#[inline]
+pub fn random_bytes(out: &mut [u8]) {
+    unsafe {
+        libsodium_sys::randombytes_buf(out.as_mut_ptr() as *mut ::std::ffi::c_void, out.len());
     }
 }

@@ -22,6 +22,12 @@ impl Buffer {
         Buffer { data }
     }
 
+    /// The number of bytes in the buffer.
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.data.len()
+    }
+
     /// Remaining free capacity in the buffer.
     #[inline]
     pub fn free_capacity(&self) -> usize {

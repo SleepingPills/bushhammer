@@ -227,9 +227,8 @@ Disconnect Logic
  data is available in the buffer, and then decrypt the data into the data buffer (formerly frame).
 */
 
-pub mod error;
+pub mod result;
 pub mod buffer;
-pub mod frame;
 pub mod crypto;
 pub mod shared;
 pub mod channel;

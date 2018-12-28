@@ -2,8 +2,14 @@ use std::io;
 
 pub enum Error {
     Expired,
+    Duplicate,
+    PayloadTooLarge,
+    MoreDataNeeded,
+    ClassMismatch,
     ProtocolMismatch,
     VersionMismatch,
+    SequenceMismatch,
+    Crypto,
     Io(io::Error),
 }
 

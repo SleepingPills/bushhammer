@@ -1,7 +1,5 @@
 use slice_deque::SliceDeque;
-use std::cmp::min;
 use std::io;
-use std::ptr;
 
 type ByteDeque = SliceDeque<u8>;
 

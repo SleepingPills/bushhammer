@@ -1,9 +1,10 @@
 use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
 use crate::net::result::{Error, Result};
+use crate::net::shared::Serializable;
 use crate::net::shared::{current_timestamp, ClientId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io::{Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::TcpStream;
 
@@ -14,7 +15,6 @@ pub struct Channel {
     // Validation
     version: [u8; 16],
     protocol: u16,
-    additional_data: [u8; 19],
 
     // Sequence of packets recieved from the client
     client_sequence: u64,
@@ -43,21 +43,12 @@ impl Channel {
         crypto::random_bytes(&mut server_key);
         crypto::random_bytes(&mut client_key);
 
-        let mut additional_data = [0u8; 19];
-        {
-            let mut buf = &mut additional_data[..];
-            buf.write_all(&version[..]).expect("Error writing version");
-            buf.write_u16::<LittleEndian>(protocol).expect("Error writing protocol");
-            buf.write_u8(PAYLOAD_CLASS).expect("Error writing payload class");
-        }
-
         Channel {
             stream,
             version,
             protocol,
             client_sequence: 0,
             server_sequence: 0,
-            additional_data,
             server_key,
             client_key,
             read_buffer: Buffer::new(),
@@ -75,15 +66,24 @@ impl Channel {
     pub fn recieve(&mut self) -> Result<usize> {
         self.read_buffer.ingress(&mut self.stream).map_err(Into::into)
     }
+
+    #[inline]
+    fn additional_data(&self, category: Category) -> [u8; 19] {
+        let mut additional_data = [0u8; 19];
+        {
+            let mut buf = &mut additional_data[..];
+            buf.write_all(&self.version[..]).expect("Error writing version");
+            buf.write_u16::<LittleEndian>(self.protocol).expect("Error writing protocol");
+            buf.write_u8(category.into()).expect("Error writing payload category");
+        }
+
+        additional_data
+    }
 }
 
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId>;
-    /// Writes a connection acceptance message to the channel
-    fn write_accept_connection(&mut self) -> Result<()>;
-    /// Writes a connection rejection message to the channel
-    fn write_reject_connection(&mut self) -> Result<()>;
 }
 
 impl AwaitToken for Channel {
@@ -108,77 +108,116 @@ impl AwaitToken for Channel {
         self.read_buffer.move_head(ConnectionToken::SIZE);
         Ok(token.data.client_id)
     }
-
-    fn write_accept_connection(&mut self) -> Result<()> {
-        Header::write_conn_accepted_header(self.write_buffer.write_slice(), self.server_sequence)
-    }
-
-    fn write_reject_connection(&mut self) -> Result<()> {
-        Header::write_conn_closed_header(self.write_buffer.write_slice(), self.server_sequence)
-    }
 }
 
 pub trait Connected {
-    fn read_payload(&mut self) -> Result<&[u8]>;
+    const HEADER_SIZE: usize = 11;
+
+    fn read(&mut self) -> Result<Frame>;
+    fn write<P: Serializable>(&mut self, payload: P, category: Category) -> Result<()>;
 }
 
 impl Connected for Channel {
-    // TODO: Extend this so that it reads any sort of message (with class > 0).
-    // This means that it should also return the class along with the frame reference
-    // Maybe return a tuple?
-    fn read_payload(&mut self) -> Result<&[u8]> {
-        let stream = self.read_buffer.read_slice();
+    fn read(&mut self) -> Result<Frame> {
+        let mut stream = self.read_buffer.read_slice();
 
-        if stream.len() < Header::HEADER_SIZE {
-            return Err(Error::MoreDataNeeded);
+        // Wait until there is enough data for the header
+        if stream.len() < Self::HEADER_SIZE {
+            return Err(Error::Wait);
         }
 
-        let frame = Header::read(stream)?;
+        // Read header
+        let category = Category::from_byte(stream.read_u8()?)?;
+        let sequence = stream.read_u64::<BigEndian>()?;
+        let payload_size = stream.read_u16::<BigEndian>()? as usize;
 
-        if frame.class != PAYLOAD_CLASS {
-            return Err(Error::ClassMismatch);
+        // Return early if the payload size is zero
+        if payload_size == 0 {
+            return Ok(Frame {
+                category,
+                data: &[],
+            });
         }
-
-        let payload_size = frame.payload_size as usize;
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
-        if payload_size > BUF_SIZE - Header::HEADER_SIZE {
+        if payload_size > BUF_SIZE - Self::HEADER_SIZE {
             return Err(Error::PayloadTooLarge);
         }
 
         // Bail out if the sequence number is incorrect (duplicate or missing message)
-        if frame.sequence != self.client_sequence {
+        if sequence != self.client_sequence {
             return Err(Error::SequenceMismatch);
         }
 
         if stream.len() < payload_size {
-            return Err(Error::MoreDataNeeded);
+            return Err(Error::Wait);
         }
 
+        // Adjust for the MAC
         let decrypted_size = payload_size - crypto::MAC_SIZE;
+        let additional_data = self.additional_data(category);
 
+        // Read payload
         crypto::decrypt(
             &mut self.payload[..decrypted_size],
             &stream[..payload_size],
-            &self.additional_data,
-            frame.sequence,
+            &additional_data,
+            sequence,
             &self.server_key,
         )?;
 
-        self.read_buffer.move_head(Header::HEADER_SIZE + payload_size);
+        self.read_buffer.move_head(Self::HEADER_SIZE + payload_size);
         self.client_sequence += 1;
 
-        Ok(&self.payload[..decrypted_size])
+        Ok(Frame {
+            category,
+            data: &self.payload[..decrypted_size],
+        })
+    }
+
+    fn write<P: Serializable>(&mut self, payload: P, category: Category) -> Result<()> {
+        let mut cursor = Cursor::new(&mut self.payload[..]);
+
+        payload.serialize(&mut cursor)?;
+
+        let payload_size = cursor.position() as usize;
+        let encrypted_size = payload_size + crypto::MAC_SIZE;
+        let total_size = Self::HEADER_SIZE + encrypted_size;
+
+        if total_size > BUF_SIZE {
+            panic!("Payload larger than the write buffer")
+        }
+
+        if total_size > self.write_buffer.free_capacity() {
+            return Err(Error::Wait);
+        }
+
+        let additional_data = self.additional_data(category);
+        let mut stream = self.write_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(category.into())?;
+        stream.write_u64::<BigEndian>(self.server_sequence)?;
+        stream.write_u16::<BigEndian>(encrypted_size as u16)?;
+
+        // Write payload
+        crypto::encrypt(
+            &mut stream[..encrypted_size],
+            &self.payload[..payload_size],
+            &additional_data,
+            self.server_sequence,
+            &self.client_key,
+        )?;
+
+        self.write_buffer.move_tail(total_size);
+        self.server_sequence += 1;
+
+        Ok(())
     }
 }
 
-pub const CONN_TOKEN_CLASS: u8 = 0;
-pub const CONN_ACCEPTED_CLASS: u8 = 1;
-pub const CONN_CLOSED_CLASS: u8 = 2;
-pub const PAYLOAD_CLASS: u8 = 3;
-
+/// Connection token sent by the client as part of the handshake process.
 pub struct ConnectionToken {
-    pub class: u8,
     pub version: [u8; 16],
     pub protocol: u16,
     pub created: u64,
@@ -190,20 +229,17 @@ pub struct ConnectionToken {
 impl ConnectionToken {
     pub const SIZE: usize = 43 + PrivateData::SIZE + crypto::MAC_SIZE;
 
+    /// Read in the connection token form the supplied stream and decrypt the private
+    /// data using the secret key.
     pub fn read(mut stream: &[u8], secret_key: &[u8; 32]) -> Result<ConnectionToken> {
         // Bail out immediately in case there isn't enough data in the buffer.
         if stream.len() < Self::SIZE {
-            return Err(Error::MoreDataNeeded);
+            return Err(Error::Wait);
         }
 
         // Parse the data into the token structure.
         let mut instance = unsafe { mem::uninitialized::<ConnectionToken>() };
 
-        if stream.read_u8()? != CONN_TOKEN_CLASS {
-            return Err(Error::ClassMismatch);
-        }
-
-        instance.class = CONN_TOKEN_CLASS;
         stream.read_exact(&mut instance.version)?;
         instance.protocol = stream.read_u16::<BigEndian>()?;
         instance.created = stream.read_u64::<BigEndian>()?;
@@ -239,6 +275,7 @@ impl ConnectionToken {
     }
 }
 
+/// Private data part (visible only to the server) of the connection token.
 pub struct PrivateData {
     pub client_id: u64,
     pub server_key: [u8; 32],
@@ -248,6 +285,7 @@ pub struct PrivateData {
 impl PrivateData {
     pub const SIZE: usize = 72;
 
+    /// Parse the supplied stream as a private data structure.
     #[inline]
     fn read<R: Read>(mut stream: R) -> Result<PrivateData> {
         let mut instance = unsafe { mem::uninitialized::<PrivateData>() };
@@ -260,45 +298,38 @@ impl PrivateData {
     }
 }
 
-pub struct Header {
-    pub class: u8,
-    pub sequence: u64,
-    pub payload_size: u16,
+/// Message category.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum Category {
+    ConnectionAccepted = 0,
+    ConnectionClosed = 1,
+    Payload = 2,
 }
 
-impl Header {
-    pub const HEADER_SIZE: usize = 11;
-
-    #[inline]
-    pub fn read<R: Read>(mut stream: R) -> Result<Header> {
-        Ok(Header {
-            class: stream.read_u8()?,
-            sequence: stream.read_u64::<BigEndian>()?,
-            payload_size: stream.read_u16::<BigEndian>()?,
-        })
+impl Category {
+    /// Convert a byte to a category.
+    pub fn from_byte(byte: u8) -> Result<Category> {
+        match byte {
+            0 => Ok(Category::ConnectionAccepted),
+            1 => Ok(Category::ConnectionClosed),
+            2 => Ok(Category::Payload),
+            _ => Err(Error::IncorrectCategory),
+        }
     }
+}
 
-    #[inline]
-    pub fn write_payload_header<W: Write>(mut stream: W, sequence: u64, payload_size: u16) -> Result<()> {
-        stream.write_u8(PAYLOAD_CLASS)?;
-        stream.write_u64::<BigEndian>(sequence)?;
-        stream.write_u16::<BigEndian>(payload_size)?;
-        Ok(())
+impl From<Category> for u8 {
+    fn from(cls: Category) -> Self {
+        cls as u8
     }
+}
 
-    #[inline]
-    pub fn write_conn_accepted_header<W: Write>(mut stream: W, sequence: u64) -> Result<()> {
-        stream.write_u8(CONN_ACCEPTED_CLASS)?;
-        stream.write_u64::<BigEndian>(sequence)?;
-        stream.write_u16::<BigEndian>(0)?;
-        Ok(())
-    }
+pub struct Frame<'a> {
+    pub category: Category,
+    pub data: &'a [u8],
+}
 
-    #[inline]
-    pub fn write_conn_closed_header<W: Write>(mut stream: W, sequence: u64) -> Result<()> {
-        stream.write_u8(CONN_CLOSED_CLASS)?;
-        stream.write_u64::<BigEndian>(sequence)?;
-        stream.write_u16::<BigEndian>(0)?;
-        Ok(())
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 }

@@ -99,7 +99,7 @@ impl Buffer {
 mod tests {
     use super::*;
     use std::cmp::min;
-    use std::io::{Cursor, Read, Write};
+    use std::io::{Cursor};
 
     struct MockChannel {
         data: Vec<u8>,

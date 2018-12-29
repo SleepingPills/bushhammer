@@ -1,8 +1,8 @@
 use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
+use crate::net::frame::{Category, Frame};
 use crate::net::result::{Error, Result};
-use crate::net::shared::Serializable;
-use crate::net::shared::{current_timestamp, ClientId};
+use crate::net::shared::{current_timestamp, ClientId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Read, Write};
 use std::mem;
@@ -114,7 +114,7 @@ pub trait Connected {
     const HEADER_SIZE: usize = 11;
 
     fn read(&mut self) -> Result<Frame>;
-    fn write<P: Serializable>(&mut self, payload: P, category: Category) -> Result<()>;
+    fn write<P: Serialize>(&mut self, payload: &P, category: Category) -> Result<()>;
 }
 
 impl Connected for Channel {
@@ -133,10 +133,7 @@ impl Connected for Channel {
 
         // Return early if the payload size is zero
         if payload_size == 0 {
-            return Ok(Frame {
-                category,
-                data: &[],
-            });
+            return Ok(Frame { category, data: &[] });
         }
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
@@ -175,7 +172,7 @@ impl Connected for Channel {
         })
     }
 
-    fn write<P: Serializable>(&mut self, payload: P, category: Category) -> Result<()> {
+    fn write<P: Serialize>(&mut self, payload: &P, category: Category) -> Result<()> {
         let mut cursor = Cursor::new(&mut self.payload[..]);
 
         payload.serialize(&mut cursor)?;
@@ -296,37 +293,6 @@ impl PrivateData {
 
         Ok(instance)
     }
-}
-
-/// Message category.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Category {
-    ConnectionAccepted = 0,
-    ConnectionClosed = 1,
-    Payload = 2,
-}
-
-impl Category {
-    /// Convert a byte to a category.
-    pub fn from_byte(byte: u8) -> Result<Category> {
-        match byte {
-            0 => Ok(Category::ConnectionAccepted),
-            1 => Ok(Category::ConnectionClosed),
-            2 => Ok(Category::Payload),
-            _ => Err(Error::IncorrectCategory),
-        }
-    }
-}
-
-impl From<Category> for u8 {
-    fn from(cls: Category) -> Self {
-        cls as u8
-    }
-}
-
-pub struct Frame<'a> {
-    pub category: Category,
-    pub data: &'a [u8],
 }
 
 #[cfg(test)]

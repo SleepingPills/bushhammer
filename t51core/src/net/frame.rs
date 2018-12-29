@@ -39,3 +39,16 @@ impl<P: Serialize> Frame<P> {
         Ok(())
     }
 }
+
+/// Zero sized helper struct for easily constructing control frames. Not intended
+/// for sending payloads.
+pub struct NoPayload;
+
+impl Serialize for NoPayload {
+    fn serialize<W: io::Write>(&self, _stream: &mut W) -> Result<()> {
+        panic!("NoPayload is only a utility for sending control messages")
+    }
+}
+
+/// Shorthand for constructing control frames with no payload.
+pub type ControlFrame = Frame<NoPayload>;

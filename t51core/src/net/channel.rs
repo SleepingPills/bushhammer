@@ -451,6 +451,8 @@ mod tests {
 
     #[test]
     fn test_write_read_frame_roundtrip() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        channel.write()
         // Write: Ensure server sequence was bumped and write buffer tail was moved
         // Read: Ensure client sequence was bumped and read buffer head was moved
     }

@@ -1,12 +1,16 @@
 use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
-use crate::net::frame::{Category, Frame};
+use crate::net::frame::{Frame};
 use crate::net::result::{Error, Result};
 use crate::net::shared::{current_timestamp, ClientId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::TcpStream;
+
+const HEADER_SIZE: usize = 11;
+const MAX_CIPHER_PAYLOAD_SIZE: usize = BUF_SIZE - HEADER_SIZE;
+const MAX_PLAIN_PAYLOAD_SIZE: usize = MAX_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
 
 pub struct Channel {
     // Tcp Stream
@@ -29,7 +33,10 @@ pub struct Channel {
     // Channel State
     read_buffer: Buffer,
     write_buffer: Buffer,
-    payload: [u8; BUF_SIZE],
+
+    // Payload buffer must be shrunk by the header size and mac size to ensure that writers
+    // do not put more data in it than the write buffer can hold.
+    payload: [u8; MAX_PLAIN_PAYLOAD_SIZE],
 }
 
 impl Channel {
@@ -53,7 +60,7 @@ impl Channel {
             client_key,
             read_buffer: Buffer::new(),
             write_buffer: Buffer::new(),
-            payload: [0; BUF_SIZE],
+            payload: [0; MAX_PLAIN_PAYLOAD_SIZE],
         }
     }
 
@@ -68,13 +75,13 @@ impl Channel {
     }
 
     #[inline]
-    fn additional_data(&self, category: Category) -> [u8; 19] {
+    fn additional_data(&self, category: u8) -> [u8; 19] {
         let mut additional_data = [0u8; 19];
         {
             let mut buf = &mut additional_data[..];
             buf.write_all(&self.version[..]).expect("Error writing version");
             buf.write_u16::<LittleEndian>(self.protocol).expect("Error writing protocol");
-            buf.write_u8(category.into()).expect("Error writing payload category");
+            buf.write_u8(category).expect("Error writing payload category");
         }
 
         additional_data
@@ -111,33 +118,26 @@ impl AwaitToken for Channel {
 }
 
 pub trait Connected {
-    const HEADER_SIZE: usize = 11;
-
-    fn read(&mut self) -> Result<Frame>;
-    fn write<P: Serialize>(&mut self, payload: &P, category: Category) -> Result<()>;
+    fn read(&mut self) -> Result<Frame<&[u8]>>;
+    fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()>;
 }
 
 impl Connected for Channel {
-    fn read(&mut self) -> Result<Frame> {
+    fn read(&mut self) -> Result<Frame<&[u8]>> {
         let mut stream = self.read_buffer.read_slice();
 
         // Wait until there is enough data for the header
-        if stream.len() < Self::HEADER_SIZE {
+        if stream.len() < HEADER_SIZE {
             return Err(Error::Wait);
         }
 
         // Read header
-        let category = Category::from_byte(stream.read_u8()?)?;
+        let category = stream.read_u8()?;
         let sequence = stream.read_u64::<BigEndian>()?;
         let payload_size = stream.read_u16::<BigEndian>()? as usize;
 
-        // Return early if the payload size is zero
-        if payload_size == 0 {
-            return Ok(Frame { category, data: &[] });
-        }
-
         // Bail out if the payload cannot possibly fit in the buffer along with the header
-        if payload_size > BUF_SIZE - Self::HEADER_SIZE {
+        if payload_size > MAX_CIPHER_PAYLOAD_SIZE {
             return Err(Error::PayloadTooLarge);
         }
 
@@ -163,27 +163,21 @@ impl Connected for Channel {
             &self.server_key,
         )?;
 
-        self.read_buffer.move_head(Self::HEADER_SIZE + payload_size);
+        self.read_buffer.move_head(HEADER_SIZE + payload_size);
         self.client_sequence += 1;
 
-        Ok(Frame {
-            category,
-            data: &self.payload[..decrypted_size],
-        })
+        Frame::read(&self.payload[..decrypted_size], category)
     }
 
-    fn write<P: Serialize>(&mut self, payload: &P, category: Category) -> Result<()> {
+    fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
         let mut cursor = Cursor::new(&mut self.payload[..]);
 
-        payload.serialize(&mut cursor)?;
+        let category = frame.category()?;
+        frame.write(&mut cursor)?;
 
         let payload_size = cursor.position() as usize;
         let encrypted_size = payload_size + crypto::MAC_SIZE;
-        let total_size = Self::HEADER_SIZE + encrypted_size;
-
-        if total_size > BUF_SIZE {
-            panic!("Payload larger than the write buffer")
-        }
+        let total_size = encrypted_size + HEADER_SIZE;
 
         if total_size > self.write_buffer.free_capacity() {
             return Err(Error::Wait);
@@ -193,7 +187,7 @@ impl Connected for Channel {
         let mut stream = self.write_buffer.write_slice();
 
         // Write header
-        stream.write_u8(category.into())?;
+        stream.write_u8(category)?;
         stream.write_u64::<BigEndian>(self.server_sequence)?;
         stream.write_u16::<BigEndian>(encrypted_size as u16)?;
 

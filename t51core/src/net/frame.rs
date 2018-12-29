@@ -1,34 +1,41 @@
 use crate::net::result::{Error, Result};
-use crate::net::shared;
+use crate::net::shared::{ClientId, Serialize};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::io;
 
-/// Frame containing serialized data.
-pub struct Frame<'a> {
-    pub category: Category,
-    pub data: &'a [u8],
+pub enum Frame<P> {
+    ConnectionAccepted(ClientId),
+    ConnectionClosed(ClientId),
+    Payload(P),
 }
 
-/// Message category.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub enum Category {
-    ConnectionAccepted = 0,
-    ConnectionClosed = 1,
-    Payload = 2,
+impl<P> Frame<P> {
+    pub fn category(&self) -> Result<u8> {
+        match self {
+            Frame::ConnectionAccepted(_) => Ok(0),
+            Frame::ConnectionClosed(_) => Ok(1),
+            Frame::Payload(_) => Ok(2),
+        }
+    }
 }
 
-impl Category {
-    /// Convert a byte to a category.
-    pub fn from_byte(byte: u8) -> Result<Category> {
-        match byte {
-            0 => Ok(Category::ConnectionAccepted),
-            1 => Ok(Category::ConnectionClosed),
-            2 => Ok(Category::Payload),
+impl Frame<&[u8]> {
+    pub fn read(mut buffer: &[u8], category: u8) -> Result<Frame<&[u8]>> {
+        match category {
+            1 => Ok(Frame::ConnectionClosed(buffer.read_u64::<BigEndian>()?)),
+            2 => Ok(Frame::Payload(buffer)),
             _ => Err(Error::IncorrectCategory),
         }
     }
 }
 
-impl From<Category> for u8 {
-    fn from(cls: Category) -> Self {
-        cls as u8
+impl<P: Serialize> Frame<P> {
+    pub fn write<W: io::Write>(self, stream: &mut W) -> Result<()> {
+        match self {
+            Frame::ConnectionAccepted(client_id) => stream.write_u64::<BigEndian>(client_id)?,
+            Frame::ConnectionClosed(client_id) => stream.write_u64::<BigEndian>(client_id)?,
+            Frame::Payload(payload) => payload.serialize(stream)?,
+        }
+        Ok(())
     }
 }

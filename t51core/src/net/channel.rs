@@ -1,6 +1,6 @@
 use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
-use crate::net::frame::{Frame};
+use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
 use crate::net::shared::{current_timestamp, ClientId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -80,7 +80,8 @@ impl Channel {
         {
             let mut buf = &mut additional_data[..];
             buf.write_all(&self.version[..]).expect("Error writing version");
-            buf.write_u16::<LittleEndian>(self.protocol).expect("Error writing protocol");
+            buf.write_u16::<LittleEndian>(self.protocol)
+                .expect("Error writing protocol");
             buf.write_u8(category).expect("Error writing payload category");
         }
 
@@ -211,7 +212,6 @@ impl Connected for Channel {
 pub struct ConnectionToken {
     pub version: [u8; 16],
     pub protocol: u16,
-    pub created: u64,
     pub expires: u64,
     pub sequence: u64,
     pub data: PrivateData,
@@ -233,7 +233,6 @@ impl ConnectionToken {
 
         stream.read_exact(&mut instance.version)?;
         instance.protocol = stream.read_u16::<BigEndian>()?;
-        instance.created = stream.read_u64::<BigEndian>()?;
         instance.expires = stream.read_u64::<BigEndian>()?;
         instance.sequence = stream.read_u64::<BigEndian>()?;
 
@@ -241,14 +240,7 @@ impl ConnectionToken {
         let mut plain = [0u8; PrivateData::SIZE];
 
         // Construct the additional data used for the encryption.
-        let mut additional_data = [0u8; 26];
-        {
-            let mut additional_data_slice = &mut additional_data[..];
-
-            additional_data_slice.write_all(&instance.version)?;
-            additional_data_slice.write_u16::<LittleEndian>(instance.protocol)?;
-            additional_data_slice.write_u64::<LittleEndian>(instance.created)?;
-        }
+        let additional_data = instance.additional_data()?;
 
         // Decrypt the cipher into the plain data.
         crypto::decrypt(
@@ -263,6 +255,17 @@ impl ConnectionToken {
         instance.data = PrivateData::read(&plain[..])?;
 
         Ok(instance)
+    }
+
+    fn additional_data(&self) -> Result<[u8; 26]> {
+        let mut additional_data = [0u8; 26];
+        let mut additional_data_slice = &mut additional_data[..];
+
+        additional_data_slice.write_all(&self.version)?;
+        additional_data_slice.write_u16::<LittleEndian>(self.protocol)?;
+        additional_data_slice.write_u64::<LittleEndian>(self.expires)?;
+
+        Ok(additional_data)
     }
 }
 
@@ -292,4 +295,181 @@ impl PrivateData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const VERSION: [u8; 16] = [5; 16];
+    const PROTOCOL: u16 = 123;
+
+    fn mock_stream() -> TcpStream {
+        unsafe { mem::uninitialized::<TcpStream>() }
+    }
+
+    fn make_connection_token() -> ConnectionToken {
+        ConnectionToken {
+            version: VERSION,
+            protocol: PROTOCOL,
+            expires: current_timestamp() + 3600,
+            sequence: 20,
+            data: PrivateData {
+                client_id: 8008,
+                server_key: [15; crypto::KEY_SIZE],
+                client_key: [101; crypto::KEY_SIZE],
+            },
+        }
+    }
+
+    fn serialize_connection_token(
+        buffer: &mut Buffer,
+        token: &ConnectionToken,
+        key: &[u8; crypto::KEY_SIZE],
+    ) {
+        let mut stream = buffer.write_slice();
+
+        stream.write_all(&token.version).unwrap();
+        stream.write_u16::<BigEndian>(token.protocol).unwrap();
+        stream.write_u64::<BigEndian>(token.expires).unwrap();
+        stream.write_u64::<BigEndian>(token.sequence).unwrap();
+
+        let mut plain = [0u8; PrivateData::SIZE];
+        let mut private_data_stream = &mut plain[..];
+
+        private_data_stream
+            .write_u64::<BigEndian>(token.data.client_id)
+            .unwrap();
+        private_data_stream.write_all(&token.data.server_key).unwrap();
+        private_data_stream.write_all(&token.data.client_key).unwrap();
+
+        let additional_data = token.additional_data().unwrap();
+
+        crypto::encrypt(
+            &mut stream[..PrivateData::SIZE + crypto::MAC_SIZE],
+            &plain,
+            &additional_data,
+            token.sequence,
+            key,
+        )
+        .unwrap();
+
+        buffer.move_tail(ConnectionToken::SIZE);
+    }
+
+    #[test]
+    fn test_additional_data() {
+        let channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let ad = channel.additional_data(255);
+
+        assert_eq!(&ad[..16], &[5u8; 16]);
+
+        let mut reader = Cursor::new(&ad[16..]);
+
+        assert_eq!(reader.read_u16::<LittleEndian>().unwrap(), 123);
+        assert_eq!(reader.read_u8().unwrap(), 255);
+    }
+
+    #[test]
+    fn test_read_connection_token() {
+        let secret_key = [33; crypto::KEY_SIZE];
+
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let token = make_connection_token();
+
+        serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
+
+        let client_id = channel.read_connection_token(&secret_key).unwrap();
+
+        assert_eq!(client_id, token.data.client_id);
+        assert_eq!(channel.server_key, token.data.server_key);
+        assert_eq!(channel.client_key, token.data.client_key);
+        assert_eq!(channel.read_buffer.len(), 0);
+    }
+
+    #[test]
+    fn test_read_connection_token_err_wait() {
+        let secret_key = [33; crypto::KEY_SIZE];
+
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        channel.read_buffer.ingress(&[123u8; ConnectionToken::SIZE - 1][..]).unwrap();
+
+        let result = channel.read_connection_token(&secret_key);
+
+        assert_eq!(result.err().unwrap(), Error::Wait);
+        assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE - 1);
+    }
+
+    #[test]
+    fn test_read_connection_token_err_expired() {
+        let secret_key = [33; crypto::KEY_SIZE];
+
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut token = make_connection_token();
+        token.expires -= 7200;
+
+        serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
+
+        let result = channel.read_connection_token(&secret_key);
+
+        assert_eq!(result.err().unwrap(), Error::Expired);
+        assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
+    }
+
+    #[test]
+    fn test_read_connection_token_err_version() {
+        let secret_key = [33; crypto::KEY_SIZE];
+
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut token = make_connection_token();
+        token.version = [0u8; 16];
+
+        serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
+
+        let result = channel.read_connection_token(&secret_key);
+
+        assert_eq!(result.err().unwrap(), Error::VersionMismatch);
+        assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
+    }
+
+    #[test]
+    fn test_read_connection_token_err_protocol() {
+        let secret_key = [33; crypto::KEY_SIZE];
+
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut token = make_connection_token();
+        token.protocol -= 1;
+
+        serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
+
+        let result = channel.read_connection_token(&secret_key);
+
+        assert_eq!(result.err().unwrap(), Error::ProtocolMismatch);
+        assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
+    }
+
+    #[test]
+    fn test_write_read_frame_roundtrip() {
+        // Write: Ensure server sequence was bumped and write buffer tail was moved
+        // Read: Ensure client sequence was bumped and read buffer head was moved
+    }
+
+    #[test]
+    fn test_read_frame_err_hdr_wait() {}
+
+    #[test]
+    fn test_read_frame_err_payload_wait() {}
+
+    #[test]
+    fn test_read_frame_err_payload_size() {}
+
+    #[test]
+    fn test_read_frame_err_sequence() {}
+
+    #[test]
+    fn test_read_frame_err_crypto() {}
+
+    #[test]
+    fn test_write_frame_err_wait() {}
 }

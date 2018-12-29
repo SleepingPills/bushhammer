@@ -1,5 +1,6 @@
 use std::io;
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum Error {
     Expired,
     Duplicate,
@@ -11,12 +12,12 @@ pub enum Error {
     SequenceMismatch,
     Serialization,
     Crypto,
-    Io(io::Error),
+    Io(io::ErrorKind),
 }
 
 impl From<io::Error> for Error {
     fn from(io_error: io::Error) -> Self {
-        Error::Io(io_error)
+        Error::Io(io_error.kind())
     }
 }
 

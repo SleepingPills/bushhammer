@@ -12,6 +12,8 @@ const HEADER_SIZE: usize = 11;
 const MAX_CIPHER_PAYLOAD_SIZE: usize = BUF_SIZE - HEADER_SIZE;
 const MAX_PLAIN_PAYLOAD_SIZE: usize = MAX_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
 
+/// Represents a communication channel with a single endpoint. All communication on the channel
+/// is encrypted.
 pub struct Channel {
     // Tcp Stream
     stream: TcpStream,
@@ -40,6 +42,7 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
     pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
         let mut server_key = [0u8; crypto::KEY_SIZE];
@@ -64,16 +67,19 @@ impl Channel {
         }
     }
 
+    /// Send all the buffered data to the network.
     #[inline]
     pub fn send(&mut self) -> Result<usize> {
         self.write_buffer.egress(&mut self.stream).map_err(Into::into)
     }
 
+    /// Read all available data off the network.
     #[inline]
     pub fn recieve(&mut self) -> Result<usize> {
         self.read_buffer.ingress(&mut self.stream).map_err(Into::into)
     }
 
+    /// Constructs the array holding additional data
     #[inline]
     fn additional_data(&self, category: u8) -> [u8; 19] {
         let mut additional_data = [0u8; 19];
@@ -89,6 +95,7 @@ impl Channel {
     }
 }
 
+/// Trait describing channels while in the state of waiting for the connection token.
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId>;
@@ -118,8 +125,13 @@ impl AwaitToken for Channel {
     }
 }
 
+/// Trait describing channels while in the fully connected state.
 pub trait Connected {
+    /// Read the data on the channel into a frame. Only one frame will be returned at a time
+    /// so this method should be called until Error::Wait is returned.
     fn read(&mut self) -> Result<Frame<&[u8]>>;
+
+    /// Write data to the channel.
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()>;
 }
 

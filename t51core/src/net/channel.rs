@@ -137,6 +137,11 @@ impl Connected for Channel {
         let sequence = stream.read_u64::<BigEndian>()?;
         let payload_size = stream.read_u16::<BigEndian>()? as usize;
 
+        // Return immediately if the payload size is zero
+        if payload_size == 0 {
+            return Frame::read(&[], category);
+        }
+
         // Bail out if the payload cannot possibly fit in the buffer along with the header
         if payload_size > MAX_CIPHER_PAYLOAD_SIZE {
             return Err(Error::PayloadTooLarge);
@@ -484,6 +489,27 @@ mod tests {
     }
 
     #[test]
+    fn test_read_frame_zero_size() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut stream = channel.read_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(2).unwrap();
+        stream.write_u64::<BigEndian>(0).unwrap();
+        stream.write_u16::<BigEndian>(0).unwrap();
+
+        channel.read_buffer.move_tail(HEADER_SIZE);
+
+        let stream = match channel.read().unwrap() {
+            Frame::Payload(stream) => stream,
+            _ => panic!("Unexpected frame type"),
+        };
+
+        assert_eq!(stream, &[0u8; 0]);
+    }
+
+    #[test]
     fn test_read_frame_err_hdr_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
@@ -493,17 +519,178 @@ mod tests {
     }
 
     #[test]
-    fn test_read_frame_err_payload_wait() {}
+    fn test_read_frame_err_payload_wait() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut stream = channel.read_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(2).unwrap();
+        stream.write_u64::<BigEndian>(0).unwrap();
+        stream.write_u16::<BigEndian>(100).unwrap();
+
+        // Write one byte less than expected size
+        stream.write_all(&[0; 99]).unwrap();
+
+        channel.read_buffer.move_tail(HEADER_SIZE + 99);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Wait);
+    }
 
     #[test]
-    fn test_read_frame_err_payload_size() {}
+    fn test_read_frame_err_payload_size() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut stream = channel.read_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(2).unwrap();
+        stream.write_u64::<BigEndian>(0).unwrap();
+        stream.write_u16::<BigEndian>(u16::max_value()).unwrap();
+
+        channel.read_buffer.move_tail(HEADER_SIZE + MAX_CIPHER_PAYLOAD_SIZE);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::PayloadTooLarge);
+    }
 
     #[test]
-    fn test_read_frame_err_sequence() {}
+    fn test_read_frame_err_sequence() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let mut stream = channel.read_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(2).unwrap();
+        stream.write_u64::<BigEndian>(10).unwrap();
+        stream.write_u16::<BigEndian>(5).unwrap();
+
+        stream.write_all(&[0; 5]).unwrap();
+
+        channel.read_buffer.move_tail(HEADER_SIZE + 5);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::SequenceMismatch);
+    }
 
     #[test]
-    fn test_read_frame_err_crypto() {}
+    fn test_read_frame_err_crypto_key_mismatch() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        assert_eq!(channel.server_sequence, 1);
+
+        // Swap the read/write buffers, but don't swap the keys
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Crypto);
+    }
 
     #[test]
-    fn test_write_frame_err_wait() {}
+    fn test_read_frame_err_crypto_sequence_mismatch() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        let data = channel.write_buffer.data_slice();
+
+        // Adjust the sequence
+        data[8] += 1;
+        channel.client_sequence = 1;
+
+        // Swap both read/write buffers and client/server key so decryption proceeds correctly
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Crypto);
+    }
+
+    #[test]
+    fn test_read_frame_err_crypto_version_mismatch() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        // Swap both read/write buffers and client/server key so decryption proceeds correctly
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        // Muck about with the version
+        channel.version[0] += 1;
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Crypto);
+    }
+
+    #[test]
+    fn test_read_frame_err_crypto_protocol_mismatch() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        // Swap both read/write buffers and client/server key so decryption proceeds correctly
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        // Muck about with the version
+        channel.protocol += 1;
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Crypto);
+    }
+
+    #[test]
+    fn test_read_frame_err_crypto_category_mismatch() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        let data = channel.write_buffer.data_slice();
+
+        // Adjust the category
+        data[0] += 1;
+
+        // Swap both read/write buffers and client/server key so decryption proceeds correctly
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Crypto);
+
+    }
+
+    #[test]
+    fn test_write_frame_err_wait() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        channel.write_buffer.write_slice().write_all(&[0; MAX_CIPHER_PAYLOAD_SIZE]).unwrap();
+        channel.write_buffer.move_tail(MAX_CIPHER_PAYLOAD_SIZE);
+
+        let payload = 123123123;
+        let result = channel.write(Frame::Payload(TestPayload(payload)));
+
+        assert_eq!(result.err().unwrap(), Error::Wait);
+    }
 }

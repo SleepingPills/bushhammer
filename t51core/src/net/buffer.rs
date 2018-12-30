@@ -93,6 +93,12 @@ impl Buffer {
 
         Err(io::Error::new(io::ErrorKind::Other, "Buffer overrun"))
     }
+
+    /// Mutable slice containing data.
+    #[inline]
+    pub(crate) fn data_slice(&mut self) -> &mut [u8] {
+        self.data.as_mut_slice()
+    }
 }
 
 #[cfg(test)]

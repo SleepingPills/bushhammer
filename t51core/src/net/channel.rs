@@ -484,7 +484,13 @@ mod tests {
     }
 
     #[test]
-    fn test_read_frame_err_hdr_wait() {}
+    fn test_read_frame_err_hdr_wait() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let response = channel.read();
+
+        assert_eq!(response.err().unwrap(), Error::Wait);
+    }
 
     #[test]
     fn test_read_frame_err_payload_wait() {}

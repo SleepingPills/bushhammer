@@ -299,6 +299,14 @@ mod tests {
     const VERSION: [u8; 16] = [5; 16];
     const PROTOCOL: u16 = 123;
 
+    struct TestPayload(u64);
+
+    impl Serialize for TestPayload {
+        fn serialize<W: Write>(&self, stream: &mut W) -> Result<()> {
+            stream.write_u64::<BigEndian>(self.0).map_err(Into::into)
+        }
+    }
+
     fn mock_stream() -> TcpStream {
         unsafe { mem::uninitialized::<TcpStream>() }
     }
@@ -452,9 +460,27 @@ mod tests {
     #[test]
     fn test_write_read_frame_roundtrip() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
-        channel.write()
-        // Write: Ensure server sequence was bumped and write buffer tail was moved
-        // Read: Ensure client sequence was bumped and read buffer head was moved
+
+        let payload = 123123123;
+
+        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+
+        assert_eq!(channel.server_sequence, 1);
+
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        let response = channel.read().unwrap();
+
+        let mut stream = match response {
+            Frame::Payload(stream) => stream,
+            _ => panic!("Unexpected frame type"),
+        };
+
+        let received_payload = stream.read_u64::<BigEndian>().unwrap();
+
+        assert_eq!(received_payload, payload);
+        assert_eq!(channel.client_sequence, 1);
     }
 
     #[test]

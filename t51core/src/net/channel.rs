@@ -4,9 +4,10 @@ use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
 use crate::net::shared::{current_timestamp, ClientId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
-use std::net::TcpStream;
+use std::net::{TcpStream, Shutdown};
 
 const HEADER_SIZE: usize = 11;
 const MAX_CIPHER_PAYLOAD_SIZE: usize = BUF_SIZE - HEADER_SIZE;
@@ -17,6 +18,7 @@ const MAX_PLAIN_PAYLOAD_SIZE: usize = MAX_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE
 pub struct Channel {
     // Tcp Stream
     stream: TcpStream,
+    open: bool,
 
     // Validation
     version: [u8; 16],
@@ -45,26 +47,54 @@ impl Channel {
     /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
     pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
-        let mut server_key = [0u8; crypto::KEY_SIZE];
-        let mut client_key = [0u8; crypto::KEY_SIZE];
-
-        // Prime the keys with random data, ensuring that communication can't happen before the
-        // handshake process finishes.
-        crypto::random_bytes(&mut server_key);
-        crypto::random_bytes(&mut client_key);
-
         Channel {
             stream,
+            open: true,
             version,
             protocol,
             client_sequence: 0,
             server_sequence: 0,
-            server_key,
-            client_key,
+            server_key: Self::random_key(),
+            client_key: Self::random_key(),
             read_buffer: Buffer::new(),
             write_buffer: Buffer::new(),
             payload: [0; MAX_PLAIN_PAYLOAD_SIZE],
         }
+    }
+
+    #[inline]
+    /// Closes the channel, the underlying stream and clears out all private data.
+    pub fn close(&mut self) -> Result<()> {
+        self.open = false;
+
+        self.client_sequence = 0;
+        self.server_sequence = 0;
+
+        self.server_key = Self::random_key();
+        self.client_key = Self::random_key();
+
+        self.read_buffer.clear();
+        self.write_buffer.clear();
+
+        match self.stream.shutdown(Shutdown::Both) {
+            Ok(_) => Ok(()),
+            Err(ref error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
+            Err(ref error) => Err(Error::Io(error.kind())),
+        }
+    }
+
+    #[inline]
+    /// Opens the channel using a new underlying stream. The channel must be closed for this
+    /// operation to succeed.
+    pub fn open(&mut self, stream: TcpStream) -> Result<()> {
+        if self.open {
+            return Err(Error::AlreadyConnected);
+        }
+
+        self.open = true;
+        self.stream = stream;
+
+        Ok(())
     }
 
     /// Send all the buffered data to the network.
@@ -92,6 +122,15 @@ impl Channel {
         }
 
         additional_data
+    }
+
+    #[inline]
+    fn random_key() -> [u8; crypto::KEY_SIZE] {
+        let mut key = [0u8; crypto::KEY_SIZE];
+
+        crypto::random_bytes(&mut key);
+
+        key
     }
 }
 

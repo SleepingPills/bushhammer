@@ -50,6 +50,11 @@ impl Buffer {
         self.data.as_slice()
     }
 
+    #[inline]
+    pub fn clear(&mut self) {
+        unsafe { self.data.move_head(self.len() as isize) };
+    }
+
     /// Slice containing free capacity to be written.
     #[inline]
     pub fn write_slice(&mut self) -> &mut [u8] {
@@ -95,6 +100,7 @@ impl Buffer {
     }
 
     /// Mutable slice containing data.
+    #[allow(dead_code)]
     #[inline]
     pub(crate) fn data_slice(&mut self) -> &mut [u8] {
         self.data.as_mut_slice()
@@ -105,7 +111,7 @@ impl Buffer {
 mod tests {
     use super::*;
     use std::cmp::min;
-    use std::io::{Cursor};
+    use std::io::Cursor;
 
     struct MockChannel {
         data: Vec<u8>,

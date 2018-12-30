@@ -4,6 +4,7 @@ use std::io;
 pub enum Error {
     Expired,
     Duplicate,
+    AlreadyConnected,
     PayloadTooLarge,
     Wait,
     IncorrectCategory,

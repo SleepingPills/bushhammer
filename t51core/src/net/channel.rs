@@ -62,6 +62,18 @@ impl Channel {
         }
     }
 
+    /// Returns a boolean indicating whether there is data to be read in immediately.
+    #[inline]
+    pub fn pull_ready(&self) -> bool {
+        self.read_buffer.len() > 0
+    }
+
+    /// Returns a boolean indicating whether there is data to be sent immediately.
+    #[inline]
+    pub fn push_ready(&self) -> bool {
+        self.read_buffer.len() > 0
+    }
+
     #[inline]
     /// Closes the channel, the underlying stream and clears out all private data.
     pub fn close(&mut self) -> Result<()> {

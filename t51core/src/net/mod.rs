@@ -63,7 +63,6 @@ Endpoint<R> (System)
  - R implements the replicator trait and brings in the custom payload message as asssociated type.
  - Manages all client communication
  - Maintains connections
- - Handles authorization
  - Use mio to poll read/write on all connected streams and the listener
  - The mio poll will run with a zero timeout, returning immediately if there are no events
  - Writeability events will drain any buffered data in channels
@@ -72,6 +71,7 @@ Endpoint<R> (System)
    all clients. The data will be cleared between each client of course, but this avoids
    having to allocate.
  - Replicator (subcomponent)
+   - Handles authorization (or a sub-component does)
    - Extracts replication data and writes it into relevant channels.
    - Writes data directly into the channels to avoid copying.
 

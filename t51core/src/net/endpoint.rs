@@ -36,11 +36,14 @@ pub struct Endpoint {
     // Ids of unused channels
     slots: Vec<ChannelId>,
 
+    frame_time: u64,
+
     connecting: HashSet<ChannelId>,
 }
 
 impl Endpoint {
-    pub fn sync(&mut self) {
+    pub fn sync(&mut self, frame_time: u64) {
+        self.frame_time = frame_time;
         // Send data on all channels until wouldblock is reached.
         // Run the connection init poll
         // Run the connected channel poll
@@ -51,12 +54,15 @@ impl Endpoint {
     }
 
     pub fn pull(&mut self) -> impl Iterator<Item = (ChannelId, &mut Channel)> {
-        self.channels.iter_mut().filter(|channel| channel.pull_ready()).enumerate()
+        self.channels
+            .iter_mut()
+            .filter(|channel| channel.pull_ready())
+            .enumerate()
     }
 
     #[inline]
     pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
-        match self.slots.pop() {
+        let id = match self.slots.pop() {
             Some(id) => {
                 self.channels[id]
                     .open(stream)
@@ -69,7 +75,15 @@ impl Endpoint {
                     .push(Channel::new(stream, self.version, self.protocol));
                 id
             }
-        }
+        };
+
+        // Reset the time synch of the channel
+        self.time_synch[id] = Timing {
+            incoming: self.frame_time,
+            outgoing: self.frame_time,
+        };
+
+        id
     }
 
     #[inline]
@@ -82,6 +96,6 @@ impl Endpoint {
 }
 
 pub struct Timing {
-    pub last_incoming: u64,
-    pub last_outgoing: u64,
+    pub incoming: u64,
+    pub outgoing: u64,
 }

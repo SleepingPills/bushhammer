@@ -7,6 +7,7 @@ pub enum Frame<P> {
     ConnectionAccepted(ClientId),
     ConnectionClosed(ClientId),
     Payload(P),
+    Keepalive(ClientId),
 }
 
 impl<P> Frame<P> {
@@ -15,6 +16,7 @@ impl<P> Frame<P> {
             Frame::ConnectionAccepted(_) => 0,
             Frame::ConnectionClosed(_) => 1,
             Frame::Payload(_) => 2,
+            Frame::Keepalive(_) => 3,
         }
     }
 }
@@ -24,6 +26,7 @@ impl Frame<&[u8]> {
         match category {
             1 => Ok(Frame::ConnectionClosed(buffer.read_u64::<BigEndian>()?)),
             2 => Ok(Frame::Payload(buffer)),
+            3 => Ok(Frame::Keepalive(buffer.read_u64::<BigEndian>()?)),
             _ => Err(Error::IncorrectCategory),
         }
     }
@@ -35,6 +38,7 @@ impl<P: Serialize> Frame<P> {
             Frame::ConnectionAccepted(client_id) => stream.write_u64::<BigEndian>(client_id)?,
             Frame::ConnectionClosed(client_id) => stream.write_u64::<BigEndian>(client_id)?,
             Frame::Payload(payload) => payload.serialize(stream)?,
+            Frame::Keepalive(client_id) => stream.write_u64::<BigEndian>(client_id)?,
         }
         Ok(())
     }

@@ -10,11 +10,11 @@ pub enum Frame<P> {
 }
 
 impl<P> Frame<P> {
-    pub fn category(&self) -> Result<u8> {
+    pub fn category(&self) -> u8 {
         match self {
-            Frame::ConnectionAccepted(_) => Ok(0),
-            Frame::ConnectionClosed(_) => Ok(1),
-            Frame::Payload(_) => Ok(2),
+            Frame::ConnectionAccepted(_) => 0,
+            Frame::ConnectionClosed(_) => 1,
+            Frame::Payload(_) => 2,
         }
     }
 }

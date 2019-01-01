@@ -242,7 +242,7 @@ impl Connected for Channel {
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
         let mut cursor = Cursor::new(&mut self.payload[..]);
 
-        let category = frame.category()?;
+        let category = frame.category();
         frame.write(&mut cursor)?;
 
         let payload_size = cursor.position() as usize;

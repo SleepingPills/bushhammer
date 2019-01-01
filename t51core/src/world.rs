@@ -18,7 +18,7 @@ type StaticGuards = (MutexGuard<'static, ()>, MutexGuard<'static, ()>, MutexGuar
 
 pub struct World {
     // Global Settings
-    frame_time: time::Duration,
+    frame_delta_time: time::Duration,
 
     // Game State
     state: GameState,
@@ -52,7 +52,7 @@ impl World {
     #[inline]
     pub fn default() -> Self {
         let mut world = World {
-            frame_time: time::Duration::from_millis(50),
+            frame_delta_time: time::Duration::from_millis(50),
             state: GameState::new(),
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
@@ -119,8 +119,8 @@ impl World {
 
             let elapsed = time::Instant::now().duration_since(before);
 
-            if elapsed < self.frame_time {
-                let timeout = self.frame_time - elapsed;
+            if elapsed < self.frame_delta_time {
+                let timeout = self.frame_delta_time - elapsed;
                 println!("*** {:#?} ***", timeout);
                 thread::sleep(timeout);
             }

@@ -225,6 +225,41 @@ Disconnect Logic
 
  The frame extraction will be done by the channel. It will read the header, check that all the
  data is available in the buffer, and then decrypt the data into the data buffer (formerly frame).
+
+!!! 1.1.2019 !!!
+Endpoint
+Endpoint handles keepalive in sync(). We can keep the frame timestamp each time a channel is used to
+communicate. A channel that's dead for more than 30 secs is dropped. Tehre can be a vector of structs for
+timestamping each channel (so length can be the same as channel pool).
+
+- push(payload, channel_id): called by the replicator to push messages to the channels.
+- sync(): flushes all writeable data to the streams and then runs the poller.
+- pull(): iterates through all channels that have read data available.
+
+Replicator
+- Messages have deterministic sizes. We won't have dynamically sized messages. The overhead of a message is
+just one byte - the discriminator. World geometry changes will just be batched into some reasonably sized
+messages.
+- Each client has a payload transmit buffer. This contains as yet unserialized messages. Since message size
+is known, we can just funnel data into the serialization buffer until we reach a limit.
+- Single serialization buffer used to batch messages.
+- On connection, the replicator will first check whether there is already an entity for the given
+  client id, before creating a new one.
+
+Connecting
+ 1. TcpListener polls a new connection
+
+Send
+
+Receive
+
+
+
+https://uterrains.com/demo/
+https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176
+https://assetstore.unity.com/packages/tools/modeling/voxelab-complete-edition-58423
+https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terrain-engine-31100
+
 */
 
 pub mod result;

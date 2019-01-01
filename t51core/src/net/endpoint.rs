@@ -1,26 +1,7 @@
-/*
-Endpoint
-Endpoint handles keepalive in sync(). We can keep the frame timestamp each time a channel is used to
-communicate. A channel that's dead for more than 30 secs is dropped. Tehre can be a vector of structs for
-timestamping each channel (so length can be the same as channel pool).
-
-- push(payload, channel_id): called by the replicator to push messages to the channels.
-- sync(): flushes all writeable data to the streams and then runs the poller.
-- pull(): iterates through all channels that have read data available.
-
-Replicator
-- Messages have deterministic sizes. We won't have dynamically sized messages. The overhead of a message is
-just one byte - the discriminator. World geometry changes will just be batched into some reasonably sized
-messages.
-- Each client has a payload transmit buffer. This contains as yet unserialized messages. Since message size
-is known, we can just funnel data into the serialization buffer until we reach a limit.
-- Single serialization buffer used to batch messages.
-
-*/
 use crate::net::channel::Channel;
 use crate::net::shared::Serialize;
 use hashbrown::HashSet;
-use std::net::TcpStream;
+use std::net::{TcpStream, TcpListener};
 
 pub type ChannelId = usize;
 

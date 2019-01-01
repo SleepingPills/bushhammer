@@ -2,12 +2,13 @@ use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
 use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
-use crate::net::shared::{current_timestamp, ClientId, Serialize};
+use crate::net::shared::{ClientId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
-use std::net::{TcpStream, Shutdown};
+use std::net::{Shutdown, TcpStream};
+use std::time::SystemTime;
 
 const HEADER_SIZE: usize = 11;
 const MAX_CIPHER_PAYLOAD_SIZE: usize = BUF_SIZE - HEADER_SIZE;
@@ -156,7 +157,7 @@ impl AwaitToken for Channel {
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
-        if token.expires < current_timestamp() {
+        if token.expires < timestamp_secs() {
             return Err(Error::Expired);
         }
 
@@ -360,6 +361,15 @@ impl PrivateData {
     }
 }
 
+/// Returns the current unix timestamp (seconds elapsed since 1970-01-01)
+#[inline]
+pub fn timestamp_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("Closed timelike curve, reality compromised")
+        .as_secs()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -383,7 +393,7 @@ mod tests {
         ConnectionToken {
             version: VERSION,
             protocol: PROTOCOL,
-            expires: current_timestamp() + 3600,
+            expires: timestamp_secs() + 3600,
             sequence: 20,
             data: PrivateData {
                 client_id: 8008,
@@ -466,7 +476,10 @@ mod tests {
 
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.read_buffer.ingress(&[123u8; ConnectionToken::SIZE - 1][..]).unwrap();
+        channel
+            .read_buffer
+            .ingress(&[123u8; ConnectionToken::SIZE - 1][..])
+            .unwrap();
 
         let result = channel.read_connection_token(&secret_key);
 
@@ -613,7 +626,9 @@ mod tests {
         stream.write_u64::<BigEndian>(0).unwrap();
         stream.write_u16::<BigEndian>(u16::max_value()).unwrap();
 
-        channel.read_buffer.move_tail(HEADER_SIZE + MAX_CIPHER_PAYLOAD_SIZE);
+        channel
+            .read_buffer
+            .move_tail(HEADER_SIZE + MAX_CIPHER_PAYLOAD_SIZE);
 
         let response = channel.read();
 
@@ -741,14 +756,17 @@ mod tests {
         let response = channel.read();
 
         assert_eq!(response.err().unwrap(), Error::Crypto);
-
     }
 
     #[test]
     fn test_write_frame_err_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.write_buffer.write_slice().write_all(&[0; MAX_CIPHER_PAYLOAD_SIZE]).unwrap();
+        channel
+            .write_buffer
+            .write_slice()
+            .write_all(&[0; MAX_CIPHER_PAYLOAD_SIZE])
+            .unwrap();
         channel.write_buffer.move_tail(MAX_CIPHER_PAYLOAD_SIZE);
 
         let payload = 123123123;

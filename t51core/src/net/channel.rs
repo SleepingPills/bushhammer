@@ -2,7 +2,7 @@ use crate::net::buffer::{Buffer, BUF_SIZE};
 use crate::net::crypto;
 use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
-use crate::net::shared::{ClientId, Serialize};
+use crate::net::shared::{UserId, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -150,11 +150,11 @@ impl Channel {
 /// Trait describing channels while in the state of waiting for the connection token.
 pub trait AwaitToken {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId>;
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId>;
 }
 
 impl AwaitToken for Channel {
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<ClientId> {
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
         if token.expires < timestamp_secs() {
@@ -173,7 +173,7 @@ impl AwaitToken for Channel {
         self.client_key = token.data.client_key;
 
         self.read_buffer.move_head(ConnectionToken::SIZE);
-        Ok(token.data.client_id)
+        Ok(token.data.user_id)
     }
 }
 
@@ -340,7 +340,7 @@ impl ConnectionToken {
 
 /// Private data part (visible only to the server) of the connection token.
 pub struct PrivateData {
-    pub client_id: u64,
+    pub user_id: u64,
     pub server_key: [u8; 32],
     pub client_key: [u8; 32],
 }
@@ -353,7 +353,7 @@ impl PrivateData {
     fn read<R: Read>(mut stream: R) -> Result<PrivateData> {
         let mut instance = unsafe { mem::uninitialized::<PrivateData>() };
 
-        instance.client_id = stream.read_u64::<BigEndian>()?;
+        instance.user_id = stream.read_u64::<BigEndian>()?;
         stream.read_exact(&mut instance.server_key)?;
         stream.read_exact(&mut instance.client_key)?;
 
@@ -396,7 +396,7 @@ mod tests {
             expires: timestamp_secs() + 3600,
             sequence: 20,
             data: PrivateData {
-                client_id: 8008,
+                user_id: 8008,
                 server_key: [15; crypto::KEY_SIZE],
                 client_key: [101; crypto::KEY_SIZE],
             },
@@ -419,7 +419,7 @@ mod tests {
         let mut private_data_stream = &mut plain[..];
 
         private_data_stream
-            .write_u64::<BigEndian>(token.data.client_id)
+            .write_u64::<BigEndian>(token.data.user_id)
             .unwrap();
         private_data_stream.write_all(&token.data.server_key).unwrap();
         private_data_stream.write_all(&token.data.client_key).unwrap();
@@ -462,9 +462,9 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let client_id = channel.read_connection_token(&secret_key).unwrap();
+        let user_id = channel.read_connection_token(&secret_key).unwrap();
 
-        assert_eq!(client_id, token.data.client_id);
+        assert_eq!(user_id, token.data.user_id);
         assert_eq!(channel.server_key, token.data.server_key);
         assert_eq!(channel.client_key, token.data.client_key);
         assert_eq!(channel.read_buffer.len(), 0);

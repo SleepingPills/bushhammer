@@ -1,6 +1,6 @@
 use crate::net::channel::{Channel, Connected, AwaitToken};
 use crate::net::result::Result;
-use crate::net::shared::{Serialize, ClientId};
+use crate::net::shared::{Serialize, UserId};
 use hashbrown::HashSet;
 use std::net::{TcpListener, TcpStream};
 use std::time;
@@ -27,7 +27,7 @@ pub struct Endpoint {
     housekeeping_time: time::Instant,
 
     // List of newly connected clients
-    handshakes: Vec<(ClientId, ChannelId)>
+    handshakes: Vec<(UserId, ChannelId)>
 }
 
 impl Endpoint {
@@ -63,7 +63,7 @@ impl Endpoint {
     }
 
     /// Drains all outstanding handshakes
-    pub fn drain_handshakes(&mut self) -> impl Iterator<Item = (ClientId, ChannelId)> + '_ {
+    pub fn drain_handshakes(&mut self) -> impl Iterator<Item = (UserId, ChannelId)> + '_ {
         self.handshakes.drain(..)
     }
 

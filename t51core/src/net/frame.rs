@@ -1,13 +1,13 @@
 use crate::net::result::{Error, Result};
-use crate::net::shared::{ClientId, Serialize};
+use crate::net::shared::{UserId, Serialize};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
 pub enum Frame<P> {
-    ConnectionAccepted(ClientId),
-    ConnectionClosed(ClientId),
+    ConnectionAccepted(UserId),
+    ConnectionClosed(UserId),
     Payload(P),
-    Keepalive(ClientId),
+    Keepalive(UserId),
 }
 
 impl<P> Frame<P> {
@@ -35,10 +35,10 @@ impl Frame<&[u8]> {
 impl<P: Serialize> Frame<P> {
     pub fn write<W: io::Write>(self, stream: &mut W) -> Result<()> {
         match self {
-            Frame::ConnectionAccepted(client_id) => stream.write_u64::<BigEndian>(client_id)?,
-            Frame::ConnectionClosed(client_id) => stream.write_u64::<BigEndian>(client_id)?,
+            Frame::ConnectionAccepted(user_id) => stream.write_u64::<BigEndian>(user_id)?,
+            Frame::ConnectionClosed(user_id) => stream.write_u64::<BigEndian>(user_id)?,
             Frame::Payload(payload) => payload.serialize(stream)?,
-            Frame::Keepalive(client_id) => stream.write_u64::<BigEndian>(client_id)?,
+            Frame::Keepalive(user_id) => stream.write_u64::<BigEndian>(user_id)?,
         }
         Ok(())
     }

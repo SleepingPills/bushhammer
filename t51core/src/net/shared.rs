@@ -1,7 +1,7 @@
 use crate::net::result::Result;
 use std::io;
 
-pub type ClientId = u64;
+pub type UserId = u64;
 
 pub trait Serialize {
     fn serialize<W: io::Write>(&self, stream: &mut W) -> Result<()>;

@@ -2,7 +2,7 @@ use crate::net::buffer::Buffer;
 use crate::net::crypto;
 use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
-use crate::net::shared::{Serialize, UserId};
+use crate::net::shared::{Serialize, SizedWrite, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -250,7 +250,7 @@ impl Connected for Channel {
     }
 
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
-        let mut cursor = Cursor::new(&mut self.payload[..]);
+        let mut cursor = Cursor::new(&mut self.payload[..self.write_buffer.free_capacity()]);
 
         let category = frame.category();
         frame.write(&mut cursor)?;
@@ -390,7 +390,7 @@ mod tests {
     struct TestPayload(u64);
 
     impl Serialize for TestPayload {
-        fn serialize<W: Write>(&self, stream: &mut W) -> Result<()> {
+        fn serialize<W: SizedWrite>(&mut self, stream: &mut W) -> Result<()> {
             stream.write_u64::<BigEndian>(self.0).map_err(Into::into)
         }
     }

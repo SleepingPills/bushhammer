@@ -1,4 +1,4 @@
-use crate::net::channel::{AwaitToken, Channel, Connected};
+use crate::net::channel::{Handshake, Channel, Connected};
 use crate::net::frame::Frame;
 use crate::net::result::Result;
 use crate::net::shared::{Serialize, UserId};

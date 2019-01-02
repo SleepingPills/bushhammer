@@ -1,8 +1,8 @@
-use crate::net::buffer::{Buffer, BUF_SIZE};
+use crate::net::buffer::Buffer;
 use crate::net::crypto;
 use crate::net::frame::Frame;
 use crate::net::result::{Error, Result};
-use crate::net::shared::{UserId, Serialize};
+use crate::net::shared::{Serialize, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -10,9 +10,20 @@ use std::mem;
 use std::net::{Shutdown, TcpStream};
 use std::time::SystemTime;
 
+// Write buffer should be 512k
+const WRITE_BUF_SIZE: usize = 8 * 65536;
+const READ_BUF_SIZE: usize = 65536;
+
+// Use the write buffer as it is bigger
+const PAYLOAD_BUF_SIZE: usize = WRITE_BUF_SIZE;
+
 const HEADER_SIZE: usize = 11;
-const MAX_CIPHER_PAYLOAD_SIZE: usize = BUF_SIZE - HEADER_SIZE;
-const MAX_PLAIN_PAYLOAD_SIZE: usize = MAX_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
+
+const MAX_READ_CIPHER_PAYLOAD_SIZE: usize = READ_BUF_SIZE - HEADER_SIZE;
+const MAX_READ_PLAIN_PAYLOAD_SIZE: usize = MAX_READ_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
+
+const MAX_WRITE_CIPHER_PAYLOAD_SIZE: usize = WRITE_BUF_SIZE - HEADER_SIZE;
+const MAX_WRITE_PLAIN_PAYLOAD_SIZE: usize = MAX_WRITE_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
 
 /// Represents a communication channel with a single endpoint. All communication on the channel
 /// is encrypted.
@@ -39,9 +50,8 @@ pub struct Channel {
     read_buffer: Buffer,
     write_buffer: Buffer,
 
-    // Payload buffer must be shrunk by the header size and mac size to ensure that writers
-    // do not put more data in it than the write buffer can hold.
-    payload: [u8; MAX_PLAIN_PAYLOAD_SIZE],
+    // Payload buffer
+    payload: [u8; PAYLOAD_BUF_SIZE],
 }
 
 impl Channel {
@@ -57,9 +67,9 @@ impl Channel {
             server_sequence: 0,
             server_key: Self::random_key(),
             client_key: Self::random_key(),
-            read_buffer: Buffer::new(),
-            write_buffer: Buffer::new(),
-            payload: [0; MAX_PLAIN_PAYLOAD_SIZE],
+            read_buffer: Buffer::new(READ_BUF_SIZE),
+            write_buffer: Buffer::new(WRITE_BUF_SIZE),
+            payload: [0; PAYLOAD_BUF_SIZE],
         }
     }
 
@@ -148,12 +158,12 @@ impl Channel {
 }
 
 /// Trait describing channels while in the state of waiting for the connection token.
-pub trait AwaitToken {
+pub trait Handshake {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId>;
 }
 
-impl AwaitToken for Channel {
+impl Handshake for Channel {
     fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
@@ -207,7 +217,7 @@ impl Connected for Channel {
         }
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
-        if payload_size > MAX_CIPHER_PAYLOAD_SIZE {
+        if payload_size > MAX_READ_CIPHER_PAYLOAD_SIZE {
             return Err(Error::PayloadTooLarge);
         }
 
@@ -628,7 +638,7 @@ mod tests {
 
         channel
             .read_buffer
-            .move_tail(HEADER_SIZE + MAX_CIPHER_PAYLOAD_SIZE);
+            .move_tail(HEADER_SIZE + MAX_READ_CIPHER_PAYLOAD_SIZE);
 
         let response = channel.read();
 
@@ -765,9 +775,9 @@ mod tests {
         channel
             .write_buffer
             .write_slice()
-            .write_all(&[0; MAX_CIPHER_PAYLOAD_SIZE])
+            .write_all(&[0; MAX_WRITE_CIPHER_PAYLOAD_SIZE])
             .unwrap();
-        channel.write_buffer.move_tail(MAX_CIPHER_PAYLOAD_SIZE);
+        channel.write_buffer.move_tail(MAX_WRITE_CIPHER_PAYLOAD_SIZE);
 
         let payload = 123123123;
         let result = channel.write(Frame::Payload(TestPayload(payload)));

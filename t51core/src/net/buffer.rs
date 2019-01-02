@@ -4,20 +4,28 @@ use std::io;
 type ByteDeque = SliceDeque<u8>;
 
 // Buffer size set to be a multiple of the
-pub const BUF_SIZE: usize = 65536;
+const BUF_SIZE_INCREMENT: usize = 65536;
 
-/// An dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
+/// A dynamically sized and double ended and buffered FIFO byte queue. Data is appended at the
 /// head, and read from the tail.
 pub struct Buffer {
     data: ByteDeque,
+    size: usize,
 }
 
 impl Buffer {
     #[inline]
-    pub fn new() -> Buffer {
+    pub fn new(size: usize) -> Buffer {
+        if size % BUF_SIZE_INCREMENT != 0 {
+            panic!(
+                "Buffer size must be divisible by {}, got {}",
+                BUF_SIZE_INCREMENT, size
+            );
+        }
+
         let mut data = ByteDeque::new();
-        data.reserve(BUF_SIZE);
-        Buffer { data }
+        data.reserve(size);
+        Buffer { data, size }
     }
 
     /// The number of bytes in the buffer.
@@ -84,7 +92,7 @@ impl Buffer {
     pub fn ingress<R: io::Read>(&mut self, mut reader: R) -> io::Result<usize> {
         let orig_capacity = self.free_capacity();
 
-        while self.data.len() < BUF_SIZE {
+        while self.data.len() < self.size {
             unsafe {
                 let read_count = reader.read(self.data.tail_head_slice())?;
 
@@ -168,10 +176,10 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        let mock_data: Vec<_> = (0..BUF_SIZE / 2).map(|item| item as u8).collect();
+        let mock_data: Vec<_> = (0..BUF_SIZE_INCREMENT / 2).map(|item| item as u8).collect();
         let mut channel = MockChannel::new(mock_data.clone(), 500, mock_data.len());
 
-        let mut buffer = Buffer::new();
+        let mut buffer = Buffer::new(BUF_SIZE_INCREMENT);
 
         let result = buffer.ingress(&mut channel);
 
@@ -192,7 +200,7 @@ mod tests {
     fn test_egress_error_on_zero_write() {
         let mut zero_vec = vec![];
 
-        let mut buffer = Buffer::new();
+        let mut buffer = Buffer::new(BUF_SIZE_INCREMENT);
 
         // The buffer has to have at least some data to trigger the zero write error
         buffer.data.push_back(1);
@@ -205,9 +213,9 @@ mod tests {
 
     #[test]
     fn test_ingress_buffer_overrun() {
-        let mock_data: Vec<_> = (0..BUF_SIZE * 2).map(|item| item as u8).collect();
+        let mock_data: Vec<_> = (0..BUF_SIZE_INCREMENT * 2).map(|item| item as u8).collect();
 
-        let mut buffer = Buffer::new();
+        let mut buffer = Buffer::new(BUF_SIZE_INCREMENT);
 
         let result = buffer.ingress(&mock_data[..]);
 
@@ -222,7 +230,7 @@ mod tests {
     #[test]
     fn test_no_err() {
         let mut cursor = Cursor::new(vec![1, 2, 3]);
-        let mut buffer = Buffer::new();
+        let mut buffer = Buffer::new(BUF_SIZE_INCREMENT);
 
         buffer.ingress(&mut cursor).unwrap();
 
@@ -235,5 +243,11 @@ mod tests {
         assert_eq!(buffer.data.as_slice(), &Vec::<u8>::new()[..]);
 
         assert_eq!(&cursor.get_ref()[..], &[1, 2, 3]);
+    }
+
+    #[test]
+    #[should_panic(expected = "Buffer size must be divisible by 65536, got 100000")]
+    fn test_fail_on_incorrect_increment() {
+        let _ = Buffer::new(100000);
     }
 }

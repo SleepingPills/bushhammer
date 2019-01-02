@@ -233,7 +233,10 @@ communicate. A channel that's dead for more than 30 secs is dropped. Tehre can b
 timestamping each channel (so length can be the same as channel pool).
 
 - push(payload, channel_id): called by the replicator to push messages to the channels.
+
 - sync(): flushes all writeable data to the streams and then runs the poller.
+  Housekeeping - every 5 seconds, carry out housekeeping tasks
+
 - pull(): iterates through all channels that have read data available.
 
 Replicator
@@ -244,16 +247,32 @@ messages.
 is known, we can just funnel data into the serialization buffer until we reach a limit.
 - Single serialization buffer used to batch messages.
 - On connection, the replicator will first check whether there is already an entity for the given
-  client id, before creating a new one.
+  client id, before creating a new one. If there is, it will just update the channel id.
 
 Connecting
  1. TcpListener polls a new connection
+ 2. Channel is created for connection
+ 3. Channel is added to the handshake flag vec
+ 4. Put channel in the handshake poller
+
+Handshake Finish
+ 1. Message comes in on the handshake poller
+ 2. Token is set up and validated
+ 3. If message read fails, disconnect channel
+ 4. ClientId recorded (along with ChannelId) to handshake list
+
+Disconnecting
+
+Pull
+
+Push
 
 Send
 
 Receive
 
 
+Q: How are connections/disconnections relayed to the Replicator
 
 https://uterrains.com/demo/
 https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176

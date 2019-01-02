@@ -1,7 +1,10 @@
-use crate::net::channel::Channel;
-use crate::net::shared::Serialize;
+use crate::net::channel::{Channel, Connected, AwaitToken};
+use crate::net::result::Result;
+use crate::net::shared::{Serialize, ClientId};
 use hashbrown::HashSet;
-use std::net::{TcpStream, TcpListener};
+use std::net::{TcpListener, TcpStream};
+use std::time;
+use crate::net::frame::Frame;
 
 pub type ChannelId = usize;
 
@@ -12,26 +15,30 @@ pub struct Endpoint {
 
     // Storage
     channels: Vec<Channel>,
-    time_synch: Vec<Timing>,
+    timestamps: Vec<Timing>,
+
+    // Connection handshake flag
+    connecting: Vec<bool>,
 
     // Ids of unused channels
-    slots: Vec<ChannelId>,
+    free_slots: Vec<ChannelId>,
 
-    frame_time: u64,
+    current_time: time::Instant,
+    housekeeping_time: time::Instant,
 
-    connecting: HashSet<ChannelId>,
+    // List of newly connected clients
+    handshakes: Vec<(ClientId, ChannelId)>
 }
 
 impl Endpoint {
-    pub fn sync(&mut self, frame_time: u64) {
-        self.frame_time = frame_time;
-        // Send data on all channels until wouldblock is reached.
-        // Run the connection init poll
-        // Run the connected channel poll
-    }
+    const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(5);
+    const TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
-    pub fn push<S: Serialize>(&mut self, data: &S, channel_id: ChannelId) {
-        // Writes the given payload to the channel and adds the id to the write_ready list.
+    pub fn push<S: Serialize>(&mut self, data: S, channel_id: ChannelId) -> Result<()> {
+        self.channels[channel_id].write(Frame::Payload(data))?;
+        // Update the outgoing timestamp for the channel
+        self.timestamps[channel_id].outgoing = self.current_time;
+        Ok(())
     }
 
     pub fn pull(&mut self) -> impl Iterator<Item = (ChannelId, &mut Channel)> {
@@ -41,9 +48,28 @@ impl Endpoint {
             .enumerate()
     }
 
+    pub fn sync(&mut self, current_time: time::Instant) {
+        self.current_time = current_time;
+
+        if current_time.duration_since(self.housekeeping_time) >= Self::HOUSEKEEPING_INTERVAL {
+            // Check if handshakes timed out
+            // Check if connections timed out
+            // Send keepalives
+            self.housekeeping_time = current_time;
+        }
+        // Send data on all channels until wouldblock is reached.
+        // Run the connection init poll
+        // Run the connected channel poll
+    }
+
+    /// Drains all outstanding handshakes
+    pub fn drain_handshakes(&mut self) -> impl Iterator<Item = (ClientId, ChannelId)> + '_ {
+        self.handshakes.drain(..)
+    }
+
     #[inline]
     pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
-        let id = match self.slots.pop() {
+        let id = match self.free_slots.pop() {
             Some(id) => {
                 self.channels[id]
                     .open(stream)
@@ -59,9 +85,9 @@ impl Endpoint {
         };
 
         // Reset the time synch of the channel
-        self.time_synch[id] = Timing {
-            incoming: self.frame_time,
-            outgoing: self.frame_time,
+        self.timestamps[id] = Timing {
+            incoming: self.current_time,
+            outgoing: self.current_time,
         };
 
         id
@@ -72,11 +98,11 @@ impl Endpoint {
         self.channels[channel_id]
             .close()
             .expect("Channel must be closeable for reclamation");
-        self.slots.push(channel_id);
+        self.free_slots.push(channel_id);
     }
 }
 
 pub struct Timing {
-    pub incoming: u64,
-    pub outgoing: u64,
+    pub incoming: time::Instant,
+    pub outgoing: time::Instant,
 }

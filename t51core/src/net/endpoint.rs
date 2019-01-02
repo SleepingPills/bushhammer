@@ -1,12 +1,23 @@
-use crate::net::channel::{Channel, Connected, AwaitToken};
+use crate::net::channel::{AwaitToken, Channel, Connected};
+use crate::net::frame::Frame;
 use crate::net::result::Result;
 use crate::net::shared::{Serialize, UserId};
 use hashbrown::HashSet;
 use std::net::{TcpListener, TcpStream};
 use std::time;
-use crate::net::frame::Frame;
 
 pub type ChannelId = usize;
+
+enum ConnectionState {
+    Handshake {
+        created: time::Instant,
+    },
+    Connected {
+        last_ingress: time::Instant,
+        last_egress: time::Instant,
+        user_id: UserId,
+    },
+}
 
 pub struct Endpoint {
     // Validation
@@ -15,19 +26,13 @@ pub struct Endpoint {
 
     // Storage
     channels: Vec<Channel>,
-    timestamps: Vec<Timing>,
-
-    // Connection handshake flag
-    connecting: Vec<bool>,
+    channel_states: Vec<ConnectionState>,
 
     // Ids of unused channels
     free_slots: Vec<ChannelId>,
 
     current_time: time::Instant,
     housekeeping_time: time::Instant,
-
-    // List of newly connected clients
-    handshakes: Vec<(UserId, ChannelId)>
 }
 
 impl Endpoint {
@@ -35,9 +40,13 @@ impl Endpoint {
     const TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
     pub fn push<S: Serialize>(&mut self, data: S, channel_id: ChannelId) -> Result<()> {
-        self.channels[channel_id].write(Frame::Payload(data))?;
         // Update the outgoing timestamp for the channel
-        self.timestamps[channel_id].outgoing = self.current_time;
+        match self.channel_states[channel_id] {
+            ConnectionState::Connected { ref mut last_egress, .. } => *last_egress = self.current_time,
+            _ => panic!("Attempting to write to an unconnected channel"),
+        }
+        // Write the data
+        self.channels[channel_id].write(Frame::Payload(data))?;
         Ok(())
     }
 
@@ -62,11 +71,6 @@ impl Endpoint {
         // Run the connected channel poll
     }
 
-    /// Drains all outstanding handshakes
-    pub fn drain_handshakes(&mut self) -> impl Iterator<Item = (UserId, ChannelId)> + '_ {
-        self.handshakes.drain(..)
-    }
-
     #[inline]
     pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
         let id = match self.free_slots.pop() {
@@ -74,20 +78,20 @@ impl Endpoint {
                 self.channels[id]
                     .open(stream)
                     .expect("Pooled channels must be closed");
+                self.channel_states[id] = ConnectionState::Handshake {
+                    created: self.current_time,
+                };
                 id
             }
             None => {
                 let id = self.channels.len();
                 self.channels
                     .push(Channel::new(stream, self.version, self.protocol));
+                self.channel_states.push(ConnectionState::Handshake {
+                    created: self.current_time,
+                });
                 id
             }
-        };
-
-        // Reset the time synch of the channel
-        self.timestamps[id] = Timing {
-            incoming: self.current_time,
-            outgoing: self.current_time,
         };
 
         id

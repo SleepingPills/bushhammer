@@ -9,6 +9,11 @@ use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::marker::PhantomData;
 
+// TODO: Add optional components. These will return Option<Component> and allow intersection queries.
+// To implement, the data_ptr() on a shard needs to return an Option, and then current queries
+// will unwrap it, but a special OptionalReadQuery will unwrap into either a regular reader or
+// None returning reader, depending on the presence of the component in a shard.
+
 pub trait RunSystem {
     type Data: DataDef;
 

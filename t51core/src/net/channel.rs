@@ -250,7 +250,9 @@ impl Connected for Channel {
     }
 
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
-        let mut cursor = Cursor::new(&mut self.payload[..self.write_buffer.free_capacity()]);
+        // Restrict the payload slice to the free capacity in the write buffer
+        let payload_slice = &mut self.payload[..self.write_buffer.free_capacity()];
+        let mut cursor = Cursor::new(payload_slice);
 
         let category = frame.category();
         frame.write(&mut cursor)?;

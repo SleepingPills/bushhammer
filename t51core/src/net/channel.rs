@@ -19,11 +19,9 @@ const PAYLOAD_BUF_SIZE: usize = WRITE_BUF_SIZE;
 
 const HEADER_SIZE: usize = 11;
 
-const MAX_READ_CIPHER_PAYLOAD_SIZE: usize = READ_BUF_SIZE - HEADER_SIZE;
-const MAX_READ_PLAIN_PAYLOAD_SIZE: usize = MAX_READ_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
-
-const MAX_WRITE_CIPHER_PAYLOAD_SIZE: usize = WRITE_BUF_SIZE - HEADER_SIZE;
-const MAX_WRITE_PLAIN_PAYLOAD_SIZE: usize = MAX_WRITE_CIPHER_PAYLOAD_SIZE - crypto::MAC_SIZE;
+const fn max_plain_payload_size(capacity: usize) -> usize {
+    capacity - HEADER_SIZE - crypto::MAC_SIZE
+}
 
 /// Represents a communication channel with a single endpoint. All communication on the channel
 /// is encrypted.
@@ -217,7 +215,7 @@ impl Connected for Channel {
         }
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
-        if payload_size > MAX_READ_CIPHER_PAYLOAD_SIZE {
+        if payload_size > (READ_BUF_SIZE - HEADER_SIZE) {
             return Err(Error::PayloadTooLarge);
         }
 
@@ -251,7 +249,8 @@ impl Connected for Channel {
 
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
         // Restrict the payload slice to the free capacity in the write buffer
-        let payload_slice = &mut self.payload[..self.write_buffer.free_capacity()];
+        let plain_payload_size = max_plain_payload_size(self.write_buffer.free_capacity());
+        let payload_slice = &mut self.payload[..plain_payload_size];
         let mut cursor = Cursor::new(payload_slice);
 
         let category = frame.category();
@@ -260,10 +259,6 @@ impl Connected for Channel {
         let payload_size = cursor.position() as usize;
         let encrypted_size = payload_size + crypto::MAC_SIZE;
         let total_size = encrypted_size + HEADER_SIZE;
-
-        if total_size > self.write_buffer.free_capacity() {
-            return Err(Error::Wait);
-        }
 
         let additional_data = self.additional_data(category);
         let mut stream = self.write_buffer.write_slice();
@@ -638,9 +633,7 @@ mod tests {
         stream.write_u64::<BigEndian>(0).unwrap();
         stream.write_u16::<BigEndian>(u16::max_value()).unwrap();
 
-        channel
-            .read_buffer
-            .move_tail(HEADER_SIZE + MAX_READ_CIPHER_PAYLOAD_SIZE);
+        channel.read_buffer.move_tail(READ_BUF_SIZE);
 
         let response = channel.read();
 
@@ -774,12 +767,14 @@ mod tests {
     fn test_write_frame_err_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
+        const CIPHER_SIZE: usize = WRITE_BUF_SIZE - HEADER_SIZE;
+
         channel
             .write_buffer
             .write_slice()
-            .write_all(&[0; MAX_WRITE_CIPHER_PAYLOAD_SIZE])
+            .write_all(&[0; CIPHER_SIZE])
             .unwrap();
-        channel.write_buffer.move_tail(MAX_WRITE_CIPHER_PAYLOAD_SIZE);
+        channel.write_buffer.move_tail(CIPHER_SIZE);
 
         let payload = 123123123;
         let result = channel.write(Frame::Payload(TestPayload(payload)));

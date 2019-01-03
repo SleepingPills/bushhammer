@@ -29,7 +29,11 @@ impl SizedRead for io::Cursor<&[u8]> {
     }
 }
 
-/// Trait for manually serialized objects.
+/// Trait for manually serialized objects. Implementors must take care to validate the remaining
+/// free capacity in the stream upfront and only write into it if all the content they wish to
+/// write can be written.
+///
+/// Should return `Error::Wait` in case there is not enough capacity in the stream.
 pub trait Serialize {
     fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<()>;
 }

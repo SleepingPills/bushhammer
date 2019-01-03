@@ -1,8 +1,8 @@
 use crate::net::buffer::Buffer;
 use crate::net::crypto;
-use crate::net::frame::Frame;
+use crate::net::frame::{Category, Frame};
 use crate::net::result::{Error, Result};
-use crate::net::shared::{Serialize, SizedWrite, UserId};
+use crate::net::shared::{PayloadBatch, Serialize, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -13,14 +13,14 @@ use std::time::SystemTime;
 // Write buffer should be 512k
 const WRITE_BUF_SIZE: usize = 8 * 65536;
 const READ_BUF_SIZE: usize = 65536;
-
 // Use the write buffer as it is bigger
 const PAYLOAD_BUF_SIZE: usize = WRITE_BUF_SIZE;
 
 const HEADER_SIZE: usize = 11;
+const OVERHEAD_SIZE: usize = HEADER_SIZE + crypto::MAC_SIZE;
 
 const fn max_plain_payload_size(capacity: usize) -> usize {
-    capacity - HEADER_SIZE - crypto::MAC_SIZE
+    capacity - OVERHEAD_SIZE
 }
 
 /// Represents a communication channel with a single endpoint. All communication on the channel
@@ -83,8 +83,8 @@ impl Channel {
         self.read_buffer.len() > 0
     }
 
-    #[inline]
     /// Closes the channel, the underlying stream and clears out all private data.
+    #[inline]
     pub fn close(&mut self) -> Result<()> {
         self.open = false;
 
@@ -104,9 +104,9 @@ impl Channel {
         }
     }
 
-    #[inline]
     /// Opens the channel using a new underlying stream. The channel must be closed for this
     /// operation to succeed.
+    #[inline]
     pub fn open(&mut self, stream: TcpStream) -> Result<()> {
         if self.open {
             return Err(Error::AlreadyConnected);
@@ -128,6 +128,38 @@ impl Channel {
     #[inline]
     pub fn recieve(&mut self) -> Result<usize> {
         self.read_buffer.ingress(&mut self.stream).map_err(Into::into)
+    }
+
+    /// Write the current payload into the buffer
+    fn write_payload(&mut self, payload_size: usize, category: u8) -> Result<()> {
+        let encrypted_size = payload_size + crypto::MAC_SIZE;
+        let total_size = encrypted_size + HEADER_SIZE;
+
+        if total_size > self.write_buffer.free_capacity() {
+            return Err(Error::Wait);
+        }
+
+        let additional_data = self.additional_data(category);
+        let mut stream = self.write_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(category)?;
+        stream.write_u64::<BigEndian>(self.server_sequence)?;
+        stream.write_u16::<BigEndian>(encrypted_size as u16)?;
+
+        // Write payload
+        crypto::encrypt(
+            &mut stream[..encrypted_size],
+            &self.payload[..payload_size],
+            &additional_data,
+            self.server_sequence,
+            &self.client_key,
+        )?;
+
+        self.write_buffer.move_tail(total_size);
+        self.server_sequence += 1;
+
+        Ok(())
     }
 
     /// Constructs the array holding additional data
@@ -193,6 +225,9 @@ pub trait Connected {
 
     /// Write data to the channel.
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()>;
+
+    /// Write data to the channel from a batch buffer
+    fn write_batch<P: Serialize>(&mut self, batch_buffer: &mut PayloadBatch<P>) -> Result<()>;
 }
 
 impl Connected for Channel {
@@ -248,39 +283,41 @@ impl Connected for Channel {
     }
 
     fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
-        // Restrict the payload slice to the free capacity in the write buffer
-        let plain_payload_size = max_plain_payload_size(self.write_buffer.free_capacity());
+        // Bail out if there isn't enough capacity to write the data
+        if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
+            return Err(Error::Wait);
+        }
+
+        // Restrict payload size to account for header and mac
+        let plain_payload_size = max_plain_payload_size(self.payload.len());
+
         let payload_slice = &mut self.payload[..plain_payload_size];
+
         let mut cursor = Cursor::new(payload_slice);
 
         let category = frame.category();
         frame.write(&mut cursor)?;
-
         let payload_size = cursor.position() as usize;
-        let encrypted_size = payload_size + crypto::MAC_SIZE;
-        let total_size = encrypted_size + HEADER_SIZE;
 
-        let additional_data = self.additional_data(category);
-        let mut stream = self.write_buffer.write_slice();
+        self.write_payload(payload_size, category)
+    }
 
-        // Write header
-        stream.write_u8(category)?;
-        stream.write_u64::<BigEndian>(self.server_sequence)?;
-        stream.write_u16::<BigEndian>(encrypted_size as u16)?;
+    fn write_batch<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> Result<()> {
+        // Bail out if there isn't enough capacity to write the data
+        if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
+            return Err(Error::Wait);
+        }
 
-        // Write payload
-        crypto::encrypt(
-            &mut stream[..encrypted_size],
-            &self.payload[..payload_size],
-            &additional_data,
-            self.server_sequence,
-            &self.client_key,
-        )?;
+        // Restrict payload size to account for header and mac
+        let plain_payload_size = max_plain_payload_size(self.write_buffer.free_capacity());
 
-        self.write_buffer.move_tail(total_size);
-        self.server_sequence += 1;
+        let payload_slice = &mut self.payload[..plain_payload_size];
 
-        Ok(())
+        let mut cursor = Cursor::new(payload_slice);
+        batch.write(&mut cursor)?;
+        let payload_size = cursor.position() as usize;
+
+        self.write_payload(payload_size, Category::Payload as u8)
     }
 }
 
@@ -380,6 +417,7 @@ pub fn timestamp_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::shared::{Deserialize, SizedRead, SizedWrite};
 
     const VERSION: [u8; 16] = [5; 16];
     const PROTOCOL: u16 = 123;
@@ -387,8 +425,20 @@ mod tests {
     struct TestPayload(u64);
 
     impl Serialize for TestPayload {
-        fn serialize<W: SizedWrite>(&mut self, stream: &mut W) -> Result<()> {
-            stream.write_u64::<BigEndian>(self.0).map_err(Into::into)
+        fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<()> {
+            match stream.free_capacity() >= 8 {
+                true => stream.write_u64::<BigEndian>(self.0).map_err(Into::into),
+                _ => Err(Error::Wait),
+            }
+        }
+    }
+
+    impl Deserialize for TestPayload {
+        fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self> {
+            match stream.remaining_data() >= 8 {
+                true => Ok(TestPayload(stream.read_u64::<BigEndian>()?)),
+                _ => Err(Error::Wait),
+            }
         }
     }
 
@@ -569,6 +619,78 @@ mod tests {
 
         assert_eq!(received_payload, payload);
         assert_eq!(channel.client_sequence, 1);
+    }
+
+    #[test]
+    fn test_write_read_batch_roundtrip() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        let expected_consumed_messages = 100;
+
+        let mut outgoing = PayloadBatch::new();
+        for i in 0..expected_consumed_messages {
+            outgoing.push(TestPayload(i));
+        }
+
+        // Write out the batch
+        channel.write_batch(&mut outgoing).unwrap();
+
+        assert_eq!(outgoing.len(), 0);
+        assert_eq!(channel.server_sequence, 1);
+
+        mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
+        mem::swap(&mut channel.server_key, &mut channel.client_key);
+
+        let response = channel.read().unwrap();
+
+        let stream = match response {
+            Frame::Payload(stream) => stream,
+            _ => panic!("Unexpected frame type"),
+        };
+
+        // Read out the messages into the receiving batch buffer
+        let mut received = PayloadBatch::<TestPayload>::new();
+        received.read(&mut Cursor::new(stream)).unwrap();
+
+        assert_eq!(received.len(), expected_consumed_messages as usize);
+        assert_eq!(channel.client_sequence, 1);
+    }
+
+    #[test]
+    fn test_write_batch_partial() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+
+        // The maximal number of messages that can fit in the write buffer
+        let expected_consumed_messages = (WRITE_BUF_SIZE - OVERHEAD_SIZE) / 8;
+
+        // Fill up the outgoing batch buffer with more messages than what can fit in the write buffer
+        let mut outgoing = PayloadBatch::new();
+        for i in 0..expected_consumed_messages * 2 {
+            outgoing.push(TestPayload(i as u64));
+        }
+
+        // Write out the batch
+        channel.write_batch(&mut outgoing).unwrap();
+
+        assert_eq!(outgoing.len(), expected_consumed_messages);
+        assert_eq!(channel.server_sequence, 1);
+    }
+
+    #[test]
+    fn test_write_batch_zero() {
+        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        channel.write_buffer.move_tail(WRITE_BUF_SIZE - OVERHEAD_SIZE - 1);
+
+        // Fill up the outgoing batch buffer with more messages than what can fit in the write buffer
+        let mut outgoing = PayloadBatch::new();
+        outgoing.push(TestPayload(1));
+
+        // Write out the batch
+        let result = channel.write_batch(&mut outgoing);
+
+        assert_eq!(result.err().unwrap(), Error::Wait);
+        assert_eq!(outgoing.len(), 1);
+        assert_eq!(channel.server_sequence, 0);
     }
 
     #[test]

@@ -981,8 +981,7 @@ version = "0.1.0"
 name = "t51server"
 version = "0.1.0"
 dependencies = [
- "serde 1.0.80 (registry+https://github.com/rust-lang/crates.io-index)",
- "serde_derive 1.0.80 (registry+https://github.com/rust-lang/crates.io-index)",
+ "byteorder 1.2.7 (registry+https://github.com/rust-lang/crates.io-index)",
  "t51core 0.1.0",
  "t51core_proc 0.1.0",
 ]

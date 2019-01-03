@@ -1,19 +1,10 @@
 #![allow(unused_imports, dead_code, unused_variables)]
-
-use serde_derive::{Deserialize, Serialize};
+use byteorder::{ReadBytesExt, BigEndian};
+use std::io::{Read, Write};
 use t51core::prelude::*;
 
-use std::io;
-
-fn test(buf: &[u8]) {
-    reader(buf);
-}
-
-fn reader<R: io::Read>(mut r: R) {
-}
-
-fn writer<W: io::Write>(mut w: W) {
-}
-
 fn main() {
+    let data = vec![1u8, 10u8, 3u8];
+    let mut reader = &data[..];
+    reader.read_u64::<BigEndian>().unwrap();
 }

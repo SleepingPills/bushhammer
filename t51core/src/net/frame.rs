@@ -1,7 +1,14 @@
 use crate::net::result::{Error, Result};
-use crate::net::shared::{UserId, Serialize, SizedWrite};
+use crate::net::shared::{Serialize, SizedWrite, UserId};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
+
+pub enum Category {
+    ConnectionAccepted = 0,
+    ConnectionClosed = 1,
+    Payload = 2,
+    Keepalive = 3,
+}
 
 pub enum Frame<P> {
     ConnectionAccepted(UserId),
@@ -13,10 +20,10 @@ pub enum Frame<P> {
 impl<P> Frame<P> {
     pub fn category(&self) -> u8 {
         match self {
-            Frame::ConnectionAccepted(_) => 0,
-            Frame::ConnectionClosed(_) => 1,
-            Frame::Payload(_) => 2,
-            Frame::Keepalive(_) => 3,
+            Frame::ConnectionAccepted(_) => Category::ConnectionAccepted as u8,
+            Frame::ConnectionClosed(_) => Category::ConnectionClosed as u8,
+            Frame::Payload(_) => Category::Payload as u8,
+            Frame::Keepalive(_) => Category::Keepalive as u8,
         }
     }
 }
@@ -33,11 +40,11 @@ impl Frame<&[u8]> {
 }
 
 impl<P: Serialize> Frame<P> {
-    pub fn write<W: SizedWrite>(mut self, stream: &mut W) -> Result<()> {
+    pub fn write<W: SizedWrite>(self, stream: &mut W) -> Result<()> {
         match self {
             Frame::ConnectionAccepted(user_id) => stream.write_u64::<BigEndian>(user_id)?,
             Frame::ConnectionClosed(user_id) => stream.write_u64::<BigEndian>(user_id)?,
-            Frame::Payload(ref mut payload) => payload.serialize(stream)?,
+            Frame::Payload(payload) => payload.serialize(stream)?,
             Frame::Keepalive(user_id) => stream.write_u64::<BigEndian>(user_id)?,
         }
         Ok(())
@@ -49,8 +56,8 @@ impl<P: Serialize> Frame<P> {
 pub struct NoPayload;
 
 impl Serialize for NoPayload {
-    fn serialize<W: io::Write>(&mut self, _stream: &mut W) -> Result<()> {
-        panic!("NoPayload is only a utility for sending control messages")
+    fn serialize<W: io::Write>(&self, _stream: &mut W) -> Result<()> {
+        panic!("NoPayload is a utility for sending control messages")
     }
 }
 

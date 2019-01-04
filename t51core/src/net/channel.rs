@@ -1,14 +1,13 @@
 use crate::net::buffer::Buffer;
 use crate::net::crypto;
-use crate::net::frame::{Category, Frame};
-use crate::net::result::{Error, Result};
-use crate::net::shared::{PayloadBatch, Serialize, UserId};
+use crate::net::frame::{Category, Frame, NoPayload};
+use crate::net::shared::{NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::{Shutdown, TcpStream};
-use std::time::SystemTime;
+use std::time::{Instant, SystemTime};
 
 // Write buffer should be 512k
 const WRITE_BUF_SIZE: usize = 8 * 65536;
@@ -23,12 +22,19 @@ const fn max_plain_payload_size(capacity: usize) -> usize {
     capacity - OVERHEAD_SIZE
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum ChannelState {
+    Handshake(Instant),
+    Connected(UserId),
+    Disconnected,
+}
+
 /// Represents a communication channel with a single endpoint. All communication on the channel
 /// is encrypted.
 pub struct Channel {
     // Tcp Stream
     stream: TcpStream,
-    open: bool,
+    state: ChannelState,
 
     // Validation
     version: [u8; 16],
@@ -39,12 +45,16 @@ pub struct Channel {
     // Sequence of packets sent to the client
     server_sequence: u64,
 
+    // Communication Timestamps
+    last_egress: Instant,
+    last_ingress: Instant,
+
     // Client2Server Key
     server_key: [u8; crypto::KEY_SIZE],
     // Server2Client Key
     client_key: [u8; crypto::KEY_SIZE],
 
-    // Channel State
+    // Channel Buffers
     read_buffer: Buffer,
     write_buffer: Buffer,
 
@@ -58,11 +68,13 @@ impl Channel {
     pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
         Channel {
             stream,
-            open: true,
+            state: ChannelState::Disconnected,
             version,
             protocol,
             client_sequence: 0,
             server_sequence: 0,
+            last_egress: Instant::now(),
+            last_ingress: Instant::now(),
             server_key: Self::random_key(),
             client_key: Self::random_key(),
             read_buffer: Buffer::new(READ_BUF_SIZE),
@@ -71,101 +83,66 @@ impl Channel {
         }
     }
 
-    /// Returns a boolean indicating whether there is data to be read in immediately.
+    /// Opens the channel using a new underlying stream. The channel must be closed for this
+    /// operation to succeed.
     #[inline]
-    pub fn pull_ready(&self) -> bool {
-        self.read_buffer.len() > 0
-    }
+    pub fn open(&mut self, stream: TcpStream) {
+        if self.state != ChannelState::Disconnected {
+            panic!("Attempted to open an already open channel");
+        }
 
-    /// Returns a boolean indicating whether there is data to be sent immediately.
-    #[inline]
-    pub fn push_ready(&self) -> bool {
-        self.read_buffer.len() > 0
+        self.stream = stream;
     }
 
     /// Closes the channel, the underlying stream and clears out all private data.
     #[inline]
-    pub fn close(&mut self) -> Result<()> {
-        self.open = false;
+    pub fn close(&mut self, notify: bool) {
+        self.read_buffer.clear();
+        self.write_buffer.clear();
+
+        if notify {
+            // Attempt to send a disconnection notice, but ignore any failures
+            if let ChannelState::Connected(user_id) = self.state {
+                drop(self.write_core::<NoPayload>(Frame::ConnectionClosed(user_id)));
+                drop(self.send());
+            }
+        }
 
         self.client_sequence = 0;
         self.server_sequence = 0;
 
-        self.clear();
-
         self.server_key = Self::random_key();
         self.client_key = Self::random_key();
 
-        match self.stream.shutdown(Shutdown::Both) {
-            Ok(_) => Ok(()),
-            Err(ref error) if error.kind() == io::ErrorKind::NotConnected => Ok(()),
-            Err(ref error) => Err(Error::Io(error.kind())),
-        }
-    }
-
-    /// Opens the channel using a new underlying stream. The channel must be closed for this
-    /// operation to succeed.
-    #[inline]
-    pub fn open(&mut self, stream: TcpStream) -> Result<()> {
-        if self.open {
-            return Err(Error::AlreadyConnected);
-        }
-
-        self.open = true;
-        self.stream = stream;
-
-        Ok(())
-    }
-
-    /// Clear the channel buffers
-    #[inline]
-    pub fn clear(&mut self) {
-        self.read_buffer.clear();
-        self.write_buffer.clear();
+        self.stream
+            .shutdown(Shutdown::Both)
+            .unwrap_or_else(|err| panic!(err));
     }
 
     /// Send all the buffered data to the network.
     #[inline]
-    pub fn send(&mut self) -> Result<usize> {
-        self.write_buffer.egress(&mut self.stream).map_err(Into::into)
+    pub fn send(&mut self) -> NetworkResult<usize> {
+        match self.write_buffer.egress(&mut self.stream) {
+            Ok(count) => NetworkResult::Ok(count),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => NetworkResult::Wait,
+            Err(ref err) => {
+                self.close(false);
+                NetworkResult::Error(NetworkError::Io(err.kind()))
+            }
+        }
     }
 
     /// Read all available data off the network.
     #[inline]
-    pub fn recieve(&mut self) -> Result<usize> {
-        self.read_buffer.ingress(&mut self.stream).map_err(Into::into)
-    }
-
-    /// Write the current payload into the buffer
-    fn write_payload(&mut self, payload_size: usize, category: u8) -> Result<()> {
-        let encrypted_size = payload_size + crypto::MAC_SIZE;
-        let total_size = encrypted_size + HEADER_SIZE;
-
-        if total_size > self.write_buffer.free_capacity() {
-            return Err(Error::Wait);
+    pub fn recieve(&mut self) -> NetworkResult<usize> {
+        match self.read_buffer.ingress(&mut self.stream) {
+            Ok(count) => NetworkResult::Ok(count),
+            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => NetworkResult::Wait,
+            Err(ref err) => {
+                self.close(false);
+                NetworkResult::Error(NetworkError::Io(err.kind()))
+            }
         }
-
-        let additional_data = self.additional_data(category);
-        let mut stream = self.write_buffer.write_slice();
-
-        // Write header
-        stream.write_u8(category)?;
-        stream.write_u64::<BigEndian>(self.server_sequence)?;
-        stream.write_u16::<BigEndian>(encrypted_size as u16)?;
-
-        // Write payload
-        crypto::encrypt(
-            &mut stream[..encrypted_size],
-            &self.payload[..payload_size],
-            &additional_data,
-            self.server_sequence,
-            &self.client_key,
-        )?;
-
-        self.write_buffer.move_tail(total_size);
-        self.server_sequence += 1;
-
-        Ok(())
     }
 
     /// Constructs the array holding additional data
@@ -193,105 +170,29 @@ impl Channel {
     }
 }
 
-/// Trait describing channels while in the state of waiting for the connection token.
-pub trait Handshake {
-    /// Reads the connection token off the channel, parses the contents and returns the client id.
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId>;
-}
-
-impl Handshake for Channel {
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId> {
-        let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
-
-        if token.expires < timestamp_secs() {
-            return Err(Error::Expired);
-        }
-
-        if token.protocol != self.protocol {
-            return Err(Error::ProtocolMismatch);
-        }
-
-        if token.version != self.version {
-            return Err(Error::VersionMismatch);
-        }
-
-        self.server_key = token.data.server_key;
-        self.client_key = token.data.client_key;
-
-        self.read_buffer.move_head(ConnectionToken::SIZE);
-        Ok(token.data.user_id)
-    }
-}
-
-/// Trait describing channels while in the fully connected state.
-pub trait Connected {
-    /// Read the data on the channel into a frame. Only one frame will be returned at a time
-    /// so this method should be called until Error::Wait is returned.
-    fn read(&mut self) -> Result<Frame<&[u8]>>;
-
+impl Channel {
     /// Write data to the channel.
-    fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()>;
+    pub fn write<P: Serialize>(&mut self, frame: Frame<P>) -> NetworkResult<()> {
+        match self.write_core(frame) {
+            Ok(_) => NetworkResult::Ok(()),
+            Err(NetworkError::Wait) => NetworkResult::Wait,
+            Err(err) => panic!("Fatal channel write error {:?}", err),
+        }
+    }
 
     /// Write data to the channel from a batch buffer
-    fn write_batch<P: Serialize>(&mut self, batch_buffer: &mut PayloadBatch<P>) -> Result<()>;
-}
-
-impl Connected for Channel {
-    fn read(&mut self) -> Result<Frame<&[u8]>> {
-        let mut stream = self.read_buffer.read_slice();
-
-        // Wait until there is enough data for the header
-        if stream.len() < HEADER_SIZE {
-            return Err(Error::Wait);
+    pub fn write_batch<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
+        match self.write_batch_core(batch) {
+            Ok(_) => NetworkResult::Ok(()),
+            Err(NetworkError::Wait) => NetworkResult::Wait,
+            Err(err) => panic!("Fatal channel write error {:?}", err),
         }
-
-        // Read header
-        let category = stream.read_u8()?;
-        let sequence = stream.read_u64::<BigEndian>()?;
-        let payload_size = stream.read_u16::<BigEndian>()? as usize;
-
-        // Return immediately if the payload size is zero
-        if payload_size == 0 {
-            return Frame::read(&[], category);
-        }
-
-        // Bail out if the payload cannot possibly fit in the buffer along with the header
-        if payload_size > (READ_BUF_SIZE - HEADER_SIZE) {
-            return Err(Error::PayloadTooLarge);
-        }
-
-        // Bail out if the sequence number is incorrect (duplicate or missing message)
-        if sequence != self.client_sequence {
-            return Err(Error::SequenceMismatch);
-        }
-
-        if stream.len() < payload_size {
-            return Err(Error::Wait);
-        }
-
-        // Adjust for the MAC
-        let decrypted_size = payload_size - crypto::MAC_SIZE;
-        let additional_data = self.additional_data(category);
-
-        // Read payload
-        crypto::decrypt(
-            &mut self.payload[..decrypted_size],
-            &stream[..payload_size],
-            &additional_data,
-            sequence,
-            &self.server_key,
-        )?;
-
-        self.read_buffer.move_head(HEADER_SIZE + payload_size);
-        self.client_sequence += 1;
-
-        Frame::read(&self.payload[..decrypted_size], category)
     }
 
-    fn write<P: Serialize>(&mut self, frame: Frame<P>) -> Result<()> {
+    fn write_core<P: Serialize>(&mut self, frame: Frame<P>) -> Result<(), NetworkError> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
-            return Err(Error::Wait);
+            return Err(NetworkError::Wait);
         }
 
         // Restrict payload size to account for header and mac
@@ -308,10 +209,10 @@ impl Connected for Channel {
         self.write_payload(payload_size, category)
     }
 
-    fn write_batch<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> Result<()> {
+    fn write_batch_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> Result<(), NetworkError> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
-            return Err(Error::Wait);
+            return Err(NetworkError::Wait);
         }
 
         // Restrict payload size to account for header and mac
@@ -324,6 +225,153 @@ impl Connected for Channel {
         let payload_size = cursor.position() as usize;
 
         self.write_payload(payload_size, Category::Payload as u8)
+    }
+
+    /// Write the current payload into the buffer
+    fn write_payload(&mut self, payload_size: usize, category: u8) -> Result<(), NetworkError> {
+        let encrypted_size = payload_size + crypto::MAC_SIZE;
+        let total_size = encrypted_size + HEADER_SIZE;
+
+        if total_size > self.write_buffer.free_capacity() {
+            return Err(NetworkError::Wait);
+        }
+
+        let additional_data = self.additional_data(category);
+        let mut stream = self.write_buffer.write_slice();
+
+        // Write header
+        stream.write_u8(category)?;
+        stream.write_u64::<BigEndian>(self.server_sequence)?;
+        stream.write_u16::<BigEndian>(encrypted_size as u16)?;
+
+        // Write payload
+        if !crypto::encrypt(
+            &mut stream[..encrypted_size],
+            &self.payload[..payload_size],
+            &additional_data,
+            self.server_sequence,
+            &self.client_key,
+        ) {
+            return Err(NetworkError::Crypto);
+        }
+
+        self.write_buffer.move_tail(total_size);
+        self.server_sequence += 1;
+
+        Ok(())
+    }
+}
+
+impl Channel {
+    /// Read the data on the channel into a frame. Only one frame will be returned at a time
+    /// so this method should be called until NetworkResult::Wait is returned.
+    ///
+    /// The channel will be automatically disconnected in case an error is encountered.
+    pub fn read(&mut self) -> NetworkResult<Frame<&[u8]>> {
+        match self.read_unpack() {
+            Ok((size, category)) => {
+//                NetworkResult::Ok(Frame::read(&self.payload[..size], category))
+                unimplemented!()
+            },
+            Err(NetworkError::Wait) => NetworkResult::Wait,
+            Err(err) => {
+                self.close(true);
+                NetworkResult::Error(err)
+            }
+        }
+    }
+
+    /// Read and unpack the data from the read buffer into the payload buffer.
+    fn read_unpack(&mut self) -> Result<(usize, u8), NetworkError> {
+        let mut stream = self.read_buffer.read_slice();
+
+        // Wait until there is enough data for the header
+        if stream.len() < HEADER_SIZE {
+            return Err(NetworkError::Wait);
+        }
+
+        // Read header
+        let category = stream.read_u8()?;
+        let sequence = stream.read_u64::<BigEndian>()?;
+        let payload_size = stream.read_u16::<BigEndian>()? as usize;
+
+        // Return immediately if the payload size is zero
+        if payload_size == 0 {
+            return Ok((0, category));
+        }
+
+        // Bail out if the payload cannot possibly fit in the buffer along with the header
+        if payload_size > (READ_BUF_SIZE - HEADER_SIZE) {
+            return Err(NetworkError::PayloadTooLarge);
+        }
+
+        // Bail out if the sequence number is incorrect (duplicate or missing message)
+        if sequence != self.client_sequence {
+            return Err(NetworkError::SequenceMismatch);
+        }
+
+        if stream.len() < payload_size {
+            return Err(NetworkError::Wait);
+        }
+
+        // Adjust for the MAC
+        let decrypted_size = payload_size - crypto::MAC_SIZE;
+        let additional_data = self.additional_data(category);
+
+        // Read payload
+        if !crypto::decrypt(
+            &mut self.payload[..decrypted_size],
+            &stream[..payload_size],
+            &additional_data,
+            sequence,
+            &self.server_key,
+        ) {
+            return Err(NetworkError::Crypto);
+        }
+
+        self.read_buffer.move_head(HEADER_SIZE + payload_size);
+        self.client_sequence += 1;
+
+        Ok((decrypted_size, category))
+    }
+}
+
+impl Channel {
+    /// Reads the connection token off the channel, parses the contents and returns the client id.
+    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> NetworkResult<UserId> {
+        match self.read_connection_token_core(secret_key) {
+            Ok(user_id) => {
+                self.state = ChannelState::Connected(user_id);
+                NetworkResult::Ok(user_id)
+            },
+            Err(NetworkError::Wait) => NetworkResult::Wait,
+            Err(err) => {
+                self.close(false);
+                NetworkResult::Error(err)
+            }
+        }
+    }
+
+    fn read_connection_token_core(&mut self, secret_key: &[u8; 32]) -> Result<UserId, NetworkError> {
+        let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
+
+        if token.expires < timestamp_secs() {
+            return Err(NetworkError::Expired);
+        }
+
+        if token.protocol != self.protocol {
+            return Err(NetworkError::ProtocolMismatch);
+        }
+
+        if token.version != self.version {
+            return Err(NetworkError::VersionMismatch);
+        }
+
+        self.server_key = token.data.server_key;
+        self.client_key = token.data.client_key;
+
+        self.read_buffer.move_head(ConnectionToken::SIZE);
+        Ok(token.data.user_id)
     }
 }
 
@@ -341,10 +389,10 @@ impl ConnectionToken {
 
     /// Read in the connection token form the supplied stream and decrypt the private
     /// data using the secret key.
-    pub fn read(mut stream: &[u8], secret_key: &[u8; 32]) -> Result<ConnectionToken> {
+    pub fn read(mut stream: &[u8], secret_key: &[u8; 32]) -> Result<ConnectionToken, NetworkError> {
         // Bail out immediately in case there isn't enough data in the buffer.
         if stream.len() < Self::SIZE {
-            return Err(Error::Wait);
+            return Err(NetworkError::Wait);
         }
 
         // Parse the data into the token structure.
@@ -362,13 +410,15 @@ impl ConnectionToken {
         let additional_data = instance.additional_data()?;
 
         // Decrypt the cipher into the plain data.
-        crypto::decrypt(
+        if !crypto::decrypt(
             &mut plain,
             &stream[..PrivateData::SIZE + crypto::MAC_SIZE],
             &additional_data,
             instance.sequence,
             &secret_key,
-        )?;
+        ) {
+            return Err(NetworkError::Crypto);
+        }
 
         // Deserialize the private data part.
         instance.data = PrivateData::read(&plain[..])?;
@@ -376,7 +426,7 @@ impl ConnectionToken {
         Ok(instance)
     }
 
-    fn additional_data(&self) -> Result<[u8; 26]> {
+    fn additional_data(&self) -> Result<[u8; 26], NetworkError> {
         let mut additional_data = [0u8; 26];
         let mut additional_data_slice = &mut additional_data[..];
 
@@ -400,7 +450,7 @@ impl PrivateData {
 
     /// Parse the supplied stream as a private data structure.
     #[inline]
-    fn read<R: Read>(mut stream: R) -> Result<PrivateData> {
+    fn read<R: Read>(mut stream: R) -> Result<PrivateData, NetworkError> {
         let mut instance = unsafe { mem::uninitialized::<PrivateData>() };
 
         instance.user_id = stream.read_u64::<BigEndian>()?;
@@ -431,19 +481,19 @@ mod tests {
     struct TestPayload(u64);
 
     impl Serialize for TestPayload {
-        fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<()> {
+        fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<(), NetworkError> {
             match stream.free_capacity() >= 8 {
                 true => stream.write_u64::<BigEndian>(self.0).map_err(Into::into),
-                _ => Err(Error::Wait),
+                _ => Err(NetworkError::Wait),
             }
         }
     }
 
     impl Deserialize for TestPayload {
-        fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self> {
+        fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self, NetworkError> {
             match stream.remaining_data() >= 8 {
                 true => Ok(TestPayload(stream.read_u64::<BigEndian>()?)),
-                _ => Err(Error::Wait),
+                _ => Err(NetworkError::Wait),
             }
         }
     }
@@ -495,8 +545,7 @@ mod tests {
             &additional_data,
             token.sequence,
             key,
-        )
-        .unwrap();
+        );
 
         buffer.move_tail(ConnectionToken::SIZE);
     }
@@ -525,7 +574,7 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let user_id = channel.read_connection_token(&secret_key).unwrap();
+        let user_id = channel.read_connection_token_core(&secret_key).unwrap();
 
         assert_eq!(user_id, token.data.user_id);
         assert_eq!(channel.server_key, token.data.server_key);
@@ -544,9 +593,9 @@ mod tests {
             .ingress(&[123u8; ConnectionToken::SIZE - 1][..])
             .unwrap();
 
-        let result = channel.read_connection_token(&secret_key);
+        let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), Error::Wait);
+        assert_eq!(result.err().unwrap(), NetworkError::Wait);
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE - 1);
     }
 
@@ -561,9 +610,9 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token(&secret_key);
+        let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), Error::Expired);
+        assert_eq!(result.err().unwrap(), NetworkError::Expired);
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -578,9 +627,9 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token(&secret_key);
+        let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), Error::VersionMismatch);
+        assert_eq!(result.err().unwrap(), NetworkError::VersionMismatch);
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -595,9 +644,9 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token(&secret_key);
+        let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), Error::ProtocolMismatch);
+        assert_eq!(result.err().unwrap(), NetworkError::ProtocolMismatch);
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -607,18 +656,18 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         assert_eq!(channel.server_sequence, 1);
 
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read().unwrap();
+        let response = channel.read();
 
         let mut stream = match response {
-            Frame::Payload(stream) => stream,
-            _ => panic!("Unexpected frame type"),
+            NetworkResult::Ok(Frame::Payload(stream)) => stream,
+            resp => panic!("Unexpected response {:?}", resp),
         };
 
         let received_payload = stream.read_u64::<BigEndian>().unwrap();
@@ -639,7 +688,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_batch(&mut outgoing).unwrap();
+        channel.write_batch(&mut outgoing);
 
         assert_eq!(outgoing.len(), 0);
         assert_eq!(channel.server_sequence, 1);
@@ -647,11 +696,11 @@ mod tests {
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read().unwrap();
+        let response = channel.read();
 
         let stream = match response {
-            Frame::Payload(stream) => stream,
-            _ => panic!("Unexpected frame type"),
+            NetworkResult::Ok(Frame::Payload(stream)) => stream,
+            resp => panic!("Unexpected response {:?}", resp),
         };
 
         // Read out the messages into the receiving batch buffer
@@ -676,7 +725,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_batch(&mut outgoing).unwrap();
+        channel.write_batch(&mut outgoing);
 
         assert_eq!(outgoing.len(), expected_consumed_messages);
         assert_eq!(channel.server_sequence, 1);
@@ -687,14 +736,13 @@ mod tests {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - OVERHEAD_SIZE - 1);
 
-        // Fill up the outgoing batch buffer with more messages than what can fit in the write buffer
         let mut outgoing = PayloadBatch::new();
         outgoing.push(TestPayload(1));
 
         // Write out the batch
         let result = channel.write_batch(&mut outgoing);
 
-        assert_eq!(result.err().unwrap(), Error::Wait);
+        assert_eq!(result, NetworkResult::Wait);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(channel.server_sequence, 0);
     }
@@ -712,25 +760,25 @@ mod tests {
 
         channel.read_buffer.move_tail(HEADER_SIZE);
 
-        let stream = match channel.read().unwrap() {
-            Frame::Payload(stream) => stream,
-            _ => panic!("Unexpected frame type"),
+        let stream = match channel.read() {
+            NetworkResult::Ok(Frame::Payload(stream)) => stream,
+            resp => panic!("Unexpected response {:?}", resp),
         };
 
         assert_eq!(stream, &[0u8; 0]);
     }
 
     #[test]
-    fn test_read_frame_err_hdr_wait() {
+    fn test_read_frame_hdr_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
         let response = channel.read();
 
-        assert_eq!(response.err().unwrap(), Error::Wait);
+        assert_eq!(response, NetworkResult::Wait);
     }
 
     #[test]
-    fn test_read_frame_err_payload_wait() {
+    fn test_read_frame_payload_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
         let mut stream = channel.read_buffer.write_slice();
@@ -747,7 +795,7 @@ mod tests {
 
         let response = channel.read();
 
-        assert_eq!(response.err().unwrap(), Error::Wait);
+        assert_eq!(response, NetworkResult::Wait);
     }
 
     #[test]
@@ -763,9 +811,9 @@ mod tests {
 
         channel.read_buffer.move_tail(READ_BUF_SIZE);
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::PayloadTooLarge);
+        assert_eq!(response.err().unwrap(), NetworkError::PayloadTooLarge);
     }
 
     #[test]
@@ -783,9 +831,9 @@ mod tests {
 
         channel.read_buffer.move_tail(HEADER_SIZE + 5);
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::SequenceMismatch);
+        assert_eq!(response.err().unwrap(), NetworkError::SequenceMismatch);
     }
 
     #[test]
@@ -794,16 +842,16 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         assert_eq!(channel.server_sequence, 1);
 
         // Swap the read/write buffers, but don't swap the keys
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::Crypto);
+        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
     }
 
     #[test]
@@ -812,7 +860,7 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         let data = channel.write_buffer.data_slice();
 
@@ -824,9 +872,9 @@ mod tests {
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::Crypto);
+        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
     }
 
     #[test]
@@ -835,7 +883,7 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
@@ -844,9 +892,9 @@ mod tests {
         // Muck about with the version
         channel.version[0] += 1;
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::Crypto);
+        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
     }
 
     #[test]
@@ -855,7 +903,7 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
@@ -864,9 +912,9 @@ mod tests {
         // Muck about with the version
         channel.protocol += 1;
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::Crypto);
+        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
     }
 
     #[test]
@@ -875,7 +923,7 @@ mod tests {
 
         let payload = 123123123;
 
-        channel.write(Frame::Payload(TestPayload(payload))).unwrap();
+        channel.write(Frame::Payload(TestPayload(payload)));
 
         let data = channel.write_buffer.data_slice();
 
@@ -886,27 +934,20 @@ mod tests {
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read();
+        let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), Error::Crypto);
+        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
     }
 
     #[test]
-    fn test_write_frame_err_wait() {
+    fn test_write_frame_wait() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        const CIPHER_SIZE: usize = WRITE_BUF_SIZE - HEADER_SIZE;
-
-        channel
-            .write_buffer
-            .write_slice()
-            .write_all(&[0; CIPHER_SIZE])
-            .unwrap();
-        channel.write_buffer.move_tail(CIPHER_SIZE);
+        channel.write_buffer.move_tail(WRITE_BUF_SIZE - HEADER_SIZE);
 
         let payload = 123123123;
         let result = channel.write(Frame::Payload(TestPayload(payload)));
 
-        assert_eq!(result.err().unwrap(), Error::Wait);
+        assert_eq!(result, NetworkResult::Wait);
     }
 }

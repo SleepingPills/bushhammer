@@ -1,5 +1,4 @@
-use crate::net::result::{Error, Result};
-use crate::net::shared::{Serialize, SizedWrite, UserId};
+use crate::net::shared::{Serialize, SizedWrite, UserId, NetworkError};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
@@ -10,6 +9,7 @@ pub enum Category {
     Keepalive = 3,
 }
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum Frame<P> {
     ConnectionAccepted(UserId),
     ConnectionClosed(UserId),
@@ -29,18 +29,18 @@ impl<P> Frame<P> {
 }
 
 impl Frame<&[u8]> {
-    pub fn read(mut buffer: &[u8], category: u8) -> Result<Frame<&[u8]>> {
+    pub fn read(mut buffer: &[u8], category: u8) -> Result<Frame<&[u8]>, NetworkError> {
         match category {
             1 => Ok(Frame::ConnectionClosed(buffer.read_u64::<BigEndian>()?)),
             2 => Ok(Frame::Payload(buffer)),
             3 => Ok(Frame::Keepalive(buffer.read_u64::<BigEndian>()?)),
-            _ => Err(Error::IncorrectCategory),
+            _ => Err(NetworkError::IncorrectCategory),
         }
     }
 }
 
 impl<P: Serialize> Frame<P> {
-    pub fn write<W: SizedWrite>(self, stream: &mut W) -> Result<()> {
+    pub fn write<W: SizedWrite>(self, stream: &mut W) -> Result<(), NetworkError> {
         match self {
             Frame::ConnectionAccepted(user_id) => stream.write_u64::<BigEndian>(user_id)?,
             Frame::ConnectionClosed(user_id) => stream.write_u64::<BigEndian>(user_id)?,
@@ -56,7 +56,7 @@ impl<P: Serialize> Frame<P> {
 pub struct NoPayload;
 
 impl Serialize for NoPayload {
-    fn serialize<W: io::Write>(&self, _stream: &mut W) -> Result<()> {
+    fn serialize<W: io::Write>(&self, _stream: &mut W) -> Result<(), NetworkError> {
         panic!("NoPayload is a utility for sending control messages")
     }
 }

@@ -1,30 +1,16 @@
-use crate::net::channel::{Handshake, Channel, Connected};
+use crate::net::channel::Channel;
 use crate::net::frame::{Frame, NoPayload};
-use crate::net::result::{Result, Error};
+use crate::net::shared::PayloadBatch;
 use crate::net::shared::{Serialize, UserId};
 use std::net::{TcpListener, TcpStream};
 use std::time;
-use crate::net::shared::PayloadBatch;
 
 pub type ChannelId = usize;
 
 #[derive(Debug, Copy, Clone)]
-enum ChannelState {
-    Handshake {
-        created: time::Instant,
-    },
-    Connected {
-        last_ingress: time::Instant,
-        last_egress: time::Instant,
-        user_id: UserId,
-    },
-    Disconnected,
-}
-
-#[derive(Debug, Copy, Clone)]
 enum ConnectionChange {
     Connected(UserId, ChannelId),
-    Disconnected(ChannelId)
+    Disconnected(ChannelId),
 }
 
 /*
@@ -55,7 +41,6 @@ pub struct Endpoint {
 
     // Storage
     channels: Vec<Channel>,
-    channel_states: Vec<ChannelState>,
 
     // Ids of unused channels
     free_slots: Vec<ChannelId>,
@@ -68,29 +53,14 @@ impl Endpoint {
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(5);
     const TIMEOUT: time::Duration = time::Duration::from_secs(30);
 
-    pub fn push<P: Serialize>(&mut self, data: &mut PayloadBatch<P>, channel_id: ChannelId) -> Result<()> {
-        // Update the outgoing timestamp for the channel
-        match self.channel_states[channel_id] {
-            ChannelState::Connected { ref mut last_egress, .. } => *last_egress = self.current_time,
-            _ => panic!("Attempting to write to an unconnected channel"),
-        }
-        // Write the data
-        self.channels[channel_id].write_batch(data)?;
-        Ok(())
-    }
+//    pub fn push<P: Serialize>(&mut self, data: &mut PayloadBatch<P>, channel_id: ChannelId) -> Result<()> {
+//        // Write the data
+//        self.channels[channel_id].write_batch(data)?;
+//        Ok(())
+//    }
 
     pub fn pull(&mut self, channel_id: ChannelId) -> Option<Frame<&[u8]>> {
-        {
-            match self.channels[channel_id].read() {
-                Ok(frame) => return Some(frame),
-                Err(Error::Wait) => return None,
-                Err(_) => ()
-            }
-        }
-
-        self.disconnect(channel_id);
-
-        None
+        unimplemented!()
     }
 
     pub fn sync(&mut self, current_time: time::Instant) {
@@ -111,21 +81,13 @@ impl Endpoint {
     pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
         let id = match self.free_slots.pop() {
             Some(id) => {
-                self.channels[id]
-                    .open(stream)
-                    .expect("Pooled channels must be closed");
-                self.channel_states[id] = ChannelState::Handshake {
-                    created: self.current_time,
-                };
+                self.channels[id].open(stream);
                 id
             }
             None => {
                 let id = self.channels.len();
                 self.channels
                     .push(Channel::new(stream, self.version, self.protocol));
-                self.channel_states.push(ChannelState::Handshake {
-                    created: self.current_time,
-                });
                 id
             }
         };
@@ -133,29 +95,11 @@ impl Endpoint {
         id
     }
 
-    #[inline]
-    pub fn reclaim_channel(&mut self, channel_id: ChannelId) {
-        self.channels[channel_id]
-            .close()
-            .expect("Channel must be closeable for reclamation");
-        self.free_slots.push(channel_id);
-    }
-
-    #[inline]
-    pub fn disconnect(&mut self, channel_id: ChannelId) {
-        let channel = &mut self.channels[channel_id];
-
-        channel.clear();
-
-        // Attempt to send a disconnect message if the channel is connected
-        if let ChannelState::Connected {user_id, ..} = self.channel_states[channel_id] {
-            drop(channel.write::<NoPayload>(Frame::ConnectionClosed(user_id)));
-            drop(channel.send());
-        }
-
-        self.channel_states[channel_id] = ChannelState::Disconnected;
-
-        // Close the channel
-        channel.close().expect("Channel shutdown successful");
-    }
+    //    #[inline]
+    //    pub fn reclaim_channel(&mut self, channel_id: ChannelId) {
+    //        self.channels[channel_id]
+    //            .close()
+    //            .expect("Channel must be closeable for reclamation");
+    //        self.free_slots.push(channel_id);
+    //    }
 }

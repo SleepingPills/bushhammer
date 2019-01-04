@@ -1,7 +1,35 @@
-use crate::net::result::{Error, Result};
 use std::io;
 
 pub type UserId = u64;
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum NetworkResult<T> {
+    Ok(T),
+    Wait,
+    Error(NetworkError)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum NetworkError {
+    Expired,
+    Duplicate,
+    AlreadyConnected,
+    PayloadTooLarge,
+    Wait,
+    IncorrectCategory,
+    ProtocolMismatch,
+    VersionMismatch,
+    SequenceMismatch,
+    Serialization,
+    Crypto,
+    Io(io::ErrorKind),
+}
+
+impl From<io::Error> for NetworkError {
+    fn from(io_error: io::Error) -> Self {
+        NetworkError::Io(io_error.kind())
+    }
+}
 
 /// Augmented `io::Write` that is aware of the amount of remaining free capacity in the destination.
 pub trait SizedWrite: io::Write {
@@ -35,12 +63,12 @@ impl SizedRead for io::Cursor<&[u8]> {
 ///
 /// Should return `Error::Wait` in case there is not enough capacity in the stream.
 pub trait Serialize {
-    fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<()>;
+    fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<(), NetworkError>;
 }
 
 /// Trait for manually deserialized objects.
 pub trait Deserialize: Sized {
-    fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self>;
+    fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self, NetworkError>;
 }
 
 /// Batched payload messages for efficient serialization/deserialization.
@@ -77,20 +105,20 @@ impl<P: Serialize> PayloadBatch<P> {
 
     /// Write as many payload messages as possible to the destination stream.
     #[inline]
-    pub fn write<W: SizedWrite>(&mut self, stream: &mut W) -> Result<()> {
+    pub fn write<W: SizedWrite>(&mut self, stream: &mut W) -> Result<(), NetworkError> {
         let mut remaining = self.data.len();
 
         for payload in self.data.iter_mut() {
             match payload.serialize(stream) {
                 Ok(_) => remaining -= 1,
-                Err(Error::Wait) => break,
+                Err(NetworkError::Wait) => break,
                 Err(error) => return Err(error),
             }
         }
 
         // Bail out in case nothing could be written into the stream
         if remaining == self.data.len() {
-            return Err(Error::Wait);
+            return Err(NetworkError::Wait);
         }
 
         self.data.truncate(remaining);
@@ -101,7 +129,7 @@ impl<P: Serialize> PayloadBatch<P> {
 impl<P: Deserialize> PayloadBatch<P> {
     /// Read as many messages as possible form the source stream into the current batch.
     #[inline]
-    pub fn read<R: SizedRead>(&mut self, stream: &mut R) -> Result<()> {
+    pub fn read<R: SizedRead>(&mut self, stream: &mut R) -> Result<(), NetworkError> {
         while stream.remaining_data() > 0 {
             self.data.push(P::deserialize(stream)?)
         }

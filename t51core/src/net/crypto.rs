@@ -1,4 +1,3 @@
-use crate::net::result::{Error, Result};
 use byteorder::{LittleEndian, WriteBytesExt};
 use libsodium_sys;
 
@@ -18,7 +17,7 @@ fn nonce_to_bytes(nonce: u64) -> [u8; NONCE_SIZE] {
 }
 
 #[inline]
-pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> Result<()> {
+pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
     if cipher.len() != plain.len() + MAC_SIZE {
@@ -43,16 +42,12 @@ pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u
             key.as_ptr(),
         );
 
-        if result < 0 {
-            Err(Error::Crypto)
-        } else {
-            Ok(())
-        }
+        result >= 0
     }
 }
 
 #[inline]
-pub fn decrypt(plain: &mut [u8], cipher: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> Result<()> {
+pub fn decrypt(plain: &mut [u8], cipher: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
     if cipher.len() != plain.len() + MAC_SIZE {
@@ -77,11 +72,7 @@ pub fn decrypt(plain: &mut [u8], cipher: &[u8], additional_data: &[u8], nonce: u
             key.as_ptr(),
         );
 
-        if result < 0 {
-            Err(Error::Crypto)
-        } else {
-            Ok(())
-        }
+        result >= 0
     }
 }
 

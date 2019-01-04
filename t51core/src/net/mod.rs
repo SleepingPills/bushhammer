@@ -312,7 +312,6 @@ https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terr
 
 */
 
-pub mod result;
 pub mod buffer;
 pub mod crypto;
 pub mod shared;

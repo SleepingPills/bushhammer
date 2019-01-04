@@ -91,11 +91,10 @@ impl Channel {
         self.client_sequence = 0;
         self.server_sequence = 0;
 
+        self.clear();
+
         self.server_key = Self::random_key();
         self.client_key = Self::random_key();
-
-        self.read_buffer.clear();
-        self.write_buffer.clear();
 
         match self.stream.shutdown(Shutdown::Both) {
             Ok(_) => Ok(()),
@@ -116,6 +115,13 @@ impl Channel {
         self.stream = stream;
 
         Ok(())
+    }
+
+    /// Clear the channel buffers
+    #[inline]
+    pub fn clear(&mut self) {
+        self.read_buffer.clear();
+        self.write_buffer.clear();
     }
 
     /// Send all the buffered data to the network.

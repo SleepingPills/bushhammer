@@ -60,6 +60,3 @@ impl Serialize for NoPayload {
         panic!("NoPayload is a utility for sending control messages")
     }
 }
-
-/// Shorthand for constructing control frames with no payload.
-pub type ControlFrame = Frame<NoPayload>;

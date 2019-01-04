@@ -227,52 +227,83 @@ Disconnect Logic
  data is available in the buffer, and then decrypt the data into the data buffer (formerly frame).
 
 !!! 1.1.2019 !!!
+*** UNITS OF MEASURE ***
+Use algebraic typing to create an SI derived units of measure system. Under the hood, eveything will be represented
+as core metric/SI units.
+
+Distance = meter
+Time = second
+Velocity = Distance/Time
+Acceleration = Velocity/Time
+
+The individual units will support factory functions to feed in various measures. e.g.
+Velocity::mps(meters_per_second)
+Velocity::kms(kilometers_per_second)
+Velocity::kmh(kilometers_per_hour)
+These will all return a Velocity object that measures things in mps and thus the factory function just converts
+stuff.
+
+There'll be the special case of the from_string(&str) function (e.g. Velocity::from_string(&str)) which will
+accept a standardized string format, e.g. "50 m/s" for velocity (whitespace will be ignored).
+
+Then if we have
+speed = Velocity::mps(10)
+distance_travelled = speed * Time:secs(50) // Get the distance travelled in 50 seconds.
+
+Or we have
+accel = Accel:mps2(10)
+speed = accel * Time::secs(10) // Speed after 10 seconds of acceleration is 100 meters per second
+
+*** Networking ***
+Replication
+- All entities to be replicated will be marked with a Replicated component containing an Option<ChannelId>. Replicator
+  subsystems will simply add this to their query and funnel state data into special Resources bucketed by ChannelId.
+- The Replicator Hub will have write access to the Replicator component and will set the field to None for entities
+  whose client disconnected.
+- This concept works for both persistent and transient worlds. Persistent worlds will delete the client entities when
+  the client is not logged in, so they don't use resources. Transient worlds can keep the client entity around until
+  the round end when everything gets recycled.
+
 Endpoint
-Endpoint handles keepalive in sync(). We can keep the frame timestamp each time a channel is used to
-communicate. A channel that's dead for more than 30 secs is dropped. Tehre can be a vector of structs for
-timestamping each channel (so length can be the same as channel pool).
+- pull(channel_id) - pulls a message from the given channel. Returns Ok(frame) if there is one, or None if there
+  isn't. Internally, the endpoint will disconnect the channel if the error was anything other than Error::Wait and
+  add an entry to the channel disconnect list.
+- push(data, channel_id) - puts a message on the given channel. Returns true if the message was accepted for
+  transmission. Serialization is triggered by the channel, so even though the serializable object would check upfront
+  whether there is enough space to contain it, the Error:Wait will be propagated through the channel. If the result
+  is false, the message was not accepted (either due to an error or because the buffer is full).
+  If there is any other error than Error::Wait, the channel will be disconnected and put on the disconnect list.
+- sync() - Carries out the actual transmissions. Any errors (apart from Error:Wait) result in disconnection.
+  Calls the housekeeping function periodically.
+- housekeeping() - Go through each channel and depending on it's state:
+  Handshake - checks if the timeout elapsed, if yes, disconnect.
+  Connected - check if the comms timeout elapsed, if yes, disconnect. Check if any comms happened since the last
+              housekeeping round, and if not, plop a keepalive message on the channel.
+- disconnect() - Attempts to put a disconnect message on the channel and send it immediately. Irrespective of that
+  succeeding, it closes the channel.
+- send_disconnect() -> Result<()> - Creates a disconnect message, puts it in the buffer and flushes the channel.
+- changes() -> ConnectionChange: Iterates through a vector containing ConnectionChange enums. These reflect all the
+  connections/disconnections that happened on the Endpoint so that they can be exactly replicated into the world state.
 
-- push(payload, channel_id): called by the replicator to push messages to the channels.
+Replicator Hub
+- Map UserId -> EntityId (all users ever connected in this session).
+- Vec<Client{payload, entity_id}> indexed by ChannelId (thus replicating the Channel vector).
+- IndexSet<ChannelId> of connected channels.
+- Each Client instance keeps a payload buffer and the entity id of the associated entity.
+- Write access to Replicator resources, which are drained into the Client instances' payload buffer.
 
-- sync(): flushes all writeable data to the streams and then runs the poller.
-  Housekeeping - every 5 seconds, carry out housekeeping tasks
+Replicator Subsystems
+- Read access to the Replicated component and other Components specific to the subsystem.
+- Write access to it's own resource, where messages are bucketed into a vector indexed by ChannelId and replicating the
+  length of the Hub's client vector.
 
-- pull(): iterates through all channels that have read data available.
-
-Replicator
-- Messages have deterministic sizes. We won't have dynamically sized messages. The overhead of a message is
-just one byte - the discriminator. World geometry changes will just be batched into some reasonably sized
-messages.
-- Each client has a payload transmit buffer. This contains as yet unserialized messages. Since message size
-is known, we can just funnel data into the serialization buffer until we reach a limit.
-- Single serialization buffer used to batch messages.
-- On connection, the replicator will first check whether there is already an entity for the given
-  client id, before creating a new one. If there is, it will just update the channel id.
-
-Connecting
- 1. TcpListener polls a new connection
- 2. Channel is created for connection
- 3. Channel is added to the handshake flag vec
- 4. Put channel in the handshake poller
-
-Handshake Finish
- 1. Message comes in on the handshake poller
- 2. Token is set up and validated
- 3. If message read fails, disconnect channel
- 4. ClientId recorded (along with ChannelId) to handshake list
-
-Disconnecting
-
-Pull
-
-Push
-
-Send
-
-Receive
-
-
-Q: How are connections/disconnections relayed to the Replicator
+Use cases
+- Endpoint: Pull incoming messages for clients.
+- Endpoint: Push state changes to clients.
+- Endpoint: Iterate through all
+- Endpoint: Iterate through disconnected clients and mark them as disconnected. The payload buffer for the client will be
+  flushed.
+- Iterate through new connections and either wire them up to an existing client instance or create a new one.
 
 https://uterrains.com/demo/
 https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176

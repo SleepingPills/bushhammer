@@ -2,12 +2,37 @@ use crate::net::shared::{ErrorType, NetworkError, NetworkResult, Serialize, Size
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
+/*
+TODO: The payload will be moved out of the frame. The frame will only contain the size of
+the payload.
+
+The channel will get a second read method, read_batch (analogue of write_batch), that will
+read into the supplied batch, given the size info from payload.
+
+There'll be a PayloadInfo struct, initially containing only the payload size most probably.
+
+struct PayloadInfo(usize);
+
+pub fn read_batch(&self, batch, payload_info)
+
+This also means that Frame no longer needs generics and becomes much simpler.
+*/
+
 pub enum Category {
     ConnectionAccepted = 0,
     ConnectionClosed = 1,
     Payload = 2,
     Keepalive = 3,
 }
+
+impl From<Category> for u8 {
+    fn from(cat: Category) -> Self {
+        cat as u8
+    }
+}
+
+#[repr(transparent)]
+pub struct PayloadInfo(usize);
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Frame<P> {
@@ -20,10 +45,10 @@ pub enum Frame<P> {
 impl<P> Frame<P> {
     pub fn category(&self) -> u8 {
         match self {
-            Frame::ConnectionAccepted(_) => Category::ConnectionAccepted as u8,
-            Frame::ConnectionClosed(_) => Category::ConnectionClosed as u8,
-            Frame::Payload(_) => Category::Payload as u8,
-            Frame::Keepalive(_) => Category::Keepalive as u8,
+            Frame::ConnectionAccepted(_) => Category::ConnectionAccepted.into(),
+            Frame::ConnectionClosed(_) => Category::ConnectionClosed.into(),
+            Frame::Payload(_) => Category::Payload.into(),
+            Frame::Keepalive(_) => Category::Keepalive.into(),
         }
     }
 }

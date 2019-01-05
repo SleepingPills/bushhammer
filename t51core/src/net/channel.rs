@@ -781,7 +781,7 @@ mod tests {
         let mut stream = channel.read_buffer.write_slice();
 
         // Write header
-        stream.write_u8(2).unwrap();
+        stream.write_u8(Category::Payload.into()).unwrap();
         stream.write_u64::<BigEndian>(0).unwrap();
         stream.write_u16::<BigEndian>(0).unwrap();
 
@@ -811,7 +811,7 @@ mod tests {
         let mut stream = channel.read_buffer.write_slice();
 
         // Write header
-        stream.write_u8(2).unwrap();
+        stream.write_u8(Category::Payload.into()).unwrap();
         stream.write_u64::<BigEndian>(0).unwrap();
         stream.write_u16::<BigEndian>(100).unwrap();
 
@@ -832,7 +832,7 @@ mod tests {
         let mut stream = channel.read_buffer.write_slice();
 
         // Write header
-        stream.write_u8(2).unwrap();
+        stream.write_u8(Category::Payload.into()).unwrap();
         stream.write_u64::<BigEndian>(0).unwrap();
         stream.write_u16::<BigEndian>(u16::max_value()).unwrap();
 
@@ -850,7 +850,7 @@ mod tests {
         let mut stream = channel.read_buffer.write_slice();
 
         // Write header
-        stream.write_u8(2).unwrap();
+        stream.write_u8(Category::Payload.into()).unwrap();
         stream.write_u64::<BigEndian>(10).unwrap();
         stream.write_u16::<BigEndian>(5).unwrap();
 

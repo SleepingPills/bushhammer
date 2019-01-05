@@ -66,6 +66,9 @@ impl Channel {
     /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
     pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
+
+        let now = Instant::now();
+
         Channel {
             stream,
             state: ChannelState::Disconnected,
@@ -73,8 +76,8 @@ impl Channel {
             protocol,
             client_sequence: 0,
             server_sequence: 0,
-            last_egress: Instant::now(),
-            last_ingress: Instant::now(),
+            last_egress: now,
+            last_ingress: now,
             server_key: Self::random_key(),
             client_key: Self::random_key(),
             read_buffer: Buffer::new(READ_BUF_SIZE),
@@ -104,7 +107,7 @@ impl Channel {
             // Attempt to send a disconnection notice, but ignore any failures
             if let ChannelState::Connected(user_id) = self.state {
                 drop(self.write_core::<NoPayload>(Frame::ConnectionClosed(user_id)));
-                drop(self.send());
+                drop(self.send_raw());
             }
         }
 
@@ -119,17 +122,37 @@ impl Channel {
             .unwrap_or_else(|err| panic!(err));
     }
 
-    /// Send all the buffered data to the network.
+    /// Read all available data off the network and updates the last ingress time if > 0 bytes have been
+    /// transmitted.
     #[inline]
-    pub fn send(&mut self) -> NetworkResult<usize> {
-        let result = self.write_buffer.egress(&mut self.stream);
-        self.fold_result(result, false)
+    pub fn recieve(&mut self, now: Instant) -> NetworkResult<usize> {
+        let result = self.read_buffer.ingress(&mut self.stream);
+        let count = self.fold_result(result, false)?;
+
+        if count > 0 {
+            self.last_ingress = now;
+        }
+
+        Ok(count)
     }
 
-    /// Read all available data off the network.
+    /// Send all the buffered data to the network and updates the last egress time if > 0 bytes have been
+    /// transmitted.
     #[inline]
-    pub fn recieve(&mut self) -> NetworkResult<usize> {
-        let result = self.read_buffer.ingress(&mut self.stream);
+    pub fn send(&mut self, now: Instant) -> NetworkResult<usize> {
+        let count = self.send_raw()?;
+
+        if count > 0 {
+            self.last_egress = now;
+        }
+
+        Ok(count)
+    }
+
+    /// Sends all the buffered data.
+    #[inline]
+    pub fn send_raw(&mut self) -> NetworkResult<usize> {
+        let result = self.write_buffer.egress(&mut self.stream);
         self.fold_result(result, false)
     }
 
@@ -148,6 +171,7 @@ impl Channel {
         additional_data
     }
 
+    /// Generates a random key. Used for the initial setup.
     #[inline]
     fn random_key() -> [u8; crypto::KEY_SIZE] {
         let mut key = [0u8; crypto::KEY_SIZE];
@@ -157,6 +181,8 @@ impl Channel {
         key
     }
 
+    /// Monomorphises the result to use the NetworkError plumbing and closes the channel in case
+    /// a fatal error has occured.
     #[inline]
     fn fold_result<T, E: Into<NetworkError>>(
         &mut self,

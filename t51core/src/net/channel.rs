@@ -270,6 +270,7 @@ impl Channel {
     pub fn read(&mut self) -> NetworkResult<Frame<&[u8]>> {
         match self.read_unpack() {
             Ok((size, category)) => {
+                let frame = Frame::read(&self.payload[..size], category);
 //                NetworkResult::Ok(Frame::read(&self.payload[..size], category))
                 unimplemented!()
             },
@@ -338,7 +339,7 @@ impl Channel {
 
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> NetworkResult<UserId> {
+    pub fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> NetworkResult<UserId> {
         match self.read_connection_token_core(secret_key) {
             Ok(user_id) => {
                 self.state = ChannelState::Connected(user_id);

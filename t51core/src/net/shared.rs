@@ -2,15 +2,16 @@ use std::io;
 
 pub type UserId = u64;
 
-#[derive(Debug, Eq, PartialEq)]
-pub enum NetworkResult<T> {
-    Ok(T),
-    Wait,
-    Error(NetworkError)
-}
+pub type NetworkResult<T> = Result<T, NetworkError>;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum NetworkError {
+    Wait,
+    Fatal(ErrorType),
+}
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum ErrorType {
     Expired,
     Duplicate,
     AlreadyConnected,
@@ -26,8 +27,12 @@ pub enum NetworkError {
 }
 
 impl From<io::Error> for NetworkError {
+    #[inline]
     fn from(io_error: io::Error) -> Self {
-        NetworkError::Io(io_error.kind())
+        match io_error.kind() {
+            io::ErrorKind::WouldBlock => NetworkError::Wait,
+            kind => NetworkError::Fatal(ErrorType::Io(kind)),
+        }
     }
 }
 

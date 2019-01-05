@@ -1,4 +1,4 @@
-use crate::net::shared::{Serialize, SizedWrite, UserId, NetworkError};
+use crate::net::shared::{ErrorType, NetworkError, NetworkResult, Serialize, SizedWrite, UserId};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 
@@ -34,7 +34,7 @@ impl Frame<&[u8]> {
             1 => Ok(Frame::ConnectionClosed(buffer.read_u64::<BigEndian>()?)),
             2 => Ok(Frame::Payload(buffer)),
             3 => Ok(Frame::Keepalive(buffer.read_u64::<BigEndian>()?)),
-            _ => Err(NetworkError::IncorrectCategory),
+            _ => Err(NetworkError::Fatal(ErrorType::IncorrectCategory)),
         }
     }
 }

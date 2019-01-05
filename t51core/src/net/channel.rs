@@ -1,7 +1,7 @@
 use crate::net::buffer::Buffer;
 use crate::net::crypto;
 use crate::net::frame::{Category, Frame, NoPayload};
-use crate::net::shared::{NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
+use crate::net::shared::{ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -122,27 +122,15 @@ impl Channel {
     /// Send all the buffered data to the network.
     #[inline]
     pub fn send(&mut self) -> NetworkResult<usize> {
-        match self.write_buffer.egress(&mut self.stream) {
-            Ok(count) => NetworkResult::Ok(count),
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => NetworkResult::Wait,
-            Err(ref err) => {
-                self.close(false);
-                NetworkResult::Error(NetworkError::Io(err.kind()))
-            }
-        }
+        let result = self.write_buffer.egress(&mut self.stream);
+        self.fold_result(result, false)
     }
 
     /// Read all available data off the network.
     #[inline]
     pub fn recieve(&mut self) -> NetworkResult<usize> {
-        match self.read_buffer.ingress(&mut self.stream) {
-            Ok(count) => NetworkResult::Ok(count),
-            Err(ref err) if err.kind() == io::ErrorKind::WouldBlock => NetworkResult::Wait,
-            Err(ref err) => {
-                self.close(false);
-                NetworkResult::Error(NetworkError::Io(err.kind()))
-            }
-        }
+        let result = self.read_buffer.ingress(&mut self.stream);
+        self.fold_result(result, false)
     }
 
     /// Constructs the array holding additional data
@@ -168,28 +156,46 @@ impl Channel {
 
         key
     }
+
+    #[inline]
+    fn fold_result<T, E: Into<NetworkError>>(
+        &mut self,
+        result: Result<T, E>,
+        notify: bool,
+    ) -> NetworkResult<T> {
+        match result {
+            Ok(result) => Ok(result),
+            Err(err) => {
+                let net_err = err.into();
+
+                if let NetworkError::Fatal(_) = net_err {
+                    self.close(notify);
+                }
+
+                Err(net_err)
+            }
+        }
+    }
 }
 
 impl Channel {
     /// Write data to the channel.
     pub fn write<P: Serialize>(&mut self, frame: Frame<P>) -> NetworkResult<()> {
         match self.write_core(frame) {
-            Ok(_) => NetworkResult::Ok(()),
-            Err(NetworkError::Wait) => NetworkResult::Wait,
-            Err(err) => panic!("Fatal channel write error {:?}", err),
+            Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
+            result => result,
         }
     }
 
     /// Write data to the channel from a batch buffer
     pub fn write_batch<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
         match self.write_batch_core(batch) {
-            Ok(_) => NetworkResult::Ok(()),
-            Err(NetworkError::Wait) => NetworkResult::Wait,
-            Err(err) => panic!("Fatal channel write error {:?}", err),
+            Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
+            result => result,
         }
     }
 
-    fn write_core<P: Serialize>(&mut self, frame: Frame<P>) -> Result<(), NetworkError> {
+    fn write_core<P: Serialize>(&mut self, frame: Frame<P>) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -209,7 +215,7 @@ impl Channel {
         self.write_payload(payload_size, category)
     }
 
-    fn write_batch_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> Result<(), NetworkError> {
+    fn write_batch_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -228,7 +234,7 @@ impl Channel {
     }
 
     /// Write the current payload into the buffer
-    fn write_payload(&mut self, payload_size: usize, category: u8) -> Result<(), NetworkError> {
+    fn write_payload(&mut self, payload_size: usize, category: u8) -> NetworkResult<()> {
         let encrypted_size = payload_size + crypto::MAC_SIZE;
         let total_size = encrypted_size + HEADER_SIZE;
 
@@ -252,7 +258,7 @@ impl Channel {
             self.server_sequence,
             &self.client_key,
         ) {
-            return Err(NetworkError::Crypto);
+            return Err(NetworkError::Fatal(ErrorType::Crypto));
         }
 
         self.write_buffer.move_tail(total_size);
@@ -268,16 +274,19 @@ impl Channel {
     ///
     /// The channel will be automatically disconnected in case an error is encountered.
     pub fn read(&mut self) -> NetworkResult<Frame<&[u8]>> {
-        match self.read_unpack() {
-            Ok((size, category)) => {
-                let frame = Frame::read(&self.payload[..size], category);
-//                NetworkResult::Ok(Frame::read(&self.payload[..size], category))
-                unimplemented!()
-            },
-            Err(NetworkError::Wait) => NetworkResult::Wait,
+        let result = self.read_unpack();
+        let (size, category) = self.fold_result(result, true)?;
+        let frame = Frame::read(&self.payload[..size], category);
+        match frame {
+            Ok(result) => Ok(result),
             Err(err) => {
-                self.close(true);
-                NetworkResult::Error(err)
+                let net_err = err.into();
+
+                if let NetworkError::Fatal(_) = net_err {
+                    self.close(true);
+                }
+
+                Err(net_err)
             }
         }
     }
@@ -303,12 +312,12 @@ impl Channel {
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
         if payload_size > (READ_BUF_SIZE - HEADER_SIZE) {
-            return Err(NetworkError::PayloadTooLarge);
+            return Err(NetworkError::Fatal(ErrorType::PayloadTooLarge));
         }
 
         // Bail out if the sequence number is incorrect (duplicate or missing message)
         if sequence != self.client_sequence {
-            return Err(NetworkError::SequenceMismatch);
+            return Err(NetworkError::Fatal(ErrorType::SequenceMismatch));
         }
 
         if stream.len() < payload_size {
@@ -327,7 +336,7 @@ impl Channel {
             sequence,
             &self.server_key,
         ) {
-            return Err(NetworkError::Crypto);
+            return Err(NetworkError::Fatal(ErrorType::Crypto));
         }
 
         self.read_buffer.move_head(HEADER_SIZE + payload_size);
@@ -340,32 +349,23 @@ impl Channel {
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
     pub fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> NetworkResult<UserId> {
-        match self.read_connection_token_core(secret_key) {
-            Ok(user_id) => {
-                self.state = ChannelState::Connected(user_id);
-                NetworkResult::Ok(user_id)
-            },
-            Err(NetworkError::Wait) => NetworkResult::Wait,
-            Err(err) => {
-                self.close(false);
-                NetworkResult::Error(err)
-            }
-        }
+        let result = self.read_connection_token_core(secret_key);
+        self.fold_result(result, false)
     }
 
     fn read_connection_token_core(&mut self, secret_key: &[u8; 32]) -> Result<UserId, NetworkError> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
         if token.expires < timestamp_secs() {
-            return Err(NetworkError::Expired);
+            return Err(NetworkError::Fatal(ErrorType::Expired));
         }
 
         if token.protocol != self.protocol {
-            return Err(NetworkError::ProtocolMismatch);
+            return Err(NetworkError::Fatal(ErrorType::ProtocolMismatch));
         }
 
         if token.version != self.version {
-            return Err(NetworkError::VersionMismatch);
+            return Err(NetworkError::Fatal(ErrorType::VersionMismatch));
         }
 
         self.server_key = token.data.server_key;
@@ -418,7 +418,7 @@ impl ConnectionToken {
             instance.sequence,
             &secret_key,
         ) {
-            return Err(NetworkError::Crypto);
+            return Err(NetworkError::Fatal(ErrorType::Crypto));
         }
 
         // Deserialize the private data part.

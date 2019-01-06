@@ -1,6 +1,6 @@
 use crate::net::buffer::Buffer;
 use crate::net::crypto;
-use crate::net::frame::{Category, Frame, NoPayload};
+use crate::net::frame::{Category, Frame, ControlFrame, PayloadInfo};
 use crate::net::shared::{ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::io;
@@ -106,7 +106,7 @@ impl Channel {
         if notify {
             // Attempt to send a disconnection notice, but ignore any failures
             if let ChannelState::Connected(user_id) = self.state {
-                drop(self.write_core::<NoPayload>(Frame::ConnectionClosed(user_id)));
+                drop(self.write_control_core(ControlFrame::ConnectionClosed(user_id)));
                 drop(self.send_raw());
             }
         }
@@ -151,7 +151,7 @@ impl Channel {
 
     /// Sends all the buffered data.
     #[inline]
-    pub fn send_raw(&mut self) -> NetworkResult<usize> {
+    fn send_raw(&mut self) -> NetworkResult<usize> {
         let result = self.write_buffer.egress(&mut self.stream);
         self.fold_result(result, false)
     }
@@ -205,23 +205,23 @@ impl Channel {
 }
 
 impl Channel {
-    /// Write data to the channel.
-    pub fn write<P: Serialize>(&mut self, frame: Frame<P>) -> NetworkResult<()> {
-        match self.write_core(frame) {
+    /// Write control data to the channel.
+    pub fn write_control<P: Serialize>(&mut self, frame: ControlFrame) -> NetworkResult<()> {
+        match self.write_control_core(frame) {
             Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
             result => result,
         }
     }
 
-    /// Write data to the channel from a batch buffer
-    pub fn write_batch<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
-        match self.write_batch_core(batch) {
+    /// Write payload data to the channel from a batch buffer.
+    pub fn write_payload<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
+        match self.write_payload_core(batch) {
             Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
             result => result,
         }
     }
 
-    fn write_core<P: Serialize>(&mut self, frame: Frame<P>) -> NetworkResult<()> {
+    fn write_control_core<P: Serialize>(&mut self, frame: ControlFrame) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -238,10 +238,10 @@ impl Channel {
         frame.write(&mut cursor)?;
         let payload_size = cursor.position() as usize;
 
-        self.write_payload(payload_size, category)
+        self.write(payload_size, category)
     }
 
-    fn write_batch_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
+    fn write_payload_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -256,11 +256,11 @@ impl Channel {
         batch.write(&mut cursor)?;
         let payload_size = cursor.position() as usize;
 
-        self.write_payload(payload_size, Category::Payload as u8)
+        self.write(payload_size, Category::Payload as u8)
     }
 
     /// Write the current payload into the buffer
-    fn write_payload(&mut self, payload_size: usize, category: u8) -> NetworkResult<()> {
+    fn write(&mut self, payload_size: usize, category: u8) -> NetworkResult<()> {
         let encrypted_size = payload_size + crypto::MAC_SIZE;
         let total_size = encrypted_size + HEADER_SIZE;
 
@@ -299,22 +299,10 @@ impl Channel {
     /// so this method should be called until NetworkResult::Wait is returned.
     ///
     /// The channel will be automatically disconnected in case an error is encountered.
-    pub fn read(&mut self) -> NetworkResult<Frame<&[u8]>> {
+    pub fn read(&mut self) -> NetworkResult<Frame> {
         let result = self.read_unpack();
         let (size, category) = self.fold_result(result, true)?;
-        let frame = Frame::read(&self.payload[..size], category);
-        match frame {
-            Ok(result) => Ok(result),
-            Err(err) => {
-                let net_err = err.into();
-
-                if let NetworkError::Fatal(_) = net_err {
-                    self.close(true);
-                }
-
-                Err(net_err)
-            }
-        }
+        self.fold_result(Frame::read(&self.payload[..size], category), true)
     }
 
     /// Read and unpack the data from the read buffer into the payload buffer.
@@ -715,7 +703,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_batch(&mut outgoing);
+        channel.write_payload(&mut outgoing);
 
         assert_eq!(outgoing.len(), 0);
         assert_eq!(channel.server_sequence, 1);
@@ -752,7 +740,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_batch(&mut outgoing);
+        channel.write_payload(&mut outgoing);
 
         assert_eq!(outgoing.len(), expected_consumed_messages);
         assert_eq!(channel.server_sequence, 1);
@@ -767,7 +755,7 @@ mod tests {
         outgoing.push(TestPayload(1));
 
         // Write out the batch
-        let result = channel.write_batch(&mut outgoing);
+        let result = channel.write_payload(&mut outgoing);
 
         assert_eq!(result, NetworkResult::Wait);
         assert_eq!(outgoing.len(), 1);

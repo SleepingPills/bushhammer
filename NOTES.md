@@ -1,3 +1,4 @@
+
 ### End State
  - Users create accounts on the main platform
  - Users can purchase a server license, which gives them access to the server tooling
@@ -266,14 +267,12 @@ Replication
   the round end when everything gets recycled.
 
 Endpoint
-- pull(channel_id) - pulls a message from the given channel. Returns Ok(frame) if there is one, or None if there
-  isn't. Internally, the endpoint will disconnect the channel if the error was anything other than Error::Wait and
-  add an entry to the channel disconnect list.
-- push(data, channel_id) - puts a message on the given channel. Returns true if the message was accepted for
-  transmission. Serialization is triggered by the channel, so even though the serializable object would check upfront
-  whether there is enough space to contain it, the Error:Wait will be propagated through the channel. If the result
-  is false, the message was not accepted (either due to an error or because the buffer is full).
-  If there is any other error than Error::Wait, the channel will be disconnected and put on the disconnect list.
+- pull(channel_id, payload_batch) - pulls all messages from the given channel into the batch
+  Internally, the endpoint will disconnect the channel if the error was anything other than Error::Wait and
+  add an entry to the change queue. The method returns nothing, if there was a fatal error, a disconnect
+  entry is added for the channel.
+- push(channel_id, payload_batch) - puts as many messages as possible from the given batch on the channel. 
+  Returns nothing, but any fatal error messages will result in a disconnect entry on the channel change queue. 
 - sync() - Carries out the actual transmissions. Any errors (apart from Error:Wait) result in disconnection.
   Calls the housekeeping function periodically.
 - housekeeping() - Go through each channel and depending on it's state:
@@ -338,3 +337,5 @@ Reading
 Write
  - write() sends control message
  - write_payload() will
+ 
+Do we use two phase reads, or RefCell<Payload> in the frame?

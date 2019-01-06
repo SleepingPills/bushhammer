@@ -27,7 +27,7 @@ fn add_ents(c: &mut Criterion) {
         type Data = Components<(Read<'a, C1>, Write<'a, C2>)>;
 
         #[inline]
-        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}
+        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {}
     }
 
     c.bench_function("Add Entity", move |b| {
@@ -101,7 +101,7 @@ fn remove_ents(c: &mut Criterion) {
         type Data = Components<(Read<'a, C1>, Write<'a, C2>)>;
 
         #[inline]
-        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext) {}
+        fn run(&mut self, _data: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {}
     }
 
     c.bench_function("Remove Entity", move |b| {

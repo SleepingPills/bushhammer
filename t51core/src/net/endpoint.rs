@@ -1,5 +1,5 @@
 use crate::net::channel::Channel;
-use crate::net::frame::{Frame, NoPayload};
+use crate::net::frame::{Frame};
 use crate::net::shared::PayloadBatch;
 use crate::net::shared::{Serialize, UserId};
 use std::net::{TcpListener, TcpStream};
@@ -59,9 +59,9 @@ impl Endpoint {
 //        Ok(())
 //    }
 
-    pub fn pull(&mut self, channel_id: ChannelId) -> Option<Frame<&[u8]>> {
-        unimplemented!()
-    }
+//    pub fn pull(&mut self, channel_id: ChannelId) -> Option<Frame<&[u8]>> {
+//        unimplemented!()
+//    }
 
     pub fn sync(&mut self, current_time: time::Instant) {
         self.current_time = current_time;

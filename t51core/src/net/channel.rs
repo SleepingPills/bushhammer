@@ -1,9 +1,10 @@
 use crate::net::buffer::Buffer;
 use crate::net::crypto;
-use crate::net::frame::{Category, Frame, ControlFrame, PayloadInfo};
-use crate::net::shared::{ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
+use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
+use crate::net::shared::{
+    Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId,
+};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::{Shutdown, TcpStream};
@@ -22,6 +23,7 @@ const fn max_plain_payload_size(capacity: usize) -> usize {
     capacity - OVERHEAD_SIZE
 }
 
+// TODO: Add usages
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum ChannelState {
     Handshake(Instant),
@@ -66,7 +68,6 @@ impl Channel {
     /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
     pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
-
         let now = Instant::now();
 
         Channel {
@@ -206,7 +207,8 @@ impl Channel {
 
 impl Channel {
     /// Write control data to the channel.
-    pub fn write_control<P: Serialize>(&mut self, frame: ControlFrame) -> NetworkResult<()> {
+    #[inline]
+    pub fn write_control(&mut self, frame: ControlFrame) -> NetworkResult<()> {
         match self.write_control_core(frame) {
             Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
             result => result,
@@ -214,6 +216,7 @@ impl Channel {
     }
 
     /// Write payload data to the channel from a batch buffer.
+    #[inline]
     pub fn write_payload<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
         match self.write_payload_core(batch) {
             Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
@@ -221,7 +224,7 @@ impl Channel {
         }
     }
 
-    fn write_control_core<P: Serialize>(&mut self, frame: ControlFrame) -> NetworkResult<()> {
+    fn write_control_core(&mut self, frame: ControlFrame) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -298,11 +301,28 @@ impl Channel {
     /// Read the data on the channel into a frame. Only one frame will be returned at a time
     /// so this method should be called until NetworkResult::Wait is returned.
     ///
+    /// Data for payload frames is retrieved by a follow up call to `read_payload`. The call must
+    /// be made before calling `read` again, otherwise it will be overwritten by the next message.
+    ///
     /// The channel will be automatically disconnected in case an error is encountered.
+    #[inline]
     pub fn read(&mut self) -> NetworkResult<Frame> {
         let result = self.read_unpack();
         let (size, category) = self.fold_result(result, true)?;
         self.fold_result(Frame::read(&self.payload[..size], category), true)
+    }
+
+    /// Reads the payload into the supplied batch.
+    ///
+    /// The channel will be automatically disconnected in case an error is encountered.
+    #[inline]
+    pub fn read_payload<P: Deserialize>(
+        &self,
+        batch: &mut PayloadBatch<P>,
+        pinfo: PayloadInfo,
+    ) -> NetworkResult<()> {
+        let mut cursor = Cursor::new(pinfo.select(&self.payload));
+        batch.read(&mut cursor)
     }
 
     /// Read and unpack the data from the read buffer into the payload buffer.
@@ -319,9 +339,9 @@ impl Channel {
         let sequence = stream.read_u64::<BigEndian>()?;
         let payload_size = stream.read_u16::<BigEndian>()? as usize;
 
-        // Return immediately if the payload size is zero
+        // Bail out if the payload size is zero
         if payload_size == 0 {
-            return Ok((0, category));
+            return Err(NetworkError::Fatal(ErrorType::EmptyPayload));
         }
 
         // Bail out if the payload cannot possibly fit in the buffer along with the header
@@ -627,7 +647,7 @@ mod tests {
 
         let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), NetworkError::Expired);
+        assert_eq!(result.err().unwrap(), NetworkError::Fatal(ErrorType::Expired));
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -644,7 +664,7 @@ mod tests {
 
         let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), NetworkError::VersionMismatch);
+        assert_eq!(result.err().unwrap(), NetworkError::Fatal(ErrorType::VersionMismatch));
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -661,7 +681,7 @@ mod tests {
 
         let result = channel.read_connection_token_core(&secret_key);
 
-        assert_eq!(result.err().unwrap(), NetworkError::ProtocolMismatch);
+        assert_eq!(result.unwrap_err(), NetworkError::Fatal(ErrorType::ProtocolMismatch));
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -669,30 +689,25 @@ mod tests {
     fn test_write_read_frame_roundtrip() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         assert_eq!(channel.server_sequence, 1);
 
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read();
+        let response = channel.read().unwrap();
 
-        let mut stream = match response {
-            NetworkResult::Ok(Frame::Payload(stream)) => stream,
+        match response {
+            Frame::Control(ControlFrame::Keepalive(frame)) => assert_eq!(frame, 123),
             resp => panic!("Unexpected response {:?}", resp),
         };
 
-        let received_payload = stream.read_u64::<BigEndian>().unwrap();
-
-        assert_eq!(received_payload, payload);
         assert_eq!(channel.client_sequence, 1);
     }
 
     #[test]
-    fn test_write_read_batch_roundtrip() {
+    fn test_write_batch_read_batch_roundtrip() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
         let expected_consumed_messages = 100;
@@ -711,16 +726,14 @@ mod tests {
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
         mem::swap(&mut channel.server_key, &mut channel.client_key);
 
-        let response = channel.read();
-
-        let stream = match response {
-            NetworkResult::Ok(Frame::Payload(stream)) => stream,
+        let pinfo = match channel.read().unwrap() {
+            Frame::Payload(pinfo) => pinfo,
             resp => panic!("Unexpected response {:?}", resp),
         };
 
         // Read out the messages into the receiving batch buffer
         let mut received = PayloadBatch::<TestPayload>::new();
-        received.read(&mut Cursor::new(stream)).unwrap();
+        channel.read_payload(&mut received, pinfo).unwrap();
 
         assert_eq!(received.len(), expected_consumed_messages as usize);
         assert_eq!(channel.client_sequence, 1);
@@ -757,7 +770,7 @@ mod tests {
         // Write out the batch
         let result = channel.write_payload(&mut outgoing);
 
-        assert_eq!(result, NetworkResult::Wait);
+        assert_eq!(result.unwrap_err(), NetworkError::Wait);
         assert_eq!(outgoing.len(), 1);
         assert_eq!(channel.server_sequence, 0);
     }
@@ -775,12 +788,9 @@ mod tests {
 
         channel.read_buffer.move_tail(HEADER_SIZE);
 
-        let stream = match channel.read() {
-            NetworkResult::Ok(Frame::Payload(stream)) => stream,
-            resp => panic!("Unexpected response {:?}", resp),
-        };
+        let response = channel.read_unpack();
 
-        assert_eq!(stream, &[0u8; 0]);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::EmptyPayload));
     }
 
     #[test]
@@ -789,7 +799,7 @@ mod tests {
 
         let response = channel.read();
 
-        assert_eq!(response, NetworkResult::Wait);
+        assert_eq!(response.unwrap_err(), NetworkError::Wait);
     }
 
     #[test]
@@ -810,7 +820,7 @@ mod tests {
 
         let response = channel.read();
 
-        assert_eq!(response, NetworkResult::Wait);
+        assert_eq!(response.unwrap_err(), NetworkError::Wait);
     }
 
     #[test]
@@ -828,7 +838,7 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::PayloadTooLarge);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::PayloadTooLarge));
     }
 
     #[test]
@@ -848,16 +858,14 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::SequenceMismatch);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::SequenceMismatch));
     }
 
     #[test]
     fn test_read_frame_err_crypto_key_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123));
 
         assert_eq!(channel.server_sequence, 1);
 
@@ -866,16 +874,14 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::Crypto));
     }
 
     #[test]
     fn test_read_frame_err_crypto_sequence_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123));
 
         let data = channel.write_buffer.data_slice();
 
@@ -889,16 +895,14 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::Crypto));
     }
 
     #[test]
     fn test_read_frame_err_crypto_version_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123));
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
@@ -909,16 +913,14 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::Crypto));
     }
 
     #[test]
     fn test_read_frame_err_crypto_protocol_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123));
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
@@ -929,16 +931,14 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::Crypto));
     }
 
     #[test]
     fn test_read_frame_err_crypto_category_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        let payload = 123123123;
-
-        channel.write(Frame::Payload(TestPayload(payload)));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         let data = channel.write_buffer.data_slice();
 
@@ -951,7 +951,7 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.err().unwrap(), NetworkError::Crypto);
+        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::Crypto));
     }
 
     #[test]
@@ -960,9 +960,8 @@ mod tests {
 
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - HEADER_SIZE);
 
-        let payload = 123123123;
-        let result = channel.write(Frame::Payload(TestPayload(payload)));
+        let result = channel.write_control(ControlFrame::Keepalive(123));
 
-        assert_eq!(result, NetworkResult::Wait);
+        assert_eq!(result.unwrap_err(), NetworkError::Wait);
     }
 }

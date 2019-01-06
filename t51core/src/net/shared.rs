@@ -16,7 +16,7 @@ pub enum ErrorType {
     Duplicate,
     AlreadyConnected,
     PayloadTooLarge,
-    Wait,
+    EmptyPayload,
     IncorrectCategory,
     ProtocolMismatch,
     VersionMismatch,
@@ -68,12 +68,12 @@ impl SizedRead for io::Cursor<&[u8]> {
 ///
 /// Should return `Error::Wait` in case there is not enough capacity in the stream.
 pub trait Serialize {
-    fn serialize<W: SizedWrite>(&self, stream: &mut W) -> Result<(), NetworkError>;
+    fn serialize<W: SizedWrite>(&self, stream: &mut W) -> NetworkResult<()>;
 }
 
 /// Trait for manually deserialized objects.
 pub trait Deserialize: Sized {
-    fn deserialize<R: SizedRead>(stream: &mut R) -> Result<Self, NetworkError>;
+    fn deserialize<R: SizedRead>(stream: &mut R) -> NetworkResult<Self>;
 }
 
 /// Batched payload messages for efficient serialization/deserialization.
@@ -110,7 +110,7 @@ impl<P: Serialize> PayloadBatch<P> {
 
     /// Write as many payload messages as possible to the destination stream.
     #[inline]
-    pub fn write<W: SizedWrite>(&mut self, stream: &mut W) -> Result<(), NetworkError> {
+    pub fn write<W: SizedWrite>(&mut self, stream: &mut W) -> NetworkResult<()> {
         let mut remaining = self.data.len();
 
         for payload in self.data.iter_mut() {
@@ -134,7 +134,7 @@ impl<P: Serialize> PayloadBatch<P> {
 impl<P: Deserialize> PayloadBatch<P> {
     /// Read as many messages as possible form the source stream into the current batch.
     #[inline]
-    pub fn read<R: SizedRead>(&mut self, stream: &mut R) -> Result<(), NetworkError> {
+    pub fn read<R: SizedRead>(&mut self, stream: &mut R) -> NetworkResult<()> {
         while stream.remaining_data() > 0 {
             self.data.push(P::deserialize(stream)?)
         }

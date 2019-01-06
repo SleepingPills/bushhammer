@@ -155,7 +155,7 @@ fn system_loop_linear_bench(c: &mut Criterion) {
         type Data = Components<(Read<'a, C1>, Write<'a, C2>)>;
 
         #[inline]
-        fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
+        fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
             let mut c = 0f32;
 
             for (a, b) in data.components() {
@@ -218,7 +218,7 @@ fn system_loop_multi_shards(c: &mut Criterion) {
         type Data = Components<(Read<'a, C1>, Write<'a, C2>)>;
 
         #[inline]
-        fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext) {
+        fn run(&mut self, mut data: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
             let mut c = 0f32;
 
             for (a, b) in data.components() {
@@ -284,7 +284,7 @@ fn system_loop_foreach_ent(c: &mut Criterion) {
         type Data = Components<(Read<'a, C1>, Write<'a, C2>)>;
 
         #[inline]
-        fn run(&mut self, mut   data: Context<Self::Data>, _tx: &mut TransactionContext) {
+        fn run(&mut self, mut   data: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
             let mut c = 0f32;
             let entity_ids: Vec<_> = (0..5000).map(|id| id.into()).collect();
 

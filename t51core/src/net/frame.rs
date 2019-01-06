@@ -1,7 +1,7 @@
 use crate::net::shared::{ErrorType, NetworkError, NetworkResult, Serialize, SizedWrite, UserId};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use std::io;
 
+#[derive(Debug, Eq, PartialEq)]
 pub enum Category {
     Payload = 0,
     Keepalive = 1,
@@ -10,13 +10,23 @@ pub enum Category {
 }
 
 impl From<Category> for u8 {
+    #[inline]
     fn from(cat: Category) -> Self {
         cat as u8
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 #[repr(transparent)]
 pub struct PayloadInfo(usize);
+
+impl PayloadInfo {
+    /// Selects the correct slice of the payload buffer
+    #[inline]
+    pub(crate) fn select(self, payload: &[u8]) -> &[u8] {
+        &payload[..self.0]
+    }
+}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum ControlFrame {
@@ -32,8 +42,9 @@ pub enum Frame {
 }
 
 impl Frame {
+    #[inline]
     pub fn read(mut buffer: &[u8], category: u8) -> Result<Frame, NetworkError> {
-        if category > Category::ConnectionClosed {
+        if category > Category::ConnectionClosed.into() {
             return Err(NetworkError::Fatal(ErrorType::IncorrectCategory));
         }
 
@@ -48,6 +59,7 @@ impl Frame {
 }
 
 impl ControlFrame {
+    #[inline]
     pub fn category(&self) -> u8 {
         match self {
             ControlFrame::Keepalive(_) => Category::Keepalive.into(),
@@ -56,11 +68,12 @@ impl ControlFrame {
         }
     }
 
+    #[inline]
     pub fn write<W: SizedWrite>(self, stream: &mut W) -> Result<(), NetworkError> {
         match self {
-            Frame::Keepalive(user_id) => stream.write_u64::<BigEndian>(user_id)?,
-            Frame::ConnectionAccepted(user_id) => stream.write_u64::<BigEndian>(user_id)?,
-            Frame::ConnectionClosed(user_id) => stream.write_u64::<BigEndian>(user_id)?,
+            ControlFrame::Keepalive(user_id) => stream.write_u64::<BigEndian>(user_id)?,
+            ControlFrame::ConnectionAccepted(user_id) => stream.write_u64::<BigEndian>(user_id)?,
+            ControlFrame::ConnectionClosed(user_id) => stream.write_u64::<BigEndian>(user_id)?,
         }
         Ok(())
     }

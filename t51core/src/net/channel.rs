@@ -71,7 +71,7 @@ impl Channel {
 
         Channel {
             stream,
-            state: ChannelState::Disconnected,
+            state: ChannelState::Handshake(now),
             version,
             protocol,
             client_sequence: 0,
@@ -89,11 +89,12 @@ impl Channel {
     /// Opens the channel using a new underlying stream. The channel must be closed for this
     /// operation to succeed.
     #[inline]
-    pub fn open(&mut self, stream: TcpStream) {
+    pub fn open(&mut self, stream: TcpStream, now: Instant) {
         if self.state != ChannelState::Disconnected {
             panic!("Attempted to open an already open channel");
         }
 
+        self.state = ChannelState::Handshake(now);
         self.stream = stream;
     }
 
@@ -110,6 +111,8 @@ impl Channel {
                 drop(self.send_raw());
             }
         }
+
+        self.state = ChannelState::Disconnected;
 
         self.client_sequence = 0;
         self.server_sequence = 0;
@@ -405,6 +408,8 @@ impl Channel {
         self.client_key = token.data.client_key;
 
         self.read_buffer.move_head(ConnectionToken::SIZE);
+        self.state = ChannelState::Connected(token.data.user_id);
+
         Ok(token.data.user_id)
     }
 }

@@ -23,9 +23,8 @@ const fn max_plain_payload_size(capacity: usize) -> usize {
     capacity - OVERHEAD_SIZE
 }
 
-// TODO: Add usages
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum ChannelState {
+pub enum ChannelState {
     Handshake(Instant),
     Connected(UserId),
     Disconnected,
@@ -718,7 +717,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_payload(&mut outgoing);
+        channel.write_payload(&mut outgoing).unwrap();
 
         assert_eq!(outgoing.len(), 0);
         assert_eq!(channel.server_sequence, 1);
@@ -753,7 +752,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_payload(&mut outgoing);
+        channel.write_payload(&mut outgoing).unwrap();
 
         assert_eq!(outgoing.len(), expected_consumed_messages);
         assert_eq!(channel.server_sequence, 1);
@@ -865,7 +864,7 @@ mod tests {
     fn test_read_frame_err_crypto_key_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.write_control(ControlFrame::Keepalive(123));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         assert_eq!(channel.server_sequence, 1);
 
@@ -881,7 +880,7 @@ mod tests {
     fn test_read_frame_err_crypto_sequence_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.write_control(ControlFrame::Keepalive(123));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         let data = channel.write_buffer.data_slice();
 
@@ -902,7 +901,7 @@ mod tests {
     fn test_read_frame_err_crypto_version_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.write_control(ControlFrame::Keepalive(123));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);
@@ -920,7 +919,7 @@ mod tests {
     fn test_read_frame_err_crypto_protocol_mismatch() {
         let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
 
-        channel.write_control(ControlFrame::Keepalive(123));
+        channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
         // Swap both read/write buffers and client/server key so decryption proceeds correctly
         mem::swap(&mut channel.read_buffer, &mut channel.write_buffer);

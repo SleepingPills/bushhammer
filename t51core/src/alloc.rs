@@ -28,7 +28,10 @@ impl DynPtr {
     where
         T: 'static,
     {
-        DynPtr(NonNull::new_unchecked(inst as *mut T).cast::<()>(), TypeId::of::<T>())
+        DynPtr(
+            NonNull::new_unchecked(inst as *mut T).cast::<()>(),
+            TypeId::of::<T>(),
+        )
     }
 
     /// Cast the pointer to the specified type. Will panic if the desired type does not match
@@ -74,7 +77,7 @@ impl DerefMut for DynPtr {
 
 /// A pool allocator that keeps all items in an efficient dense vector. New elements will be
 /// used to fill up holes created by previous reclamation.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct VecPool<T> {
     store: Vec<T>,
     queue: Vec<usize>,

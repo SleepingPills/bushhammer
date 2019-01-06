@@ -252,7 +252,7 @@ impl GameState {
 
         for (&key, shard) in ctx.added.iter_mut() {
             // Only process shards with actual data in them
-            if shard.entity_ids.len() > 0 {
+            if !shard.entity_ids.is_empty() {
                 self.process_add_uniform(key, shard);
             }
         }

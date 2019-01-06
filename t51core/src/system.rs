@@ -725,7 +725,7 @@ pub mod resource {
 
         fn acquire(resources: &AnyMap) -> Self::Data {
             Reader {
-                data: resources.get::<NonNull<T>>().expect("Resource missing").clone(),
+                data: *resources.get::<NonNull<T>>().expect("Resource missing"),
                 _x: PhantomData,
             }
         }
@@ -739,7 +739,7 @@ pub mod resource {
 
         fn acquire(resources: &AnyMap) -> Self::Data {
             Writer {
-                data: resources.get::<NonNull<T>>().expect("Resource missing").clone(),
+                data: *resources.get::<NonNull<T>>().expect("Resource missing"),
                 _x: PhantomData,
             }
         }
@@ -818,9 +818,7 @@ pub mod resource {
     impl ResourceQueryTup for () {
         type DataTup = ();
 
-        fn reify(_: &AnyMap) -> Self::DataTup {
-            ()
-        }
+        fn reify(_: &AnyMap) -> Self::DataTup {}
     }
 
     impl<T> ResourceQueryTup for T

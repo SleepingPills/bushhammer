@@ -59,8 +59,11 @@ pub struct ShardDef {
 
 impl ShardDef {
     #[inline]
-    fn new(comp_ids: &[ComponentId], builders: &Vec<Box<BuildCompDef>>) -> ShardDef {
-        let map: HashMap<_, _> = comp_ids.iter().map(|id| (*id, builders[id.indexer()].build())).collect();
+    fn new(comp_ids: &[ComponentId], builders: &[Box<BuildCompDef>]) -> ShardDef {
+        let map: HashMap<_, _> = comp_ids
+            .iter()
+            .map(|id| (*id, builders[id.indexer()].build()))
+            .collect();
         ShardDef {
             entity_ids: Vec::new(),
             components: map,
@@ -104,7 +107,7 @@ impl TransactionContext {
 
     /// Create a batch entity builder for ingesting JSON data
     pub fn batch_json<'i>(&'i mut self, comp_ids: &'i [ComponentId]) -> JsonBatchBuilder<'i> {
-        let shard_key = ShardKey::from_iter(comp_ids.iter());
+        let shard_key: ShardKey = comp_ids.iter().collect();
 
         let builders = &self.builders;
         let shard = self
@@ -158,7 +161,7 @@ pub struct JsonBatchBuilder<'a> {
 
 impl<'a> JsonBatchBuilder<'a> {
     #[inline]
-    pub fn add(&mut self, json_str: &Vec<String>) {
+    pub fn add(&mut self, json_str: &[String]) {
         if self.comp_ids.len() != json_str.len() {
             panic!("Number of component Ids does not match the number of data inputs")
         }
@@ -245,7 +248,11 @@ pub struct BatchBuilder<'a, T> {
 
 impl<'a, T> BatchBuilder<'a, T> {
     #[inline]
-    pub fn new(tup: T, entity_vec: &'a mut Vec<EntityId>, id_counter: Arc<AtomicUsize>) -> BatchBuilder<'a, T> {
+    pub fn new(
+        tup: T,
+        entity_vec: &'a mut Vec<EntityId>,
+        id_counter: Arc<AtomicUsize>,
+    ) -> BatchBuilder<'a, T> {
         BatchBuilder {
             tup,
             entity_vec,
@@ -286,6 +293,7 @@ macro_rules! batch_builder_tup {
         where
             $($field_type: Component),*
         {
+            #[allow(clippy::too_many_arguments)]
             #[inline]
             pub fn add(&mut self, $($field_name: $field_type),*) {
                 self.batch_counter += 1;
@@ -406,8 +414,8 @@ pub trait CompDef: DynVecOps + Debug {
 }
 
 impl<T> CompDef for Vec<T>
-    where
-        T: 'static + Component,
+where
+    T: 'static + Component,
 {
     #[inline]
     fn push_json(&mut self, json: &str) {
@@ -425,16 +433,18 @@ pub type CompDefVec = DynVec<CompDef>;
 impl CompDefVec {
     #[inline]
     pub fn push<T>(&mut self, item: T)
-        where
-            T: 'static + Component,
+    where
+        T: 'static + Component,
     {
         self.cast_mut_vector::<T>().push(item);
     }
 
+    // Quite nasty hack to allow internal mutability
+    #[allow(clippy::mut_from_ref)]
     #[inline]
     pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
-        where
-            T: 'static + Component,
+    where
+        T: 'static + Component,
     {
         &mut *(self.get_inner_ptr().cast_checked_raw())
     }

@@ -1,6 +1,7 @@
 use lazy_static::lazy_static;
 use std::fmt;
 use std::intrinsics::type_name;
+use std::iter::FromIterator;
 use std::mem;
 use std::ops;
 use std::sync::{Mutex, MutexGuard};
@@ -92,15 +93,17 @@ macro_rules! bitflag_type_id {
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         pub struct $composite_key($type);
 
+        impl<'a> FromIterator<&'a $name> for $composite_key {
+            #[inline]
+            fn from_iter<I: IntoIterator<Item = &'a $name>>(iter: I) -> $composite_key {
+                $composite_key(iter.into_iter().fold(0, |acc, cid| acc | cid.id))
+            }
+        }
+
         impl $composite_key {
             #[inline]
             pub fn empty() -> $composite_key {
                 $composite_key(0)
-            }
-
-            #[inline]
-            pub fn from_iter<'a>(keys: impl Iterator<Item = &'a $name>) -> $composite_key {
-                $composite_key(keys.fold(0, |acc, cid| acc | cid.id))
             }
 
             #[inline]
@@ -114,10 +117,10 @@ macro_rules! bitflag_type_id {
                 // branch in this case.
                 let (first_index, last_index) = match self.0 {
                     0 => (0usize, 0usize),
-                    _ => {
-                        (self.0.trailing_zeros() as usize,
-                         ID_BIT_LENGTH - self.0.leading_zeros() as usize)
-                    }
+                    _ => (
+                        self.0.trailing_zeros() as usize,
+                        ID_BIT_LENGTH - self.0.leading_zeros() as usize,
+                    ),
                 };
 
                 let mut field = self.0 >> first_index;
@@ -176,6 +179,7 @@ macro_rules! bitflag_type_id {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::Add for $name {
             type Output = $composite_key;
 
@@ -185,6 +189,7 @@ macro_rules! bitflag_type_id {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::Add<$composite_key> for $name {
             type Output = $composite_key;
 
@@ -194,6 +199,7 @@ macro_rules! bitflag_type_id {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::Add<$name> for $composite_key {
             type Output = $composite_key;
 
@@ -203,12 +209,14 @@ macro_rules! bitflag_type_id {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::AddAssign<$name> for $composite_key {
             fn add_assign(&mut self, rhs: $name) {
                 self.0 |= rhs.id;
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::Sub<$name> for $composite_key {
             type Output = $composite_key;
 
@@ -218,6 +226,7 @@ macro_rules! bitflag_type_id {
             }
         }
 
+        #[allow(clippy::suspicious_arithmetic_impl)]
         impl ops::SubAssign<$name> for $composite_key {
             #[inline]
             fn sub_assign(&mut self, rhs: $name) {
@@ -230,6 +239,27 @@ macro_rules! bitflag_type_id {
 pub(crate) type BitFlagId = u64;
 const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
-bitflag_type_id!(ComponentId, BitFlagId, COMP_NAME_VEC, COMP_ID_VEC, ShardKey, ComponentIdMutex);
-bitflag_type_id!(SystemId, BitFlagId, SYS_NAME_VEC, SYS_ID_VEC, BundleKey, SystemIdMutex);
-bitflag_type_id!(TopicId, BitFlagId, TOPIC_NAME_VEC, TOPIC_ID_VEC, TopicBundle, TopicIdMutex);
+bitflag_type_id!(
+    ComponentId,
+    BitFlagId,
+    COMP_NAME_VEC,
+    COMP_ID_VEC,
+    ShardKey,
+    ComponentIdMutex
+);
+bitflag_type_id!(
+    SystemId,
+    BitFlagId,
+    SYS_NAME_VEC,
+    SYS_ID_VEC,
+    BundleKey,
+    SystemIdMutex
+);
+bitflag_type_id!(
+    TopicId,
+    BitFlagId,
+    TOPIC_NAME_VEC,
+    TOPIC_ID_VEC,
+    TopicBundle,
+    TopicIdMutex
+);

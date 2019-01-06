@@ -55,8 +55,10 @@ where
     }
 }
 
+#[allow(clippy::box_vec)]
 pub struct Shard {
     pub(crate) key: ShardKey,
+    // The pointer to the vec itself needs to be stable, hence the box.
     entities: Box<Vec<EntityId>>,
     store: HashMap<ComponentId, Box<ComponentVec>>,
 }
@@ -79,7 +81,7 @@ impl Shard {
     }
 
     pub fn ingest(&mut self, shard_def: &mut ShardDef) -> usize {
-        if shard_def.entity_ids.len() == 0 {
+        if shard_def.entity_ids.is_empty() {
             panic!("No entities to ingest");
         }
 

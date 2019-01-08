@@ -309,33 +309,3 @@ https://uterrains.com/demo/
 https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176
 https://assetstore.unity.com/packages/tools/modeling/voxelab-complete-edition-58423
 https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terrain-engine-31100
-
-# Frame
-TODO: The payload will be moved out of the frame. The frame will only contain the size of
-the payload.
-
-The channel will get a second read method, read_batch (analogue of write_batch), that will
-read into the supplied batch, given the size info from payload.
-
-There'll be a PayloadInfo struct, initially containing only the payload size most probably.
-
-struct PayloadInfo(usize);
-
-pub fn read_batch(&self, batch, payload_info)
-
-This also means that Frame no longer needs generics and becomes much simpler.
-
-
-
-ControlFrame used by the write_control method on channel
-Frame is used by the read method on the channel
-
-Reading
- - read() returns a Frame, containing either payload (with payload info) or control message
- - read_payload() will read in the payload based on the payload info to a payloadbatch
-
-Write
- - write() sends control message
- - write_payload() will
- 
-Do we use two phase reads, or RefCell<Payload> in the frame?

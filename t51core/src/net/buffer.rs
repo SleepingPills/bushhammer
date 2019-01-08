@@ -34,6 +34,12 @@ impl Buffer {
         self.data.len()
     }
 
+    /// Returns true in case the buffer is empty, false otherwise.
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.data.is_empty()
+    }
+
     /// Remaining free capacity in the buffer.
     #[inline]
     pub fn free_capacity(&self) -> usize {

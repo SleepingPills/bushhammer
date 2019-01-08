@@ -5,6 +5,7 @@ use crate::net::shared::{
     Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::{Shutdown, TcpStream};
@@ -101,16 +102,18 @@ impl Channel {
     /// Closes the channel, the underlying stream and clears out all private data.
     #[inline]
     pub fn close(&mut self, notify: bool) {
-        self.read_buffer.clear();
-        self.write_buffer.clear();
-
         if notify {
             // Attempt to send a disconnection notice, but ignore any failures
             if let ChannelState::Connected(user_id) = self.state {
-                drop(self.write_control_core(ControlFrame::ConnectionClosed(user_id)));
+                drop(self.write_control(ControlFrame::ConnectionClosed(user_id)));
                 drop(self.send_raw());
             }
         }
+
+        // Only clear the buffers after the disconnect notification attempt was made. The data could be
+        // corrupted otherwise.
+        self.read_buffer.clear();
+        self.write_buffer.clear();
 
         self.state = ChannelState::Disconnected;
 
@@ -128,35 +131,33 @@ impl Channel {
     /// Read all available data off the network and updates the last ingress time if > 0 bytes have been
     /// transmitted.
     #[inline]
-    pub fn recieve(&mut self, now: Instant) -> NetworkResult<usize> {
-        let result = self.read_buffer.ingress(&mut self.stream);
-        let count = self.fold_result(result, false)?;
-
-        if count > 0 {
+    pub fn recieve(&mut self, now: Instant) -> NetworkResult<()> {
+        if Self::fold_result(self.read_buffer.ingress(&mut self.stream))? > 0 {
             self.last_ingress = now;
         }
 
-        Ok(count)
+        Ok(())
     }
 
     /// Send all the buffered data to the network and updates the last egress time if > 0 bytes have been
     /// transmitted.
     #[inline]
-    pub fn send(&mut self, now: Instant) -> NetworkResult<usize> {
-        let count = self.send_raw()?;
+    pub fn send(&mut self, now: Instant) -> NetworkResult<()> {
+        if self.write_buffer.is_empty() {
+            return Ok(());
+        }
 
-        if count > 0 {
+        if Self::fold_result(self.send_raw())? > 0 {
             self.last_egress = now;
         }
 
-        Ok(count)
+        Ok(())
     }
 
     /// Sends all the buffered data.
     #[inline]
-    fn send_raw(&mut self) -> NetworkResult<usize> {
-        let result = self.write_buffer.egress(&mut self.stream);
-        self.fold_result(result, false)
+    fn send_raw(&mut self) -> Result<usize, io::Error> {
+        self.write_buffer.egress(&mut self.stream)
     }
 
     /// Constructs the array holding additional data
@@ -187,46 +188,17 @@ impl Channel {
     /// Monomorphises the result to use the NetworkError plumbing and closes the channel in case
     /// a fatal error has occured.
     #[inline]
-    fn fold_result<T, E: Into<NetworkError>>(
-        &mut self,
-        result: Result<T, E>,
-        notify: bool,
-    ) -> NetworkResult<T> {
+    fn fold_result<T, E: Into<NetworkError>>(result: Result<T, E>) -> NetworkResult<T> {
         match result {
             Ok(result) => Ok(result),
-            Err(err) => {
-                let net_err = err.into();
-
-                if let NetworkError::Fatal(_) = net_err {
-                    self.close(notify);
-                }
-
-                Err(net_err)
-            }
+            Err(err) => Err(err.into()),
         }
     }
 }
 
 impl Channel {
     /// Write control data to the channel.
-    #[inline]
     pub fn write_control(&mut self, frame: ControlFrame) -> NetworkResult<()> {
-        match self.write_control_core(frame) {
-            Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
-            result => result,
-        }
-    }
-
-    /// Write payload data to the channel from a batch buffer.
-    #[inline]
-    pub fn write_payload<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
-        match self.write_payload_core(batch) {
-            Err(NetworkError::Fatal(err)) => panic!("Fatal channel write error {:?}", err),
-            result => result,
-        }
-    }
-
-    fn write_control_core(&mut self, frame: ControlFrame) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -246,7 +218,8 @@ impl Channel {
         self.write(payload_size, category)
     }
 
-    fn write_payload_core<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
+    /// Write payload data to the channel from a batch buffer.
+    pub fn write_payload<P: Serialize>(&mut self, batch: &mut PayloadBatch<P>) -> NetworkResult<()> {
         // Bail out if there isn't enough capacity to write the data
         if self.write_buffer.free_capacity() <= OVERHEAD_SIZE {
             return Err(NetworkError::Wait);
@@ -309,9 +282,8 @@ impl Channel {
     /// The channel will be automatically disconnected in case an error is encountered.
     #[inline]
     pub fn read(&mut self) -> NetworkResult<Frame> {
-        let result = self.read_unpack();
-        let (size, category) = self.fold_result(result, true)?;
-        self.fold_result(Frame::read(&self.payload[..size], category), true)
+        let (size, category) = self.read_unpack()?;
+        Frame::read(&self.payload[..size], category)
     }
 
     /// Reads the payload into the supplied batch.
@@ -384,12 +356,7 @@ impl Channel {
 
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    pub fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> NetworkResult<UserId> {
-        let result = self.read_connection_token_core(secret_key);
-        self.fold_result(result, false)
-    }
-
-    fn read_connection_token_core(&mut self, secret_key: &[u8; 32]) -> Result<UserId, NetworkError> {
+    pub fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId, NetworkError> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
         if token.expires < timestamp_secs() {
@@ -613,7 +580,7 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let user_id = channel.read_connection_token_core(&secret_key).unwrap();
+        let user_id = channel.read_connection_token(&secret_key).unwrap();
 
         assert_eq!(user_id, token.data.user_id);
         assert_eq!(channel.server_key, token.data.server_key);
@@ -632,7 +599,7 @@ mod tests {
             .ingress(&[123u8; ConnectionToken::SIZE - 1][..])
             .unwrap();
 
-        let result = channel.read_connection_token_core(&secret_key);
+        let result = channel.read_connection_token(&secret_key);
 
         assert_eq!(result.err().unwrap(), NetworkError::Wait);
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE - 1);
@@ -649,7 +616,7 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token_core(&secret_key);
+        let result = channel.read_connection_token(&secret_key);
 
         assert_eq!(result.err().unwrap(), NetworkError::Fatal(ErrorType::Expired));
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
@@ -666,9 +633,12 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token_core(&secret_key);
+        let result = channel.read_connection_token(&secret_key);
 
-        assert_eq!(result.err().unwrap(), NetworkError::Fatal(ErrorType::VersionMismatch));
+        assert_eq!(
+            result.err().unwrap(),
+            NetworkError::Fatal(ErrorType::VersionMismatch)
+        );
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -683,9 +653,12 @@ mod tests {
 
         serialize_connection_token(&mut channel.read_buffer, &token, &secret_key);
 
-        let result = channel.read_connection_token_core(&secret_key);
+        let result = channel.read_connection_token(&secret_key);
 
-        assert_eq!(result.unwrap_err(), NetworkError::Fatal(ErrorType::ProtocolMismatch));
+        assert_eq!(
+            result.unwrap_err(),
+            NetworkError::Fatal(ErrorType::ProtocolMismatch)
+        );
         assert_eq!(channel.read_buffer.len(), ConnectionToken::SIZE);
     }
 
@@ -722,7 +695,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_payload(&mut outgoing).unwrap();
+        channel.write_payload(&mut outgoing);
 
         assert_eq!(outgoing.len(), 0);
         assert_eq!(channel.server_sequence, 1);
@@ -794,7 +767,10 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::EmptyPayload));
+        assert_eq!(
+            response.unwrap_err(),
+            NetworkError::Fatal(ErrorType::EmptyPayload)
+        );
     }
 
     #[test]
@@ -842,7 +818,10 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::PayloadTooLarge));
+        assert_eq!(
+            response.unwrap_err(),
+            NetworkError::Fatal(ErrorType::PayloadTooLarge)
+        );
     }
 
     #[test]
@@ -862,7 +841,10 @@ mod tests {
 
         let response = channel.read_unpack();
 
-        assert_eq!(response.unwrap_err(), NetworkError::Fatal(ErrorType::SequenceMismatch));
+        assert_eq!(
+            response.unwrap_err(),
+            NetworkError::Fatal(ErrorType::SequenceMismatch)
+        );
     }
 
     #[test]

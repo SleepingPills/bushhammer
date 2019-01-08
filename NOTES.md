@@ -273,7 +273,9 @@ Endpoint
   entry is added for the channel.
 - push(channel_id, payload_batch) - puts as many messages as possible from the given batch on the channel. 
   Returns nothing, but any fatal error messages will result in a disconnect entry on the channel change queue. 
-- sync() - Carries out the actual transmissions. Any errors (apart from Error:Wait) result in disconnection.
+- sync() - Carries out the actual transmissions. Loop through all live channels and force send any that have data
+  available.
+  Any errors (apart from Error:Wait) result in disconnection.
   Calls the housekeeping function periodically.
 - housekeeping() - Go through each channel and depending on it's state:
   Handshake - checks if the timeout elapsed, if yes, disconnect.

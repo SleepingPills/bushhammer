@@ -36,6 +36,20 @@ impl From<io::Error> for NetworkError {
     }
 }
 
+pub trait ErrorUtils {
+    fn has_failed(&self) -> bool;
+}
+
+impl<T> ErrorUtils for NetworkResult<T> {
+    fn has_failed(&self) -> bool {
+        match self {
+            Ok(_) => false,
+            Err(NetworkError::Wait) => false,
+            _ => true,
+        }
+    }
+}
+
 /// Augmented `io::Write` that is aware of the amount of remaining free capacity in the destination.
 pub trait SizedWrite: io::Write {
     /// Remaining free capacity in the destination.

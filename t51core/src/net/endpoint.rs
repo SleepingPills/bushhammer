@@ -1,6 +1,7 @@
-use crate::net::channel::Channel;
+use crate::net::channel::{Channel, ChannelState};
 use crate::net::frame::{ControlFrame, Frame};
-use crate::net::shared::{Deserialize, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId};
+use crate::net::shared;
+use crate::net::shared::{ErrorUtils};
 use indexmap::IndexSet;
 use std::net::{TcpListener, TcpStream};
 use std::time;
@@ -9,7 +10,7 @@ pub type ChannelId = usize;
 
 #[derive(Debug, Copy, Clone)]
 enum ConnectionChange {
-    Connected(UserId, ChannelId),
+    Connected(shared::UserId, ChannelId),
     Disconnected(ChannelId),
 }
 
@@ -22,7 +23,7 @@ pub struct Endpoint {
     channels: Vec<Channel>,
     // Ids of unused channels
     free_slots: Vec<ChannelId>,
-    connected: IndexSet<ChannelId>,
+    live: IndexSet<ChannelId>,
 
     changes: Vec<ConnectionChange>,
 
@@ -31,61 +32,134 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
+    const HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_secs(5);
+    const INGRESS_TIMEOUT: time::Duration = time::Duration::from_secs(30);
+    const KEEPAILIVE_INTERVAL: time::Duration = time::Duration::from_secs(1);
+
     #[inline]
-    pub fn push<P: Serialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
+    pub fn push<P: shared::Serialize>(&mut self, channel_id: ChannelId, data: &mut shared::PayloadBatch<P>) {
         let channel = &mut self.channels[channel_id];
 
-        channel.write_payload(data).unwrap_or_else(|err| {
-            if let NetworkError::Fatal(_) = err {
-                panic!("Fatal error during write")
-            }
-        });
-        channel.send(self.current_time).unwrap_or_else(|err| {
-            if let NetworkError::Fatal(_) = err {
-                self.disconnect(channel_id, false);
-            }
-        });
+        if channel.write_payload(data).has_failed() {
+            panic!("Fatal write error");
+        }
     }
 
-    pub fn pull<P: Deserialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
-        let channel = &mut self.channels[channel_id];
+    pub fn pull<P: shared::Deserialize>(&mut self, channel_id: ChannelId, data: &mut shared::PayloadBatch<P>) {
+        let mut ctx = self.get_comm_ctx(channel_id);
 
-        channel
-            .read()
-            .and_then(|frame| match frame {
-                Frame::Control(ctr) => {
-                    match ctr {
-                        ControlFrame::ConnectionClosed(_) => channel.close(false),
-                        _ => ()
-                    };
-                    Ok(())
+        match ctx.channel.read() {
+            Ok(frame) => {
+                match frame {
+                    Frame::Control(ctr) => {
+                        match ctr {
+                            // Disconnect notice sent by client. Close channel but don't send notice back.
+                            ControlFrame::ConnectionClosed(_) => ctx.disconnect(false),
+                            // Connection accepted sent by client in error, close channel and notify.
+                            ControlFrame::ConnectionAccepted(_) => ctx.disconnect(true),
+                            // Keepalive requests are ignored at this stage.
+                            ControlFrame::Keepalive(_) => (),
+                        };
+                    }
+                    Frame::Payload(pinfo) => {
+                        if ctx.channel.read_payload(data, pinfo).has_failed() {
+                            ctx.disconnect(true)
+                        }
+                    }
                 }
-                Frame::Payload(pinfo) => {
-                    channel.read_payload(data, pinfo)
-                }
-            })
-            .unwrap_or_else(|err| {
-                if let NetworkError::Fatal(_) = err {
-                    self.disconnect(channel_id, true);
-                }
-            });
+            }
+            Err(shared::NetworkError::Fatal(_)) => ctx.disconnect(true),
+            _ => (),
+        }
     }
 
     pub fn sync(&mut self, now: time::Instant) {
-//        self.channels[0].send(now).unwrap_or_else(|err| {
-//            if let NetworkError::Fatal(_) = err {
-//                self.disconnect(0, false);
-//            }
-//        });
+        let live_set = &mut self.live;
+        let channels = &mut self.channels;
+        let changes = &mut self.changes;
+
+        live_set.retain(|&channel_id| {
+            let channel = &mut channels[channel_id];
+
+            let retain = match channel.has_egress() {
+                true => !channel.send(now).has_failed(),
+                _ => true,
+            };
+
+            // Close the channel in case of a send error. No point in trying to send a notice.
+            if !retain {
+                channel.close(false);
+                changes.push(ConnectionChange::Disconnected(channel_id));
+            }
+
+            retain
+        });
 
         self.current_time = now;
     }
 
+    fn housekeeping(&mut self) {
+        let now = self.current_time;
+        let live_set = &mut self.live;
+        let channels = &mut self.channels;
+        let changes = &mut self.changes;
+
+        live_set.retain(|&channel_id| {
+            let channel = &mut channels[channel_id];
+
+            let retain = match channel.get_state() {
+                ChannelState::Handshake(timestamp) => now.duration_since(timestamp) < Self::HANDSHAKE_TIMEOUT,
+                ChannelState::Connected(user_id) => {
+                    if channel.last_ingress_elapsed(now) >= Self::INGRESS_TIMEOUT {
+                        return false;
+                    }
+
+                    if channel.last_egress_elapsed(now) >= Self::KEEPAILIVE_INTERVAL {
+                        if channel.write_control(ControlFrame::Keepalive(user_id)).has_failed() {
+                            panic!("Fatal write error")
+                        }
+                    }
+
+                    true
+                },
+                ChannelState::Disconnected => panic!("Disconnected channel in live set")
+            };
+
+            // Close the channel in case of a timeout. Don't send a notification since the connection is
+            // most likely dead.
+            if !retain {
+                channel.close(false);
+                changes.push(ConnectionChange::Disconnected(channel_id));
+            }
+
+            retain
+        });
+    }
+
     #[inline]
-    fn disconnect(&mut self, channel_id: ChannelId, notify: bool) {
-        self.channels[channel_id].close(notify);
-        self.changes.push(ConnectionChange::Disconnected(channel_id));
-        self.connected.remove(&channel_id);
+    fn get_comm_ctx(&mut self, channel_id: ChannelId) -> CommCtx {
+        CommCtx {
+            id: channel_id,
+            channel: &mut self.channels[channel_id],
+            changes: &mut self.changes,
+            live: &mut self.live,
+        }
+    }
+}
+
+struct CommCtx<'a> {
+    id: ChannelId,
+    channel: &'a mut Channel,
+    changes: &'a mut Vec<ConnectionChange>,
+    live: &'a mut IndexSet<ChannelId>,
+}
+
+impl<'a> CommCtx<'a> {
+    #[inline]
+    fn disconnect(&mut self, notify: bool) {
+        self.channel.close(notify);
+        self.changes.push(ConnectionChange::Disconnected(self.id));
+        self.live.remove(&self.id);
     }
 }
 

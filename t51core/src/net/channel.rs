@@ -9,7 +9,7 @@ use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::{Shutdown, TcpStream};
-use std::time::{Instant, SystemTime};
+use std::time::{Instant, SystemTime, Duration};
 
 // Write buffer should be 512k
 const WRITE_BUF_SIZE: usize = 8 * 65536;
@@ -126,6 +126,30 @@ impl Channel {
         self.stream
             .shutdown(Shutdown::Both)
             .unwrap_or_else(|err| panic!(err));
+    }
+
+    /// Returns the time elapsed since the last egress.
+    #[inline]
+    pub fn last_egress_elapsed(&self, now: Instant) -> Duration {
+        now.duration_since(self.last_egress)
+    }
+
+    /// Returns the time elapsed since the last ingress.
+    #[inline]
+    pub fn last_ingress_elapsed(&self, now: Instant) -> Duration {
+        now.duration_since(self.last_ingress)
+    }
+
+    /// Returns true if there is outgoing data on the channel.
+    #[inline]
+    pub fn has_egress(&self) -> bool {
+        !self.write_buffer.is_empty()
+    }
+
+    /// Get the channel state.
+    #[inline]
+    pub fn get_state(&self) -> ChannelState {
+        self.state
     }
 
     /// Read all available data off the network and updates the last ingress time if > 0 bytes have been

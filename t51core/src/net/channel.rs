@@ -695,7 +695,7 @@ mod tests {
         }
 
         // Write out the batch
-        channel.write_payload(&mut outgoing);
+        channel.write_payload(&mut outgoing).unwrap();
 
         assert_eq!(outgoing.len(), 0);
         assert_eq!(channel.server_sequence, 1);

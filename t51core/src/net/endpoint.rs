@@ -35,10 +35,14 @@ impl Endpoint {
     pub fn push<P: Serialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
         let channel = &mut self.channels[channel_id];
 
-        channel.write_payload(data);
+        channel.write_payload(data).unwrap_or_else(|err| {
+            if let NetworkError::Fatal(_) = err {
+                panic!("Fatal error during write")
+            }
+        });
         channel.send(self.current_time).unwrap_or_else(|err| {
             if let NetworkError::Fatal(_) = err {
-                self.disconnect(channel_id);
+                self.disconnect(channel_id, false);
             }
         });
     }
@@ -62,25 +66,24 @@ impl Endpoint {
             })
             .unwrap_or_else(|err| {
                 if let NetworkError::Fatal(_) = err {
-                    self.disconnect(channel_id);
+                    self.disconnect(channel_id, true);
                 }
             });
     }
 
     pub fn sync(&mut self, now: time::Instant) {
-        // TODO: Borrowck test, remove in full implementation
-        self.channels[0].send(now).unwrap_or_else(|err| {
-            if let NetworkError::Fatal(_) = err {
-                self.disconnect(0);
-            }
-        });
+//        self.channels[0].send(now).unwrap_or_else(|err| {
+//            if let NetworkError::Fatal(_) = err {
+//                self.disconnect(0, false);
+//            }
+//        });
 
         self.current_time = now;
     }
 
     #[inline]
-    fn disconnect(&mut self, channel_id: ChannelId) {
-        self.channels[channel_id].close(true);
+    fn disconnect(&mut self, channel_id: ChannelId, notify: bool) {
+        self.channels[channel_id].close(notify);
         self.changes.push(ConnectionChange::Disconnected(channel_id));
         self.connected.remove(&channel_id);
     }

@@ -5,11 +5,12 @@ use crate::net::shared::{
     Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use mio::net::TcpStream;
 use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
-use std::net::{Shutdown, TcpStream};
-use std::time::{Instant, SystemTime, Duration};
+use std::net::Shutdown;
+use std::time::{Duration, Instant, SystemTime};
 
 // Write buffer should be 512k
 const WRITE_BUF_SIZE: usize = 8 * 65536;

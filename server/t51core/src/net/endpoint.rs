@@ -1,20 +1,28 @@
 use crate::net::channel::{Channel, ChannelState};
 use crate::net::frame::{ControlFrame, Frame};
 use crate::net::shared;
-use crate::net::shared::{ErrorUtils};
+use crate::net::shared::ErrorUtils;
 use indexmap::IndexSet;
-use std::net::{TcpListener, TcpStream};
+use mio;
+use mio::net::{TcpListener, TcpStream};
+use std::net::SocketAddr;
 use std::time;
 
 pub type ChannelId = usize;
 
 #[derive(Debug, Copy, Clone)]
-enum ConnectionChange {
+pub enum ConnectionChange {
     Connected(shared::UserId, ChannelId),
     Disconnected(ChannelId),
 }
 
 pub struct Endpoint {
+    server: TcpListener,
+
+    server_poll: mio::Poll,
+    handshake_poll: mio::Poll,
+    live_poll: mio::Poll,
+
     // Validation
     version: [u8; 16],
     protocol: u16,
@@ -22,7 +30,7 @@ pub struct Endpoint {
     // Storage
     channels: Vec<Channel>,
     // Ids of unused channels
-    free_slots: Vec<ChannelId>,
+    free: Vec<ChannelId>,
     live: IndexSet<ChannelId>,
 
     changes: Vec<ConnectionChange>,
@@ -34,7 +42,38 @@ pub struct Endpoint {
 impl Endpoint {
     const HANDSHAKE_TIMEOUT: time::Duration = time::Duration::from_secs(5);
     const INGRESS_TIMEOUT: time::Duration = time::Duration::from_secs(30);
-    const KEEPAILIVE_INTERVAL: time::Duration = time::Duration::from_secs(1);
+    const KEEPALIVE_INTERVAL: time::Duration = time::Duration::from_secs(3);
+    const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
+
+    #[inline]
+    pub fn new(address: &str, version: [u8; 16], protocol: u16) -> shared::NetworkResult<Endpoint> {
+        let mut server_poll = mio::Poll::new()?;
+        let mut server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
+
+        server_poll.register(
+            &server,
+            mio::Token(0),
+            mio::Ready::readable(),
+            mio::PollOpt::edge(),
+        )?;
+
+        let now = time::Instant::now();
+
+        Ok(Endpoint {
+            server,
+            server_poll,
+            handshake_poll: mio::Poll::new()?,
+            live_poll: mio::Poll::new()?,
+            version,
+            protocol,
+            channels: Vec::new(),
+            free: Vec::new(),
+            live: IndexSet::new(),
+            changes: Vec::new(),
+            current_time: now,
+            housekeeping_time: now,
+        })
+    }
 
     #[inline]
     pub fn push<P: shared::Serialize>(&mut self, channel_id: ChannelId, data: &mut shared::PayloadBatch<P>) {
@@ -45,7 +84,11 @@ impl Endpoint {
         }
     }
 
-    pub fn pull<P: shared::Deserialize>(&mut self, channel_id: ChannelId, data: &mut shared::PayloadBatch<P>) {
+    pub fn pull<P: shared::Deserialize>(
+        &mut self,
+        channel_id: ChannelId,
+        data: &mut shared::PayloadBatch<P>,
+    ) {
         let mut ctx = self.get_comm_ctx(channel_id);
 
         match ctx.channel.read() {
@@ -74,10 +117,19 @@ impl Endpoint {
     }
 
     pub fn sync(&mut self, now: time::Instant) {
+        self.current_time = now;
+
+        if now.duration_since(self.housekeeping_time) >= Self::HOUSEKEEPING_INTERVAL {
+            self.housekeeping();
+            self.housekeeping_time = now;
+        }
+
         let live_set = &mut self.live;
+        let free_set = &mut self.free;
         let channels = &mut self.channels;
         let changes = &mut self.changes;
 
+        // Force send data on all live channels
         live_set.retain(|&channel_id| {
             let channel = &mut channels[channel_id];
 
@@ -89,18 +141,44 @@ impl Endpoint {
             // Close the channel in case of a send error. No point in trying to send a notice.
             if !retain {
                 channel.close(false);
+                free_set.push(channel_id);
                 changes.push(ConnectionChange::Disconnected(channel_id));
             }
 
             retain
         });
 
-        self.current_time = now;
+        // Run handshake poll
+        // Run connected poll
+    }
+
+    #[inline]
+    pub fn changes(&mut self) -> impl Iterator<Item = ConnectionChange> + '_ {
+        self.changes.drain(..)
+    }
+
+    #[inline]
+    pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
+        let id = match self.free.pop() {
+            Some(id) => {
+                self.channels[id].open(stream, self.current_time);
+                id
+            }
+            None => {
+                let id = self.channels.len();
+                self.channels
+                    .push(Channel::new(stream, self.version, self.protocol));
+                id
+            }
+        };
+
+        id
     }
 
     fn housekeeping(&mut self) {
         let now = self.current_time;
         let live_set = &mut self.live;
+        let free_set = &mut self.free;
         let channels = &mut self.channels;
         let changes = &mut self.changes;
 
@@ -114,21 +192,25 @@ impl Endpoint {
                         return false;
                     }
 
-                    if channel.last_egress_elapsed(now) >= Self::KEEPAILIVE_INTERVAL {
-                        if channel.write_control(ControlFrame::Keepalive(user_id)).has_failed() {
+                    if channel.last_egress_elapsed(now) >= Self::KEEPALIVE_INTERVAL {
+                        if channel
+                            .write_control(ControlFrame::Keepalive(user_id))
+                            .has_failed()
+                        {
                             panic!("Fatal write error")
                         }
                     }
 
                     true
-                },
-                ChannelState::Disconnected => panic!("Disconnected channel in live set")
+                }
+                ChannelState::Disconnected => panic!("Disconnected channel in live set"),
             };
 
             // Close the channel in case of a timeout. Don't send a notification since the connection is
             // most likely dead.
             if !retain {
                 channel.close(false);
+                free_set.push(channel_id);
                 changes.push(ConnectionChange::Disconnected(channel_id));
             }
 
@@ -143,6 +225,7 @@ impl Endpoint {
             channel: &mut self.channels[channel_id],
             changes: &mut self.changes,
             live: &mut self.live,
+            free: &mut self.free,
         }
     }
 }
@@ -152,6 +235,7 @@ struct CommCtx<'a> {
     channel: &'a mut Channel,
     changes: &'a mut Vec<ConnectionChange>,
     live: &'a mut IndexSet<ChannelId>,
+    free: &'a mut Vec<ChannelId>,
 }
 
 impl<'a> CommCtx<'a> {
@@ -160,6 +244,7 @@ impl<'a> CommCtx<'a> {
         self.channel.close(notify);
         self.changes.push(ConnectionChange::Disconnected(self.id));
         self.live.remove(&self.id);
+        self.free.push(self.id);
     }
 }
 

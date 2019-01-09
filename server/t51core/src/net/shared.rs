@@ -1,4 +1,5 @@
 use std::io;
+use std::net;
 
 pub type UserId = u64;
 
@@ -23,6 +24,7 @@ pub enum ErrorType {
     SequenceMismatch,
     Serialization,
     Crypto,
+    AddrParse,
     Io(io::ErrorKind),
 }
 
@@ -33,6 +35,13 @@ impl From<io::Error> for NetworkError {
             io::ErrorKind::WouldBlock => NetworkError::Wait,
             kind => NetworkError::Fatal(ErrorType::Io(kind)),
         }
+    }
+}
+
+impl From<net::AddrParseError> for NetworkError {
+    #[inline]
+    fn from(_: net::AddrParseError) -> Self {
+        NetworkError::Fatal(ErrorType::AddrParse)
     }
 }
 

@@ -1,6 +1,7 @@
 [workspace]
 members = [
-    "t51core",
-    "t51game",
-    "t51server"
+    "lib/neutronium",
+    "lib/neutronium_proc",
+    "game/core",
+    "game/runner"
 ]

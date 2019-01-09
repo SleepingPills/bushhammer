@@ -8,7 +8,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use t51core_proc::Component;
+use neutronium_proc::Component;
 
 #[repr(transparent)]
 #[derive(Component, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]

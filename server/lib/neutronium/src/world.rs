@@ -314,7 +314,7 @@ mod tests {
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::ptr::NonNull;
-    use t51core_proc::{Component, Message};
+    use neutronium_proc::{Component, Message};
     use std::rc::Rc;
     use std::cell::RefCell;
 

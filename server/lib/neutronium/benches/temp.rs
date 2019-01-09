@@ -1,14 +1,14 @@
 #[macro_use]
 extern crate criterion;
 
-extern crate t51core;
+extern crate neutronium;
 use criterion::black_box;
 use criterion::Criterion;
 use hashbrown::HashSet;
 use serde_derive::{Deserialize, Serialize};
-use t51core::component::Component;
-use t51core::prelude::*;
-use t51core_proc::Component;
+use neutronium::component::Component;
+use neutronium::prelude::*;
+use neutronium_proc::Component;
 
 #[derive(Component, Serialize, Deserialize, Debug, Clone)]
 pub struct C1(u32);

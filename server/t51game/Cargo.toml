@@ -1,7 +1,0 @@
-[package]
-name = "t51game"
-version = "0.1.0"
-authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
-edition = "2018"
-
-[dependencies]

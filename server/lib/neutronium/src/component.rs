@@ -142,7 +142,7 @@ mod tests {
     use super::*;
     use serde_derive::{Deserialize, Serialize};
     use std::sync::MutexGuard;
-    use t51core_proc::Component;
+    use neutronium_proc::Component;
 
     #[derive(Component, Serialize, Deserialize, Debug)]
     struct SomeComponent {

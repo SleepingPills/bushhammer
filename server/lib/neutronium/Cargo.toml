@@ -1,5 +1,5 @@
 [package]
-name = "t51core"
+name = "neutronium"
 version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
@@ -17,7 +17,7 @@ lazy_static = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
-t51core_proc = { path = "../t51core_proc" }
+neutronium_proc = { path = "../neutronium_proc" }
 
 [dev-dependencies]
 criterion = "0.2"

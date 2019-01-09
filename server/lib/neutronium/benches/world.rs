@@ -1,11 +1,11 @@
 #[macro_use]
 extern crate criterion;
 
-extern crate t51core;
+extern crate neutronium;
 use criterion::Criterion;
 use std::marker::PhantomData;
-use t51core::prelude::*;
-use t51core_proc::Component;
+use neutronium::prelude::*;
+use neutronium_proc::Component;
 
 #[derive(Component, Serialize, Deserialize, Debug, Clone)]
 pub struct C1(u32);

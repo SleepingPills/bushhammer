@@ -1,5 +1,5 @@
 [package]
-name = "t51core_proc"
+name = "neutronium_proc"
 version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"

@@ -1,15 +1,15 @@
 #[macro_use]
 extern crate criterion;
 
-extern crate t51core;
+extern crate neutronium;
 use criterion::black_box;
 use criterion::Criterion;
 use rand::prelude::*;
 use serde_derive::{Deserialize, Serialize};
 use std::marker::PhantomData;
-use t51core::prelude::*;
-use t51core_proc::Component;
-use t51core::component::Component;
+use neutronium::prelude::*;
+use neutronium_proc::Component;
+use neutronium::component::Component;
 
 #[derive(Component, Serialize, Deserialize, Debug)]
 pub struct C1 {

@@ -171,7 +171,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use t51core_proc::Message;
+    use neutronium_proc::Message;
     use std::sync::MutexGuard;
 
     #[derive(Message, Debug, Clone)]

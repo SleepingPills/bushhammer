@@ -530,6 +530,7 @@ mod tests {
     }
 
     fn mock_stream() -> TcpStream {
+        // TODO: Crashes with MIO, find a better way of mocking this
         unsafe { mem::uninitialized::<TcpStream>() }
     }
 

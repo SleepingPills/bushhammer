@@ -957,7 +957,7 @@ mod tests {
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
     use std::sync::MutexGuard;
-    use t51core_proc::{Component, Message};
+    use neutronium_proc::{Component, Message};
 
     #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);

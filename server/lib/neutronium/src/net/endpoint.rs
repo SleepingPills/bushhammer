@@ -5,6 +5,7 @@ use crate::net::shared::ErrorUtils;
 use indexmap::IndexSet;
 use mio;
 use mio::net::{TcpListener, TcpStream};
+use std::io;
 use std::net::SocketAddr;
 use std::time;
 
@@ -22,6 +23,10 @@ pub struct Endpoint {
     server_poll: mio::Poll,
     handshake_poll: mio::Poll,
     live_poll: mio::Poll,
+
+    events: mio::Events,
+
+    secret_key: [u8; 32],
 
     // Validation
     version: [u8; 16],
@@ -44,15 +49,21 @@ impl Endpoint {
     const INGRESS_TIMEOUT: time::Duration = time::Duration::from_secs(30);
     const KEEPALIVE_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
+    const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
 
     #[inline]
-    pub fn new(address: &str, version: [u8; 16], protocol: u16) -> shared::NetworkResult<Endpoint> {
-        let mut server_poll = mio::Poll::new()?;
-        let mut server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
+    pub fn new(
+        address: &str,
+        secret_key: [u8; 32],
+        version: [u8; 16],
+        protocol: u16,
+    ) -> shared::NetworkResult<Endpoint> {
+        let server_poll = mio::Poll::new()?;
+        let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
         server_poll.register(
             &server,
-            mio::Token(0),
+            Self::SERVER_POLL_TOKEN,
             mio::Ready::readable(),
             mio::PollOpt::edge(),
         )?;
@@ -64,6 +75,8 @@ impl Endpoint {
             server_poll,
             handshake_poll: mio::Poll::new()?,
             live_poll: mio::Poll::new()?,
+            events: mio::Events::with_capacity(8192),
+            secret_key,
             version,
             protocol,
             channels: Vec::new(),
@@ -148,32 +161,66 @@ impl Endpoint {
             retain
         });
 
+        // Run listen poll
+        self.server_poll
+            .poll(&mut self.events, Some(time::Duration::from_secs(0)))
+            .expect("Listen poll failed");
+
+        for event in &self.events {
+            if event.readiness().is_readable() {
+                match self.server.accept() {
+                    Ok((stream, _)) => {
+                        let id = match self.free.pop() {
+                            Some(id) => id,
+                            None => {
+                                let id = self.channels.len();
+                                self.channels.push(Channel::new(self.version, self.protocol));
+                                id
+                            }
+                        };
+
+                        self.handshake_poll
+                            .register(
+                                &stream,
+                                id.into(),
+                                mio::Ready::readable() | mio::Ready::writable(),
+                                mio::PollOpt::edge(),
+                            )
+                            .expect("Stream registration failed");
+                    }
+                    Err(err) => {
+                        if err.kind() != io::ErrorKind::WouldBlock {
+                            panic!("Failure accepting connection {:?}", err);
+                        }
+                    }
+                }
+            }
+        }
+
         // Run handshake poll
+        self.handshake_poll
+            .poll(&mut self.events, Some(time::Duration::from_secs(0)))
+            .expect("Handshake poll failed");
+
+        for event in &self.events {
+            if event.readiness().is_readable() {
+                let id: usize = event.token().into();
+                let channel = &mut self.channels[id];
+                match channel.read_connection_token(&self.secret_key) {
+                    Ok(user_id) => (),
+                    Err(err) => {
+
+                    }
+                }
+            }
+        }
+
         // Run connected poll
     }
 
     #[inline]
     pub fn changes(&mut self) -> impl Iterator<Item = ConnectionChange> + '_ {
         self.changes.drain(..)
-    }
-
-    #[inline]
-    pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
-        let id = match self.free.pop() {
-            Some(id) => {
-                self.channels[id].open(stream, self.current_time);
-                id
-            }
-            None => {
-                let id = self.channels.len();
-                let mut channel = Channel::new(self.version, self.protocol);
-                channel.open(stream, self.current_time);
-                self.channels.push(channel);
-                id
-            }
-        };
-
-        id
     }
 
     fn housekeeping(&mut self) {

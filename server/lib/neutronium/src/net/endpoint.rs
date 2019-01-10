@@ -166,8 +166,9 @@ impl Endpoint {
             }
             None => {
                 let id = self.channels.len();
-                self.channels
-                    .push(Channel::new(stream, self.version, self.protocol));
+                let mut channel = Channel::new(self.version, self.protocol);
+                channel.open(stream, self.current_time);
+                self.channels.push(channel);
                 id
             }
         };

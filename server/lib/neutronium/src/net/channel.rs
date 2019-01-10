@@ -36,7 +36,7 @@ pub enum ChannelState {
 /// is encrypted.
 pub struct Channel {
     // Tcp Stream
-    stream: TcpStream,
+    stream: Option<TcpStream>,
     state: ChannelState,
 
     // Validation
@@ -68,11 +68,11 @@ pub struct Channel {
 impl Channel {
     /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
-    pub fn new(stream: TcpStream, version: [u8; 16], protocol: u16) -> Channel {
+    pub fn new(version: [u8; 16], protocol: u16) -> Channel {
         let now = Instant::now();
 
         Channel {
-            stream,
+            stream: None,
             state: ChannelState::Handshake(now),
             version,
             protocol,
@@ -97,7 +97,7 @@ impl Channel {
         }
 
         self.state = ChannelState::Handshake(now);
-        self.stream = stream;
+        self.stream = Some(stream);
     }
 
     /// Closes the channel, the underlying stream and clears out all private data.
@@ -125,6 +125,8 @@ impl Channel {
         self.client_key = Self::random_key();
 
         self.stream
+            .take()
+            .expect("Channel must have valid stream")
             .shutdown(Shutdown::Both)
             .unwrap_or_else(|err| panic!(err));
     }
@@ -157,7 +159,8 @@ impl Channel {
     /// transmitted.
     #[inline]
     pub fn recieve(&mut self, now: Instant) -> NetworkResult<()> {
-        if Self::fold_result(self.read_buffer.ingress(&mut self.stream))? > 0 {
+        let stream = &mut self.stream.as_ref().expect("Channel must have valid stream");
+        if Self::fold_result(self.read_buffer.ingress(stream))? > 0 {
             self.last_ingress = now;
         }
 
@@ -182,7 +185,8 @@ impl Channel {
     /// Sends all the buffered data.
     #[inline]
     fn send_raw(&mut self) -> Result<usize, io::Error> {
-        self.write_buffer.egress(&mut self.stream)
+        let stream = &mut self.stream.as_ref().expect("Channel must have valid stream");
+        self.write_buffer.egress(stream)
     }
 
     /// Constructs the array holding additional data
@@ -529,11 +533,6 @@ mod tests {
         }
     }
 
-    fn mock_stream() -> TcpStream {
-        // TODO: Crashes with MIO, find a better way of mocking this
-        unsafe { mem::uninitialized::<TcpStream>() }
-    }
-
     fn make_connection_token() -> ConnectionToken {
         ConnectionToken {
             version: VERSION,
@@ -584,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_additional_data() {
-        let channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let channel = Channel::new(VERSION, PROTOCOL);
 
         let ad = channel.additional_data(255);
 
@@ -600,7 +599,7 @@ mod tests {
     fn test_read_connection_token() {
         let secret_key = [33; crypto::KEY_SIZE];
 
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let token = make_connection_token();
 
@@ -618,7 +617,7 @@ mod tests {
     fn test_read_connection_token_err_wait() {
         let secret_key = [33; crypto::KEY_SIZE];
 
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel
             .read_buffer
@@ -635,7 +634,7 @@ mod tests {
     fn test_read_connection_token_err_expired() {
         let secret_key = [33; crypto::KEY_SIZE];
 
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut token = make_connection_token();
         token.expires -= 7200;
@@ -652,7 +651,7 @@ mod tests {
     fn test_read_connection_token_err_version() {
         let secret_key = [33; crypto::KEY_SIZE];
 
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut token = make_connection_token();
         token.version = [0u8; 16];
@@ -672,7 +671,7 @@ mod tests {
     fn test_read_connection_token_err_protocol() {
         let secret_key = [33; crypto::KEY_SIZE];
 
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut token = make_connection_token();
         token.protocol -= 1;
@@ -690,7 +689,7 @@ mod tests {
 
     #[test]
     fn test_write_read_frame_roundtrip() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -711,7 +710,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_read_batch_roundtrip() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let expected_consumed_messages = 100;
 
@@ -744,7 +743,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_partial() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         // The maximal number of messages that can fit in the write buffer
         let expected_consumed_messages = (WRITE_BUF_SIZE - OVERHEAD_SIZE) / 8;
@@ -764,7 +763,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_zero() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - OVERHEAD_SIZE - 1);
 
         let mut outgoing = PayloadBatch::new();
@@ -780,7 +779,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_zero_size() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -801,7 +800,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_hdr_wait() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let response = channel.read();
 
@@ -810,7 +809,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_payload_wait() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -831,7 +830,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_payload_size() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -852,7 +851,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_sequence() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -875,7 +874,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_key_mismatch() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -891,7 +890,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_sequence_mismatch() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -912,7 +911,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_version_mismatch() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -930,7 +929,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_protocol_mismatch() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -948,7 +947,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_category_mismatch() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -968,7 +967,7 @@ mod tests {
 
     #[test]
     fn test_write_frame_wait() {
-        let mut channel = Channel::new(mock_stream(), VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL);
 
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - HEADER_SIZE);
 

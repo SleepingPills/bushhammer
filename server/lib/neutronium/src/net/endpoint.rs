@@ -45,16 +45,14 @@ impl Endpoint {
     const INGRESS_TIMEOUT: time::Duration = time::Duration::from_secs(30);
     const KEEPALIVE_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
-    const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
     const ZERO_TIME: time::Duration = time::Duration::from_secs(0);
+    const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
     const PROTOCOL: u16 = 0x0a55;
 
     /// Construct a new `Endpoint`. The listener will be bound to the provided address in the
     /// format `<ip_or_domain>:<port>`.
-    ///
     /// The `secret_key` is shared with an external authenticator service, so the initial client handshake
     /// can be decrypted.
-    ///
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
     pub fn new(

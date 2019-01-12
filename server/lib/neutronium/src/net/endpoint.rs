@@ -9,30 +9,28 @@ use std::io;
 use std::net::SocketAddr;
 use std::time;
 
+/// Describes a change in the connectivity status of a channel. A newly connected channel
+/// is described by the user id and channel id.
 #[derive(Debug, Copy, Clone)]
 pub enum ConnectionChange {
     Connected(shared::UserId, ChannelId),
     Disconnected(ChannelId),
 }
 
+/// Handles all connection management and network transmission.
 pub struct Endpoint {
     server: TcpListener,
 
     server_poll: mio::Poll,
     handshake_poll: mio::Poll,
     live_poll: mio::Poll,
-
     events: mio::Events,
 
     secret_key: [u8; 32],
-
-    // Validation
     version: [u8; 16],
     protocol: u16,
 
-    // Storage
     channels: Vec<Channel>,
-    // Ids of unused channels
     free: Vec<ChannelId>,
     live: IndexSet<ChannelId>,
 
@@ -49,13 +47,20 @@ impl Endpoint {
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
     const ZERO_TIME: time::Duration = time::Duration::from_secs(0);
+    const PROTOCOL: u16 = 0x0a55;
 
+    /// Construct a new `Endpoint`. The listener will be bound to the provided address in the
+    /// format `<ip_or_domain>:<port>`.
+    ///
+    /// The `secret_key` is shared with an external authenticator service, so the initial client handshake
+    /// can be decrypted.
+    ///
+    /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
     pub fn new(
         address: &str,
         secret_key: [u8; 32],
         version: [u8; 16],
-        protocol: u16,
     ) -> shared::NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
@@ -63,7 +68,7 @@ impl Endpoint {
         server_poll.register(
             &server,
             Self::SERVER_POLL_TOKEN,
-            mio::Ready::readable(),
+            mio::Ready::writable(),
             mio::PollOpt::edge(),
         )?;
 
@@ -77,7 +82,7 @@ impl Endpoint {
             events: mio::Events::with_capacity(8192),
             secret_key,
             version,
-            protocol,
+            protocol: Self::PROTOCOL,
             channels: Vec::new(),
             free: Vec::new(),
             live: IndexSet::new(),
@@ -166,9 +171,12 @@ impl Endpoint {
             .expect("Listen poll failed");
 
         for event in &self.events {
-            if event.readiness().is_readable() {
+            // Writeable readiness indicates *possible* incoming connection
+            if event.readiness().is_writable() {
+                // See if there is a connection to be accepted
                 match self.server.accept() {
                     Ok((stream, _)) => {
+                        // Retrieve an existing channel instance or create a new one
                         let id = match free_set.pop() {
                             Some(id) => id,
                             None => {
@@ -178,6 +186,8 @@ impl Endpoint {
                             }
                         };
 
+                        // Register the channel on the handshake poll. Clients must deliver a valid
+                        // handshake message before the connection is fully accepted
                         self.handshake_poll
                             .register(
                                 &stream,
@@ -187,6 +197,7 @@ impl Endpoint {
                             )
                             .expect("Stream registration failed");
 
+                        // Open the channel
                         channels[id].open(stream, self.current_time);
                     }
                     Err(err) => {
@@ -209,6 +220,11 @@ impl Endpoint {
                 let channel = &mut channels[channel_id];
                 match channel.read_connection_token(&self.secret_key) {
                     Ok(user_id) => {
+                        // The channel is now fully connected. Deregister from the handshake poll and
+                        // register on the live poll.
+                        if channel.write_control(ControlFrame::ConnectionAccepted(user_id)).has_failed() {
+                            panic!("Failure writing connection accepted frame")
+                        }
                         changes.push(ConnectionChange::Connected(user_id, channel_id));
                         channel
                             .deregister(&self.handshake_poll)
@@ -241,6 +257,7 @@ impl Endpoint {
             let channel_id: ChannelId = event.token().into();
             let channel = &mut channels[channel_id];
 
+            // Perform both receive and send operations, disconnecting the channel if there is a fatal error.
             Self::ready_op(readiness.is_readable(), || channel.receive(now))
                 .and_then(|()| Self::ready_op(readiness.is_writable(), || channel.send(now)))
                 .unwrap_or_else(|_| {
@@ -253,6 +270,7 @@ impl Endpoint {
         }
     }
 
+    /// Drains all the changes accumulated since the last `sync`
     #[inline]
     pub fn changes(&mut self) -> impl Iterator<Item = ConnectionChange> + '_ {
         self.changes.drain(..)

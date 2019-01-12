@@ -1,15 +1,13 @@
-use crate::net::channel::{Channel, ChannelState};
+use crate::net::channel::{Channel, ChannelId, ChannelState};
 use crate::net::frame::{ControlFrame, Frame};
 use crate::net::shared;
 use crate::net::shared::ErrorUtils;
 use indexmap::IndexSet;
 use mio;
-use mio::net::{TcpListener, TcpStream};
+use mio::net::TcpListener;
 use std::io;
 use std::net::SocketAddr;
 use std::time;
-
-pub type ChannelId = usize;
 
 #[derive(Debug, Copy, Clone)]
 pub enum ConnectionChange {
@@ -50,6 +48,7 @@ impl Endpoint {
     const KEEPALIVE_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
+    const ZERO_TIME: time::Duration = time::Duration::from_secs(0);
 
     #[inline]
     pub fn new(
@@ -163,18 +162,18 @@ impl Endpoint {
 
         // Run listen poll
         self.server_poll
-            .poll(&mut self.events, Some(time::Duration::from_secs(0)))
+            .poll(&mut self.events, Some(Self::ZERO_TIME))
             .expect("Listen poll failed");
 
         for event in &self.events {
             if event.readiness().is_readable() {
                 match self.server.accept() {
                     Ok((stream, _)) => {
-                        let id = match self.free.pop() {
+                        let id = match free_set.pop() {
                             Some(id) => id,
                             None => {
-                                let id = self.channels.len();
-                                self.channels.push(Channel::new(self.version, self.protocol));
+                                let id = channels.len();
+                                channels.push(Channel::new(self.version, self.protocol));
                                 id
                             }
                         };
@@ -187,6 +186,8 @@ impl Endpoint {
                                 mio::PollOpt::edge(),
                             )
                             .expect("Stream registration failed");
+
+                        channels[id].open(stream, self.current_time);
                     }
                     Err(err) => {
                         if err.kind() != io::ErrorKind::WouldBlock {
@@ -199,28 +200,81 @@ impl Endpoint {
 
         // Run handshake poll
         self.handshake_poll
-            .poll(&mut self.events, Some(time::Duration::from_secs(0)))
+            .poll(&mut self.events, Some(Self::ZERO_TIME))
             .expect("Handshake poll failed");
 
         for event in &self.events {
             if event.readiness().is_readable() {
-                let id: usize = event.token().into();
-                let channel = &mut self.channels[id];
+                let channel_id: ChannelId = event.token().into();
+                let channel = &mut channels[channel_id];
                 match channel.read_connection_token(&self.secret_key) {
-                    Ok(user_id) => (),
+                    Ok(user_id) => {
+                        changes.push(ConnectionChange::Connected(user_id, channel_id));
+                        channel
+                            .deregister(&self.handshake_poll)
+                            .expect("Deregistration failed");
+                        channel
+                            .register(channel_id, &self.live_poll)
+                            .expect("Registration failed");
+                    }
                     Err(err) => {
-
+                        // Disconnect the channel in case there is an error
+                        if err != shared::NetworkError::Wait {
+                            channel.close(false);
+                            live_set.remove(&channel_id);
+                            free_set.push(channel_id);
+                            changes.push(ConnectionChange::Disconnected(channel_id));
+                        }
                     }
                 }
             }
         }
 
         // Run connected poll
+        let live_poll = &self.live_poll;
+        live_poll
+            .poll(&mut self.events, Some(Self::ZERO_TIME))
+            .expect("Live poll failed");
+
+        for event in &self.events {
+            let readiness = event.readiness();
+            let channel_id: ChannelId = event.token().into();
+            let channel = &mut channels[channel_id];
+
+            Self::ready_op(readiness.is_readable(), || channel.receive(now))
+                .and_then(|()| Self::ready_op(readiness.is_writable(), || channel.send(now)))
+                .unwrap_or_else(|_| {
+                    channel.deregister(live_poll).expect("Deregistration failed");
+                    channel.close(true);
+                    live_set.remove(&channel_id);
+                    free_set.push(channel_id);
+                    changes.push(ConnectionChange::Disconnected(channel_id));
+                });
+        }
     }
 
     #[inline]
     pub fn changes(&mut self) -> impl Iterator<Item = ConnectionChange> + '_ {
         self.changes.drain(..)
+    }
+
+    #[inline]
+    fn ready_op<F: FnMut() -> shared::NetworkResult<()>>(
+        trigger: bool,
+        mut op: F,
+    ) -> Result<(), shared::ErrorType> {
+        if trigger {
+            loop {
+                if let Err(err) = op() {
+                    match err {
+                        shared::NetworkError::Wait => break,
+                        shared::NetworkError::Fatal(err_type) => return Err(err_type),
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn housekeeping(&mut self) {

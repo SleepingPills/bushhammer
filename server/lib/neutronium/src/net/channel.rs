@@ -25,6 +25,8 @@ const fn max_plain_payload_size(capacity: usize) -> usize {
     capacity - OVERHEAD_SIZE
 }
 
+pub type ChannelId = usize;
+
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum ChannelState {
     Handshake(Instant),
@@ -43,7 +45,7 @@ pub struct Channel {
     version: [u8; 16],
     protocol: u16,
 
-    // Sequence of packets recieved from the client
+    // Sequence of packets received from the client
     client_sequence: u64,
     // Sequence of packets sent to the client
     server_sequence: u64,
@@ -155,10 +157,33 @@ impl Channel {
         self.state
     }
 
+    /// Registers this channel on the supplied poll.
+    #[inline]
+    pub fn register(&self, id: ChannelId, poll: &mio::Poll) -> NetworkResult<()> {
+        poll.register(
+            self.stream.as_ref().expect("Can't register disconnected channel"),
+            id.into(),
+            mio::Ready::readable() | mio::Ready::writable(),
+            mio::PollOpt::edge(),
+        )
+        .map_err(Into::into)
+    }
+
+    /// Deregisters this channel on the supplied poll.
+    #[inline]
+    pub fn deregister(&self, poll: &mio::Poll) -> NetworkResult<()> {
+        poll.deregister(
+            self.stream
+                .as_ref()
+                .expect("Can't deregister disconnected channel"),
+        )
+        .map_err(Into::into)
+    }
+
     /// Read all available data off the network and updates the last ingress time if > 0 bytes have been
     /// transmitted.
     #[inline]
-    pub fn recieve(&mut self, now: Instant) -> NetworkResult<()> {
+    pub fn receive(&mut self, now: Instant) -> NetworkResult<()> {
         let stream = &mut self.stream.as_ref().expect("Channel must have valid stream");
         if Self::fold_result(self.read_buffer.ingress(stream))? > 0 {
             self.last_ingress = now;

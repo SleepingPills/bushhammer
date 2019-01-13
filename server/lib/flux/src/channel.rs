@@ -1,7 +1,7 @@
-use crate::net::buffer::Buffer;
-use crate::net::crypto;
-use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
-use crate::net::shared::{
+use crate::buffer::Buffer;
+use crate::crypto;
+use crate::frame::{Category, ControlFrame, Frame, PayloadInfo};
+use crate::shared::{
     Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId,
 };
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
@@ -533,7 +533,7 @@ pub fn timestamp_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::net::shared::{Deserialize, SizedRead, SizedWrite};
+    use crate::shared::{Deserialize, SizedRead, SizedWrite};
 
     const VERSION: [u8; 16] = [5; 16];
     const PROTOCOL: u16 = 123;

@@ -54,10 +54,13 @@
 //! can perform (amortized) zero allocation communication using pooled `PayloadBuffer` instances.
 //!
 //! Channels and the respective clients can be identified by a pair of ChannelId and UserId instances.
+#![allow(clippy::len_without_is_empty)]
+#![allow(clippy::new_without_default)]
+#![allow(clippy::new_without_default_derive)]
 
 pub mod buffer;
-pub mod crypto;
-pub mod shared;
 pub mod channel;
-pub mod frame;
+pub mod crypto;
 pub mod endpoint;
+pub mod frame;
+pub mod shared;

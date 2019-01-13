@@ -4,14 +4,12 @@ version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
 
+[lib]
+crate-type = ["dylib"]
+
 [dependencies]
 anymap = "*"
 hashbrown = "*"
-bincode = "*"
-byteorder = "*"
-libsodium-sys = "*"
-slice-deque = "*"
-mio = "*"
 indexmap = "*"
 lazy_static = "*"
 serde = "*"

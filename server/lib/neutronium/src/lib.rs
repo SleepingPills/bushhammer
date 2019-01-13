@@ -21,6 +21,4 @@ pub mod sync;
 pub mod system;
 pub mod world;
 
-pub mod net;
-
 pub mod prelude;

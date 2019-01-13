@@ -1,7 +1,7 @@
-use crate::net::channel::{Channel, ChannelId, ChannelState};
-use crate::net::frame::{ControlFrame, Frame};
-use crate::net::shared;
-use crate::net::shared::ErrorUtils;
+use crate::channel::{Channel, ChannelId, ChannelState};
+use crate::frame::{ControlFrame, Frame};
+use crate::shared;
+use crate::shared::ErrorUtils;
 use indexmap::IndexSet;
 use mio;
 use mio::net::TcpListener;

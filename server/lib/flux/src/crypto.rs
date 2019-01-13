@@ -16,8 +16,19 @@ fn nonce_to_bytes(nonce: u64) -> [u8; NONCE_SIZE] {
     nonce_bytes
 }
 
+/// Encrypts the provided plain text into the cipher buffer. The encrypted message size will be the plain
+/// text size plus the MAC size (24 bytes). The function will fail if the cipher slice is not large enough.
+///
+/// The additional data, nonce and key must match those used during encryption, the decryption will fail
+/// otherwise.
 #[inline]
-pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
+pub fn encrypt(
+    cipher: &mut [u8],
+    plain: &[u8],
+    additional_data: &[u8],
+    nonce: u64,
+    key: &[u8; KEY_SIZE],
+) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
     if cipher.len() != plain.len() + MAC_SIZE {
@@ -46,8 +57,19 @@ pub fn encrypt(cipher: &mut [u8], plain: &[u8], additional_data: &[u8], nonce: u
     }
 }
 
+/// Decrypts the provided ciphertext into the plain buffer. The decoded message size is equal to the cipher
+/// text length minus the MAC (24 bytes). The function will fail if the sizes do not match.
+///
+/// The additional data, nonce and key must match those used during encryption, the decryption will fail
+/// otherwise.
 #[inline]
-pub fn decrypt(plain: &mut [u8], cipher: &[u8], additional_data: &[u8], nonce: u64, key: &[u8; KEY_SIZE]) -> bool {
+pub fn decrypt(
+    plain: &mut [u8],
+    cipher: &[u8],
+    additional_data: &[u8],
+    nonce: u64,
+    key: &[u8; KEY_SIZE],
+) -> bool {
     let nonce_bytes = nonce_to_bytes(nonce);
 
     if cipher.len() != plain.len() + MAC_SIZE {

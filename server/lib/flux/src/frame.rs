@@ -1,4 +1,4 @@
-use crate::net::shared::{ErrorType, NetworkError, SizedWrite, UserId};
+use crate::shared::{ErrorType, NetworkError, SizedWrite, UserId};
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 #[derive(Debug, Eq, PartialEq)]

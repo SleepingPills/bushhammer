@@ -1,0 +1,15 @@
+[package]
+name = "util"
+version = "0.1.0"
+authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+clap = "*"
+chrono = "*"
+sloggers = "*"
+serde_json = "*"
+authenticator = { path = "../lib/authenticator" }
+neutronium = { path = "../lib/neutronium" }
+neutronium_proc = { path = "../lib/neutronium_proc" }
+byteorder = "*"

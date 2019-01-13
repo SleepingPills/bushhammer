@@ -4,5 +4,6 @@ members = [
     "lib/neutronium",
     "lib/neutronium_proc",
     "game/core",
-    "game/runner"
+    "game/runner",
+    "util"
 ]

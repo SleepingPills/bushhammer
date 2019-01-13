@@ -18,8 +18,8 @@ serde_json = "*"
 neutronium_proc = { path = "../neutronium_proc" }
 
 [dev-dependencies]
-criterion = "0.2"
-rand = "0.5"
+criterion = "*"
+rand = "*"
 
 [[bench]]
 name = "system"

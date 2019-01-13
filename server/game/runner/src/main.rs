@@ -1,10 +1,29 @@
-#![allow(unused_imports, dead_code, unused_variables)]
-use byteorder::{ReadBytesExt, BigEndian};
-use std::io::{Read, Write};
-use neutronium::prelude::*;
+use chrono;
+use serde_json;
+use std::collections::HashMap;
+use authenticator::{ClientInfo, Ban};
+
+use neutronium::prelude::EntityId;
 
 fn main() {
-    let data = vec![1u8, 10u8, 3u8];
-    let mut reader = &data[..];
-    reader.read_u64::<BigEndian>().unwrap();
+    let mut infos = HashMap::new();
+    infos.insert("1", ClientInfo { ban: None });
+    infos.insert(
+        "2",
+        ClientInfo {
+            ban: Some(Ban {
+                created: chrono::Utc::now(),
+                expired: chrono::Utc::now() + chrono::Duration::days(30),
+                reason: "bla".into(),
+            }),
+        },
+    );
+
+    // Serialize it to a JSON string.
+    let j = serde_json::to_string(&infos).unwrap();
+
+    println!("{:?}", EntityId::from(50));
+
+    // Print, write to a file, or send to an HTTP server.
+    println!("{}", j);
 }

@@ -5,6 +5,9 @@ authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
 
 [dependencies]
+chrono = "*"
+serde_json = "*"
+authenticator = { path = "../../lib/authenticator" }
 neutronium = { path = "../../lib/neutronium" }
 neutronium_proc = { path = "../../lib/neutronium_proc" }
 byteorder = "*"

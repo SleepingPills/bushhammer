@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "lib/authenticator",
     "lib/neutronium",
     "lib/neutronium_proc",
     "game/core",

@@ -1,0 +1,12 @@
+[package]
+name = "authenticator"
+version = "0.1.0"
+authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+serde = "*"
+serde_json = "*"
+serde_derive = "*"
+hashbrown = "*"
+chrono = { version = "*", features = ["serde"] }

@@ -55,11 +55,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(
-        address: &str,
-        secret_key: [u8; 32],
-        version: [u8; 16],
-    ) -> shared::NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: [u8; 32], version: [u8; 16]) -> shared::NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
@@ -148,9 +144,10 @@ impl Endpoint {
         live_set.retain(|&channel_id| {
             let channel = &mut channels[channel_id];
 
-            let retain = match channel.has_egress() {
-                true => !channel.send(now).has_failed(),
-                _ => true,
+            let retain = if channel.has_egress() {
+                !channel.send(now).has_failed()
+            } else {
+                true
             };
 
             // Close the channel in case of a send error. No point in trying to send a notice.
@@ -220,7 +217,10 @@ impl Endpoint {
                     Ok(user_id) => {
                         // The channel is now fully connected. Deregister from the handshake poll and
                         // register on the live poll.
-                        if channel.write_control(ControlFrame::ConnectionAccepted(user_id)).has_failed() {
+                        if channel
+                            .write_control(ControlFrame::ConnectionAccepted(user_id))
+                            .has_failed()
+                        {
                             panic!("Failure writing connection accepted frame")
                         }
                         changes.push(ConnectionChange::Connected(user_id, channel_id));
@@ -310,13 +310,12 @@ impl Endpoint {
                         return false;
                     }
 
-                    if channel.last_egress_elapsed(now) >= Self::KEEPALIVE_INTERVAL {
-                        if channel
+                    if channel.last_egress_elapsed(now) >= Self::KEEPALIVE_INTERVAL
+                        && channel
                             .write_control(ControlFrame::Keepalive(user_id))
                             .has_failed()
-                        {
-                            panic!("Fatal write error")
-                        }
+                    {
+                        panic!("Fatal write error")
                     }
 
                     true

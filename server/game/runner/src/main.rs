@@ -1,16 +1,16 @@
 use chrono;
 use serde_json;
 use std::collections::HashMap;
-use authenticator::{ClientInfo, Ban};
+use authenticator::{UserInfo, Ban};
 
 use neutronium::prelude::EntityId;
 
 fn main() {
     let mut infos = HashMap::new();
-    infos.insert("1", ClientInfo { ban: None });
+    infos.insert("1", UserInfo { ban: None });
     infos.insert(
         "2",
-        ClientInfo {
+        UserInfo {
             ban: Some(Ban {
                 created: chrono::Utc::now(),
                 expired: chrono::Utc::now() + chrono::Duration::days(30),

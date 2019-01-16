@@ -2,6 +2,7 @@ use chrono;
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
+use std::fs;
 
 #[derive(Serialize, Deserialize)]
 pub struct Note {
@@ -37,9 +38,24 @@ impl UserInfo {
 
 pub struct Authenticator {
     secret_key: [u8; 32],
-    serial_numbers: HashMap<[u8; 24], UserInfo>,
+    user_info: HashMap<[u8; 24], UserInfo>,
 }
 
 impl Authenticator {
-    pub fn from_file() {}
+    pub fn new(secret_key: [u8; 32]) -> Authenticator {
+        Authenticator {
+            secret_key,
+            user_info: HashMap::new(),
+        }
+    }
+
+    pub fn read_config(&mut self, config_path: &str) {
+        let config_file = fs::File::open(config_path).unwrap();
+        self.user_info = serde_json::from_reader(config_file).unwrap();
+    }
+
+    pub fn write_config(&self, config_path: &str) {
+        let config_file = fs::File::create(config_path).unwrap();
+        serde_json::to_writer_pretty(config_file, &self.user_info).unwrap();
+    }
 }

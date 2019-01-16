@@ -1,7 +1,6 @@
 #![feature(const_slice_len)]
 
 use authenticator::UserInfo;
-use chrono;
 use clap::{App, Arg};
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -83,9 +82,7 @@ fn main() {
         client_data
             .entry(key)
             .and_modify(|_| panic!("Key collision! What are the odds?"))
-            .or_insert_with(|| {
-                UserInfo::new(id_base + i)
-            });
+            .or_insert_with(|| UserInfo::new(id_base + i));
     }
 
     fs::write(

@@ -4,9 +4,12 @@ version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
 
+[lib]
+crate-type = ["dylib"]
+
 [dependencies]
 serde = "*"
 serde_json = "*"
 serde_derive = "*"
-hashbrown = "*"
+hashbrown = { version ="*", features = ["serde"] }
 chrono = { version = "*", features = ["serde"] }

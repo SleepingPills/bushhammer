@@ -1,7 +1,7 @@
 use crate::channel::{Channel, ChannelId, ChannelState};
 use crate::frame::{ControlFrame, Frame};
 use crate::shared;
-use crate::shared::ErrorUtils;
+use crate::shared::{ErrorUtils, PROTOCOL_ID, VERSION_ID};
 use indexmap::IndexSet;
 use mio;
 use mio::net::TcpListener;
@@ -27,8 +27,6 @@ pub struct Endpoint {
     events: mio::Events,
 
     secret_key: [u8; 32],
-    version: [u8; 16],
-    protocol: u16,
 
     channels: Vec<Channel>,
     free: Vec<ChannelId>,
@@ -47,7 +45,6 @@ impl Endpoint {
     const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(3);
     const ZERO_TIME: time::Duration = time::Duration::from_secs(0);
     const SERVER_POLL_TOKEN: mio::Token = mio::Token(0);
-    const PROTOCOL: u16 = 0x0a55;
 
     /// Construct a new `Endpoint`. The listener will be bound to the provided address in the
     /// format `<ip_or_domain>:<port>`.
@@ -55,7 +52,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: [u8; 32], version: [u8; 16]) -> shared::NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: [u8; 32]) -> shared::NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
@@ -75,8 +72,6 @@ impl Endpoint {
             live_poll: mio::Poll::new()?,
             events: mio::Events::with_capacity(8192),
             secret_key,
-            version,
-            protocol: Self::PROTOCOL,
             channels: Vec::new(),
             free: Vec::new(),
             live: IndexSet::new(),
@@ -176,7 +171,7 @@ impl Endpoint {
                             Some(id) => id,
                             None => {
                                 let id = channels.len();
-                                channels.push(Channel::new(self.version, self.protocol));
+                                channels.push(Channel::new(VERSION_ID, PROTOCOL_ID));
                                 id
                             }
                         };
@@ -364,58 +359,3 @@ impl<'a> CommCtx<'a> {
         self.free.push(self.id);
     }
 }
-
-//impl Endpoint {
-//    const HOUSEKEEPING_INTERVAL: time::Duration = time::Duration::from_secs(5);
-//    const TIMEOUT: time::Duration = time::Duration::from_secs(30);
-//
-////    pub fn push<P: Serialize>(&mut self, data: &mut PayloadBatch<P>, channel_id: ChannelId) -> Result<()> {
-////        // Write the data
-////        self.channels[channel_id].write_batch(data)?;
-////        Ok(())
-////    }
-//
-////    pub fn pull(&mut self, channel_id: ChannelId) -> Option<Frame<&[u8]>> {
-////        unimplemented!()
-////    }
-//
-//    pub fn sync(&mut self, current_time: time::Instant) {
-//        self.current_time = current_time;
-//
-//        if current_time.duration_since(self.housekeeping_time) >= Self::HOUSEKEEPING_INTERVAL {
-//            // Check if handshakes timed out
-//            // Check if connections timed out
-//            // Send keepalives
-//            self.housekeeping_time = current_time;
-//        }
-//        // Send data on all channels until wouldblock is reached.
-//        // Run the connection init poll
-//        // Run the connected channel poll
-//    }
-//
-//    #[inline]
-//    pub fn new_channel(&mut self, stream: TcpStream) -> ChannelId {
-//        let id = match self.free_slots.pop() {
-//            Some(id) => {
-//                self.channels[id].open(stream);
-//                id
-//            }
-//            None => {
-//                let id = self.channels.len();
-//                self.channels
-//                    .push(Channel::new(stream, self.version, self.protocol));
-//                id
-//            }
-//        };
-//
-//        id
-//    }
-//
-//    //    #[inline]
-//    //    pub fn reclaim_channel(&mut self, channel_id: ChannelId) {
-//    //        self.channels[channel_id]
-//    //            .close()
-//    //            .expect("Channel must be closeable for reclamation");
-//    //        self.free_slots.push(channel_id);
-//    //    }
-//}

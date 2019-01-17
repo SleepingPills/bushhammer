@@ -36,9 +36,26 @@ impl UserInfo {
     }
 }
 
+// TODO: Add token sequence check to Endpoint
+#[derive(Serialize)]
+pub struct ConnectionToken {
+    pub version: [u8; 16],
+    pub protocol: u16,
+    pub expires: u64,
+    pub sequence: u64,
+    pub data: [u8; 72],
+}
+
+#[derive(Serialize)]
+pub enum AuthError<'a> {
+    Failed,
+    Banned(&'a Ban),
+}
+
+
 pub struct Authenticator {
     secret_key: [u8; 32],
-    user_info: HashMap<[u8; 24], UserInfo>,
+    user_info: HashMap<String, UserInfo>,
 }
 
 impl Authenticator {
@@ -57,5 +74,18 @@ impl Authenticator {
     pub fn write_config(&self, config_path: &str) {
         let config_file = fs::File::create(config_path).unwrap();
         serde_json::to_writer_pretty(config_file, &self.user_info).unwrap();
+    }
+
+    pub fn authenticate(&self, serial_key: String) -> Result<ConnectionToken, AuthError> {
+        match self.user_info.get(&serial_key) {
+            Some(info) => {
+                if let Some(ban) = &info.ban {
+                    return Err(AuthError::Banned(ban))
+                }
+
+                unimplemented!()
+            },
+            None => Err(AuthError::Failed)
+        }
     }
 }

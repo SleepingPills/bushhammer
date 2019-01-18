@@ -10,11 +10,15 @@ crate-type = ["dylib"]
 [dependencies]
 anymap = "*"
 hashbrown = "*"
+byteorder = "*"
 indexmap = "*"
 lazy_static = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
+slice-deque = "*"
+mio = "*"
+flux = { path = "../flux" }
 neutronium_proc = { path = "../neutronium_proc" }
 
 [dev-dependencies]

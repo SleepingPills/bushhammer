@@ -1,10 +1,10 @@
-use crate::buffer::Buffer;
-use crate::crypto;
-use crate::frame::{Category, ControlFrame, Frame, PayloadInfo};
-use crate::shared::{
-    Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize, UserId,
-};
+use crate::net::buffer::Buffer;
+use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
+use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use flux::contract::PrivateData;
+use flux::crypto;
+use flux::UserId;
 use mio::net::TcpStream;
 use std::io;
 use std::io::{Cursor, Read, Write};
@@ -498,29 +498,6 @@ impl ConnectionToken {
     }
 }
 
-/// Private data part (visible only to the server) of the connection token.
-pub struct PrivateData {
-    pub user_id: u64,
-    pub server_key: [u8; 32],
-    pub client_key: [u8; 32],
-}
-
-impl PrivateData {
-    pub const SIZE: usize = 72;
-
-    /// Parse the supplied stream as a private data structure.
-    #[inline]
-    fn read<R: Read>(mut stream: R) -> Result<PrivateData, NetworkError> {
-        let mut instance = unsafe { mem::uninitialized::<PrivateData>() };
-
-        instance.user_id = stream.read_u64::<BigEndian>()?;
-        stream.read_exact(&mut instance.server_key)?;
-        stream.read_exact(&mut instance.client_key)?;
-
-        Ok(instance)
-    }
-}
-
 /// Returns the current unix timestamp (seconds elapsed since 1970-01-01)
 #[inline]
 pub fn timestamp_secs() -> u64 {
@@ -533,7 +510,7 @@ pub fn timestamp_secs() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared::{Deserialize, SizedRead, SizedWrite};
+    use crate::net::support::{Deserialize, SizedRead, SizedWrite};
 
     const VERSION: [u8; 16] = [5; 16];
     const PROTOCOL: u16 = 123;

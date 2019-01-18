@@ -10,6 +10,3 @@ crate-type = ["dylib"]
 [dependencies]
 byteorder = "*"
 libsodium-sys = "*"
-slice-deque = "*"
-indexmap = "*"
-mio = "*"

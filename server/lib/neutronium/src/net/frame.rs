@@ -1,4 +1,5 @@
-use crate::shared::{ErrorType, NetworkError, SizedWrite, UserId};
+use crate::net::support::{ErrorType, NetworkError, SizedWrite};
+use flux::UserId;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
 #[derive(Debug, Eq, PartialEq)]

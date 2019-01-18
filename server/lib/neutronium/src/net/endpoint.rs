@@ -1,7 +1,9 @@
-use crate::channel::{Channel, ChannelId, ChannelState};
-use crate::frame::{ControlFrame, Frame};
-use crate::shared;
-use crate::shared::{ErrorUtils, PROTOCOL_ID, VERSION_ID};
+use crate::net::channel::{Channel, ChannelId, ChannelState};
+use crate::net::frame::{ControlFrame, Frame};
+use crate::net::support::{
+    Deserialize, ErrorType, ErrorUtils, NetworkError, NetworkResult, PayloadBatch, Serialize,
+};
+use flux;
 use indexmap::IndexSet;
 use mio;
 use mio::net::TcpListener;
@@ -13,7 +15,7 @@ use std::time;
 /// is described by the user id and channel id.
 #[derive(Debug, Copy, Clone)]
 pub enum ConnectionChange {
-    Connected(shared::UserId, ChannelId),
+    Connected(flux::UserId, ChannelId),
     Disconnected(ChannelId),
 }
 
@@ -52,7 +54,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: [u8; 32]) -> shared::NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: [u8; 32]) -> NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
@@ -82,7 +84,7 @@ impl Endpoint {
     }
 
     #[inline]
-    pub fn push<P: shared::Serialize>(&mut self, channel_id: ChannelId, data: &mut shared::PayloadBatch<P>) {
+    pub fn push<P: Serialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
         let channel = &mut self.channels[channel_id];
 
         if channel.write_payload(data).has_failed() {
@@ -90,11 +92,7 @@ impl Endpoint {
         }
     }
 
-    pub fn pull<P: shared::Deserialize>(
-        &mut self,
-        channel_id: ChannelId,
-        data: &mut shared::PayloadBatch<P>,
-    ) {
+    pub fn pull<P: Deserialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
         let mut ctx = self.get_comm_ctx(channel_id);
 
         match ctx.channel.read() {
@@ -117,7 +115,7 @@ impl Endpoint {
                     }
                 }
             }
-            Err(shared::NetworkError::Fatal(_)) => ctx.disconnect(true),
+            Err(NetworkError::Fatal(_)) => ctx.disconnect(true),
             _ => (),
         }
     }
@@ -171,7 +169,7 @@ impl Endpoint {
                             Some(id) => id,
                             None => {
                                 let id = channels.len();
-                                channels.push(Channel::new(VERSION_ID, PROTOCOL_ID));
+                                channels.push(Channel::new(flux::VERSION_ID, flux::PROTOCOL_ID));
                                 id
                             }
                         };
@@ -228,7 +226,7 @@ impl Endpoint {
                     }
                     Err(err) => {
                         // Disconnect the channel in case there is an error
-                        if err != shared::NetworkError::Wait {
+                        if err != NetworkError::Wait {
                             channel.close(false);
                             live_set.remove(&channel_id);
                             free_set.push(channel_id);
@@ -270,16 +268,13 @@ impl Endpoint {
     }
 
     #[inline]
-    fn ready_op<F: FnMut() -> shared::NetworkResult<()>>(
-        trigger: bool,
-        mut op: F,
-    ) -> Result<(), shared::ErrorType> {
+    fn ready_op<F: FnMut() -> NetworkResult<()>>(trigger: bool, mut op: F) -> Result<(), ErrorType> {
         if trigger {
             loop {
                 if let Err(err) = op() {
                     match err {
-                        shared::NetworkError::Wait => break,
-                        shared::NetworkError::Fatal(err_type) => return Err(err_type),
+                        NetworkError::Wait => break,
+                        NetworkError::Fatal(err_type) => return Err(err_type),
                     }
                 }
             }

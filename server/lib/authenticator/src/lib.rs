@@ -1,8 +1,11 @@
 use chrono;
+use flux::contract::PrivateData;
+use flux::crypto;
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
+use std::io::Write;
 
 #[derive(Serialize, Deserialize)]
 pub struct Note {
@@ -43,6 +46,9 @@ pub struct ConnectionToken {
     pub protocol: u16,
     pub expires: u64,
     pub sequence: u64,
+    pub server_key: [u8; 32],
+    pub client_key: [u8; 32],
+    pub server_address: String,
     pub data: [u8; 72],
 }
 
@@ -52,27 +58,28 @@ pub enum AuthError<'a> {
     Banned(&'a Ban),
 }
 
-
 pub struct Authenticator {
+    config_path: String,
     secret_key: [u8; 32],
     user_info: HashMap<String, UserInfo>,
 }
 
 impl Authenticator {
-    pub fn new(secret_key: [u8; 32]) -> Authenticator {
+    pub fn new(config_path: String, secret_key: [u8; 32]) -> Authenticator {
         Authenticator {
+            config_path,
             secret_key,
             user_info: HashMap::new(),
         }
     }
 
-    pub fn read_config(&mut self, config_path: &str) {
-        let config_file = fs::File::open(config_path).unwrap();
+    pub fn read_config(&mut self) {
+        let config_file = fs::File::open(&self.config_path).unwrap();
         self.user_info = serde_json::from_reader(config_file).unwrap();
     }
 
-    pub fn write_config(&self, config_path: &str) {
-        let config_file = fs::File::create(config_path).unwrap();
+    pub fn write_config(&self) {
+        let config_file = fs::File::create(&self.config_path).unwrap();
         serde_json::to_writer_pretty(config_file, &self.user_info).unwrap();
     }
 
@@ -80,12 +87,29 @@ impl Authenticator {
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
-                    return Err(AuthError::Banned(ban))
+                    return Err(AuthError::Banned(ban));
                 }
 
                 unimplemented!()
-            },
-            None => Err(AuthError::Failed)
+            }
+            None => Err(AuthError::Failed),
         }
+    }
+
+    fn create_token(&self, user: &UserInfo) -> ConnectionToken {
+        let mut data = PrivateData {
+            user_id: user.id,
+            client_key: [0u8; 32],
+            server_key: [0u8; 32],
+        };
+
+        crypto::random_bytes(&mut data.client_key);
+        crypto::random_bytes(&mut data.server_key);
+
+        let mut private_data = [0u8; PrivateData::SIZE];
+
+        data.write(&mut private_data[..]).unwrap();
+
+        unimplemented!()
     }
 }

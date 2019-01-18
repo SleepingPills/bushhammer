@@ -18,6 +18,7 @@ pub mod registry;
 pub mod sentinel;
 pub mod sync;
 
+pub mod net;
 pub mod system;
 pub mod world;
 

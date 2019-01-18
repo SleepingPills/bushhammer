@@ -11,6 +11,7 @@ crate-type = ["dylib"]
 serde = "*"
 serde_json = "*"
 serde_derive = "*"
+byteorder = "*"
 hashbrown = { version ="*", features = ["serde"] }
 chrono = { version = "*", features = ["serde"] }
 flux = { path = "../flux" }

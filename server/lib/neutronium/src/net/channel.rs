@@ -467,7 +467,8 @@ impl ConnectionToken {
         let mut plain = [0u8; PrivateData::SIZE];
 
         // Construct the additional data used for the encryption.
-        let additional_data = instance.additional_data()?;
+        let additional_data =
+            PrivateData::additional_data(&instance.version, instance.protocol, instance.expires)?;
 
         // Decrypt the cipher into the plain data.
         if !crypto::decrypt(

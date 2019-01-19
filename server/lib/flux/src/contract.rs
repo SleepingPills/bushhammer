@@ -1,5 +1,5 @@
 use std::io::{Error, Read, Write};
-use byteorder::{BigEndian, ReadBytesExt};
+use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use std::mem;
 
 /// Private data part (visible only to the server) of the connection token.
@@ -25,14 +25,22 @@ impl PrivateData {
     }
 
     #[inline]
-    pub fn write<W: Write>(&self, stream: W) -> Result<(), Error> {
-        // Write out the private data into a temp buffer
-//        {
-//            let data_slice = &mut private_data[..];
-//            data_slice.write_u64::<BigEndian>(user.id).unwrap();
-//            data_slice.write_all(&client_key).unwrap();
-//            data_slice.write_all(&server_key).unwrap();
-//        }
-        unimplemented!()
+    pub fn write<W: Write>(&self, mut stream: W) -> Result<(), Error> {
+        stream.write_u64::<BigEndian>(self.user_id)?;
+        stream.write_all(&self.client_key)?;
+        stream.write_all(&self.server_key)?;
+        Ok(())
+    }
+
+    #[inline]
+    pub fn additional_data(version: &[u8], protocol: u16, expires: u64,) -> Result<[u8; 26], Error> {
+        let mut additional_data = [0u8; 26];
+        let mut additional_data_slice = &mut additional_data[..];
+
+        additional_data_slice.write_all(version)?;
+        additional_data_slice.write_u16::<LittleEndian>(protocol)?;
+        additional_data_slice.write_u64::<LittleEndian>(expires)?;
+
+        Ok(additional_data)
     }
 }

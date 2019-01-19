@@ -1,3 +1,5 @@
+#![feature(integer_atomics)]
+
 use chrono;
 use flux::contract::PrivateData;
 use flux::crypto;
@@ -5,7 +7,7 @@ use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use std::fs;
-use std::io::Write;
+use std::sync::atomic::{AtomicU64, ATOMIC_U64_INIT};
 
 #[derive(Serialize, Deserialize)]
 pub struct Note {
@@ -39,7 +41,6 @@ impl UserInfo {
     }
 }
 
-// TODO: Add token sequence check to Endpoint
 #[derive(Serialize)]
 pub struct ConnectionToken {
     pub version: [u8; 16],
@@ -48,7 +49,9 @@ pub struct ConnectionToken {
     pub sequence: u64,
     pub server_key: [u8; 32],
     pub client_key: [u8; 32],
-    pub server_address: String,
+    #[serde(serialize_with = "<[_]>::serialize")]
+    pub server_address: [u8; 256],
+    #[serde(serialize_with = "<[_]>::serialize")]
     pub data: [u8; 72],
 }
 
@@ -59,6 +62,7 @@ pub enum AuthError<'a> {
 }
 
 pub struct Authenticator {
+    sequence: AtomicU64,
     config_path: String,
     secret_key: [u8; 32],
     user_info: HashMap<String, UserInfo>,
@@ -67,6 +71,7 @@ pub struct Authenticator {
 impl Authenticator {
     pub fn new(config_path: String, secret_key: [u8; 32]) -> Authenticator {
         Authenticator {
+            sequence: ATOMIC_U64_INIT,
             config_path,
             secret_key,
             user_info: HashMap::new(),
@@ -76,11 +81,6 @@ impl Authenticator {
     pub fn read_config(&mut self) {
         let config_file = fs::File::open(&self.config_path).unwrap();
         self.user_info = serde_json::from_reader(config_file).unwrap();
-    }
-
-    pub fn write_config(&self) {
-        let config_file = fs::File::create(&self.config_path).unwrap();
-        serde_json::to_writer_pretty(config_file, &self.user_info).unwrap();
     }
 
     pub fn authenticate(&self, serial_key: String) -> Result<ConnectionToken, AuthError> {
@@ -109,6 +109,8 @@ impl Authenticator {
         let mut private_data = [0u8; PrivateData::SIZE];
 
         data.write(&mut private_data[..]).unwrap();
+
+        
 
         unimplemented!()
     }

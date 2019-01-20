@@ -4,13 +4,14 @@ use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, P
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use flux::contract::PrivateData;
 use flux::crypto;
+use flux::time::timestamp_secs;
 use flux::UserId;
 use mio::net::TcpStream;
 use std::io;
 use std::io::{Cursor, Read, Write};
 use std::mem;
 use std::net::Shutdown;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 // Write buffer should be 512k
 const WRITE_BUF_SIZE: usize = 8 * 65536;
@@ -410,7 +411,7 @@ impl Channel {
 
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    pub fn read_connection_token(&mut self, secret_key: &[u8; 32]) -> Result<UserId, NetworkError> {
+    pub fn read_connection_token(&mut self, secret_key: &[u8; flux::SECRET_KEY_SIZE]) -> Result<UserId, NetworkError> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
         if token.expires < timestamp_secs() {
@@ -486,26 +487,6 @@ impl ConnectionToken {
 
         Ok(instance)
     }
-
-    fn additional_data(&self) -> Result<[u8; 26], NetworkError> {
-        let mut additional_data = [0u8; 26];
-        let mut additional_data_slice = &mut additional_data[..];
-
-        additional_data_slice.write_all(&self.version)?;
-        additional_data_slice.write_u16::<LittleEndian>(self.protocol)?;
-        additional_data_slice.write_u64::<LittleEndian>(self.expires)?;
-
-        Ok(additional_data)
-    }
-}
-
-/// Returns the current unix timestamp (seconds elapsed since 1970-01-01)
-#[inline]
-pub fn timestamp_secs() -> u64 {
-    SystemTime::now()
-        .duration_since(SystemTime::UNIX_EPOCH)
-        .expect("Closed timelike curve, reality compromised")
-        .as_secs()
 }
 
 #[cfg(test)]
@@ -571,7 +552,8 @@ mod tests {
         private_data_stream.write_all(&token.data.server_key).unwrap();
         private_data_stream.write_all(&token.data.client_key).unwrap();
 
-        let additional_data = token.additional_data().unwrap();
+        let additional_data =
+            PrivateData::additional_data(&token.version, token.protocol, token.expires).unwrap();
 
         crypto::encrypt(
             &mut stream[..PrivateData::SIZE + crypto::MAC_SIZE],

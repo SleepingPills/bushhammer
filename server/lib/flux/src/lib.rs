@@ -5,7 +5,12 @@
 pub const PROTOCOL_ID: u16 = 0x0a55;
 pub const VERSION_ID: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
+pub const SECRET_KEY_SIZE: usize = 32;
+
+pub const CONNECTION_TOKEN_EXPIRY_SECS: u64 = 10;
+
 pub type UserId = u64;
 
-pub mod crypto;
 pub mod contract;
+pub mod crypto;
+pub mod time;

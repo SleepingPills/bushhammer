@@ -9,4 +9,4 @@ clap = "*"
 rand = "*"
 chrono = "*"
 serde_json = "*"
-authenticator = { path = "../lib/authenticator" }
+

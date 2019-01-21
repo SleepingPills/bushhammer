@@ -1,10 +1,10 @@
 [workspace]
 members = [
     "lib/flux",
-    "lib/authenticator",
     "lib/neutronium",
     "lib/neutronium_proc",
     "game/core",
     "game/runner",
+    "services/authenticator",
     "util"
 ]

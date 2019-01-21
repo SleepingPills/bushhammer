@@ -1,5 +1,3 @@
-#![feature(integer_atomics)]
-
 use chrono;
 use flux::contract::PrivateData;
 use flux::crypto;
@@ -7,36 +5,29 @@ use flux::time::timestamp_secs;
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
-use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering, ATOMIC_U64_INIT};
-
-#[derive(Serialize, Deserialize)]
-struct AuthenticatorConfig {
-    secret_key: Vec<u8>,
-    server_address: String,
-    user_info: HashMap<String, UserInfo>,
-}
 
 pub struct Authenticator {
     sequence: AtomicU64,
-    secret_key: Vec<u8>,
+    secret_key: [u8; flux::SECRET_KEY_SIZE],
     server_address: String,
     user_info: HashMap<String, UserInfo>,
 }
 
 impl Authenticator {
-    pub fn new(config_path: String) -> Authenticator {
-        let config_file = fs::File::open(config_path).unwrap();
-        let config: AuthenticatorConfig = serde_json::from_reader(config_file).unwrap();
-
-        assert_eq!(config.secret_key.len(), flux::SECRET_KEY_SIZE);
-        assert!(config.server_address.len() < 253);
+    pub fn new(
+        secret_key: [u8; flux::SECRET_KEY_SIZE],
+        server_address: String,
+        user_info: HashMap<String, UserInfo>,
+    ) -> Authenticator {
+        assert_eq!(secret_key.len(), flux::SECRET_KEY_SIZE);
+        assert!(server_address.len() < 253);
 
         Authenticator {
             sequence: ATOMIC_U64_INIT,
-            secret_key: config.secret_key,
-            server_address: config.server_address,
-            user_info: config.user_info,
+            secret_key,
+            server_address,
+            user_info,
         }
     }
 
@@ -53,6 +44,10 @@ impl Authenticator {
         }
     }
 
+    pub fn snapshot(&self) -> HashMap<String, UserInfo> {
+        self.user_info.clone()
+    }
+
     fn create_token(&self, user: &UserInfo) -> ConnectionToken {
         let mut data = PrivateData {
             user_id: user.id,
@@ -63,17 +58,11 @@ impl Authenticator {
         crypto::random_bytes(&mut data.client_key);
         crypto::random_bytes(&mut data.server_key);
 
-        let mut private_data = [0u8; PrivateData::SIZE + crypto::MAC_SIZE];
+        let mut private_data = [0u8; PrivateData::SIZE];
 
         data.write(&mut private_data[..]).unwrap();
 
-        /*
-        1. Generate expiry timestamp
-        2. Bump sequence and pass it in
-        3. Move in keys
-        4. Create empty data array in the token and encrypt into it
-        */
-        let token = ConnectionToken {
+        let mut token = ConnectionToken {
             version: flux::VERSION_ID,
             protocol: flux::PROTOCOL_ID,
             expires: timestamp_secs() + flux::CONNECTION_TOKEN_EXPIRY_SECS,
@@ -84,9 +73,16 @@ impl Authenticator {
             data: [0u8; PrivateData::SIZE + crypto::MAC_SIZE],
         };
 
-        let aed = PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
+        let aed =
+            PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
 
-        crypto::encrypt(&mut token.data[..], &data[..], &aed[..], token.sequence, &self.secret_key);
+        crypto::encrypt(
+            &mut token.data[..],
+            &private_data[..],
+            &aed[..],
+            token.sequence,
+            &self.secret_key,
+        );
 
         token
     }
@@ -105,20 +101,20 @@ pub struct ConnectionToken<'a> {
     pub data: [u8; PrivateData::SIZE + crypto::MAC_SIZE],
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Note {
     pub text: String,
     pub created: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct Ban {
     pub created: chrono::DateTime<chrono::Utc>,
     pub expiry: Option<chrono::DateTime<chrono::Utc>>,
     pub reason: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 pub struct UserInfo {
     pub id: u64,
     pub created: chrono::DateTime<chrono::Utc>,

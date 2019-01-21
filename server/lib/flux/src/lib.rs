@@ -3,7 +3,7 @@
 #![allow(clippy::new_without_default_derive)]
 
 pub const PROTOCOL_ID: u16 = 0x0a55;
-pub const VERSION_ID: [u8; 16] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+pub const VERSION_ID: [u8; 16] = *b"NOB_VON_PEN_ISLE";
 
 pub const SECRET_KEY_SIZE: usize = 32;
 

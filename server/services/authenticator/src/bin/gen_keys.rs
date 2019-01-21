@@ -1,6 +1,6 @@
 #![feature(const_slice_len)]
 
-use authenticator::UserInfo;
+use authenticator::core::UserInfo;
 use clap::{App, Arg};
 use rand::distributions::Uniform;
 use rand::prelude::*;

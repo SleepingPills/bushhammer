@@ -1,7 +1,9 @@
-//use authenticator::core::AuthenticatorConfig;
+use authenticator::core::{Authenticator, UserInfo};
 use clap::{App, Arg};
+use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
+use std::fs;
 
 pub fn main() {
     let matches = App::new("Authenticator Service")
@@ -18,20 +20,24 @@ pub fn main() {
                 .help("Path to the client file")
                 .required(true),
         )
-        .arg(
-            Arg::with_name("NTHREADS")
-                .help("Number of new keys to generate")
-                .default_value("2"),
-        )
         .get_matches();
 
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
     let client_file_path = matches.value_of("CLIENT_FILE").unwrap();
-    let thread_count = matches.value_of("NTHREADS").unwrap();
+
+    let config: Config =
+        serde_json::from_reader(fs::File::open(config_file_path).expect("Error opening config file"))
+            .expect("Error parsing config file");
+    let user_info: HashMap<String, UserInfo> =
+        serde_json::from_reader(fs::File::open(client_file_path).expect("Error opening client data file"))
+            .expect("Error parsing client data file");
+
+    let authenticator = Authenticator::new(config.secret_key, config.server_address, user_info);
 }
 
 #[derive(Serialize, Deserialize)]
 struct Config {
     secret_key: [u8; flux::SECRET_KEY_SIZE],
     server_address: String,
+    thread_count: usize,
 }

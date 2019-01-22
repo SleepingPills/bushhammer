@@ -88,6 +88,9 @@ impl Authenticator {
     }
 }
 
+unsafe impl Send for Authenticator {}
+unsafe impl Sync for Authenticator {}
+
 #[derive(Serialize)]
 pub struct ConnectionToken<'a> {
     pub version: [u8; 16],

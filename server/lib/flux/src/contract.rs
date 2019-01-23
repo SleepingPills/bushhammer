@@ -24,6 +24,7 @@ impl PrivateData {
         Ok(instance)
     }
 
+    /// Write the private data to the supplied stream.
     #[inline]
     pub fn write<W: Write>(&self, mut stream: W) -> Result<(), Error> {
         stream.write_u64::<BigEndian>(self.user_id)?;
@@ -31,6 +32,7 @@ impl PrivateData {
         stream.write_all(&self.server_key).map_err(Into::into)
     }
 
+    /// Construct the additional encryption data.
     #[inline]
     pub fn additional_data(version: &[u8], protocol: u16, expires: u64) -> Result<[u8; 26], Error> {
         let mut additional_data = [0u8; 26];
@@ -41,5 +43,31 @@ impl PrivateData {
         additional_data_slice.write_u64::<LittleEndian>(expires)?;
 
         Ok(additional_data)
+    }
+}
+
+pub const SECRET_KEY_SIZE: usize = 32;
+
+pub mod key_serde {
+    use super::SECRET_KEY_SIZE;
+    use base64;
+    use serde::{de, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&base64::encode_config(bytes, base64::STANDARD_NO_PAD))
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<[u8; SECRET_KEY_SIZE], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        let mut output = [0; SECRET_KEY_SIZE];
+        base64::decode_config_slice(s, base64::STANDARD_NO_PAD, &mut output[..])
+            .map_err(de::Error::custom)?;
+        Ok(output)
     }
 }

@@ -4,6 +4,7 @@ use crate::net::support::{
     Deserialize, ErrorType, ErrorUtils, NetworkError, NetworkResult, PayloadBatch, Serialize,
 };
 use flux;
+use flux::contract::SECRET_KEY_SIZE;
 use indexmap::IndexSet;
 use mio;
 use mio::net::TcpListener;
@@ -28,7 +29,7 @@ pub struct Endpoint {
     live_poll: mio::Poll,
     events: mio::Events,
 
-    secret_key: [u8; flux::SECRET_KEY_SIZE],
+    secret_key: [u8; SECRET_KEY_SIZE],
 
     channels: Vec<Channel>,
     free: Vec<ChannelId>,
@@ -54,7 +55,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: [u8; flux::SECRET_KEY_SIZE]) -> NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: [u8; SECRET_KEY_SIZE]) -> NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 

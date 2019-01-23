@@ -2,7 +2,7 @@ use crate::net::buffer::Buffer;
 use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
 use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use flux::contract::PrivateData;
+use flux::contract::{PrivateData, SECRET_KEY_SIZE};
 use flux::crypto;
 use flux::time::timestamp_secs;
 use flux::UserId;
@@ -411,7 +411,7 @@ impl Channel {
 
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    pub fn read_connection_token(&mut self, secret_key: &[u8; flux::SECRET_KEY_SIZE]) -> Result<UserId, NetworkError> {
+    pub fn read_connection_token(&mut self, secret_key: &[u8; SECRET_KEY_SIZE]) -> Result<UserId, NetworkError> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
 
         if token.expires < timestamp_secs() {

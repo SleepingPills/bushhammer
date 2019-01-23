@@ -1,5 +1,5 @@
 use chrono;
-use flux::contract::PrivateData;
+use flux::contract::{key_serde, PrivateData, SECRET_KEY_SIZE};
 use flux::crypto;
 use flux::time::timestamp_secs;
 use hashbrown::HashMap;
@@ -7,30 +7,26 @@ use serde_derive::{Deserialize, Serialize};
 use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering, ATOMIC_U64_INIT};
 
+/// Simple authenticator that constructs connection tokens based on client supplied serial keys.
 pub struct Authenticator {
     sequence: AtomicU64,
-    secret_key: [u8; flux::SECRET_KEY_SIZE],
-    server_address: String,
+    secret_key: [u8; SECRET_KEY_SIZE],
     user_info: HashMap<String, UserInfo>,
 }
 
 impl Authenticator {
-    pub fn new(
-        secret_key: [u8; flux::SECRET_KEY_SIZE],
-        server_address: String,
-        user_info: HashMap<String, UserInfo>,
-    ) -> Authenticator {
-        assert_eq!(secret_key.len(), flux::SECRET_KEY_SIZE);
-        assert!(server_address.len() < 253);
+    pub fn new(config: Config, user_info: HashMap<String, UserInfo>) -> Authenticator {
+        assert_eq!(config.secret_key.len(), SECRET_KEY_SIZE);
 
         Authenticator {
             sequence: ATOMIC_U64_INIT,
-            secret_key,
-            server_address,
+            secret_key: config.secret_key,
             user_info,
         }
     }
 
+    /// Authenticate the provided serial key and return a `ConnectionToken` upon success.
+    /// The key must exist and there must not be an active ban on it.
     pub fn authenticate(&self, serial_key: String) -> Result<ConnectionToken, AuthError> {
         match self.user_info.get(&serial_key) {
             Some(info) => {
@@ -44,22 +40,27 @@ impl Authenticator {
         }
     }
 
+    /// Returns a snapshot copy of the current user information mapping.
     pub fn snapshot(&self) -> HashMap<String, UserInfo> {
         self.user_info.clone()
     }
 
+    /// Creates a connection token based on the provided `UserInfo` object.
     fn create_token(&self, user: &UserInfo) -> ConnectionToken {
+        // Temporary container for storing the private data
         let mut data = PrivateData {
             user_id: user.id,
             client_key: [0u8; 32],
             server_key: [0u8; 32],
         };
 
+        // Generate a random key pair
         crypto::random_bytes(&mut data.client_key);
         crypto::random_bytes(&mut data.server_key);
 
         let mut private_data = [0u8; PrivateData::SIZE];
 
+        // Write the private data into a byte buffer.
         data.write(&mut private_data[..]).unwrap();
 
         let mut token = ConnectionToken {
@@ -69,13 +70,14 @@ impl Authenticator {
             sequence: self.sequence.fetch_add(1, Ordering::Relaxed),
             server_key: data.server_key,
             client_key: data.client_key,
-            server_address: &self.server_address,
             data: [0u8; PrivateData::SIZE + crypto::MAC_SIZE],
         };
 
+        // Construct the additional data for the encryption.
         let aed =
             PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
 
+        // Encrypt the private data into the relevant field in the token.
         crypto::encrypt(
             &mut token.data[..],
             &private_data[..],
@@ -91,15 +93,22 @@ impl Authenticator {
 unsafe impl Send for Authenticator {}
 unsafe impl Sync for Authenticator {}
 
+#[derive(Serialize, Deserialize)]
+pub struct Config {
+    #[serde(with = "key_serde")]
+    pub secret_key: [u8; SECRET_KEY_SIZE],
+}
+
+/// Connection token for delivery to the client. The token should be transmitted on secure protocols
+/// as it contains sensitive information.
 #[derive(Serialize)]
-pub struct ConnectionToken<'a> {
+pub struct ConnectionToken {
     pub version: [u8; 16],
     pub protocol: u16,
     pub expires: u64,
     pub sequence: u64,
     pub server_key: [u8; 32],
     pub client_key: [u8; 32],
-    pub server_address: &'a str,
     #[serde(serialize_with = "<[_]>::serialize")]
     pub data: [u8; PrivateData::SIZE + crypto::MAC_SIZE],
 }

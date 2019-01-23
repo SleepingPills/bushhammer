@@ -6,6 +6,6 @@ edition = "2018"
 
 [dependencies]
 serde = "*"
-base64 = "*"
 byteorder = "*"
+serde_derive = "*"
 libsodium-sys = "*"

@@ -1,5 +1,6 @@
 use chrono;
-use flux::contract::{key_serde, PrivateData, SECRET_KEY_SIZE};
+use flux::session::server::SessionKey;
+use flux::session::user::PrivateData;
 use flux::crypto;
 use flux::time::timestamp_secs;
 use hashbrown::HashMap;
@@ -10,17 +11,15 @@ use std::sync::atomic::{AtomicU64, Ordering, ATOMIC_U64_INIT};
 /// Simple authenticator that constructs connection tokens based on client supplied serial keys.
 pub struct Authenticator {
     sequence: AtomicU64,
-    secret_key: [u8; SECRET_KEY_SIZE],
+    session_key: SessionKey,
     user_info: HashMap<String, UserInfo>,
 }
 
 impl Authenticator {
     pub fn new(config: Config, user_info: HashMap<String, UserInfo>) -> Authenticator {
-        assert_eq!(config.secret_key.len(), SECRET_KEY_SIZE);
-
         Authenticator {
             sequence: ATOMIC_U64_INIT,
-            secret_key: config.secret_key,
+            session_key: config.session_key,
             user_info,
         }
     }
@@ -83,7 +82,7 @@ impl Authenticator {
             &private_data[..],
             &aed[..],
             token.sequence,
-            &self.secret_key,
+            &self.session_key,
         );
 
         token
@@ -95,8 +94,7 @@ unsafe impl Sync for Authenticator {}
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
-    #[serde(with = "key_serde")]
-    pub secret_key: [u8; SECRET_KEY_SIZE],
+    pub session_key: SessionKey,
 }
 
 /// Connection token for delivery to the client. The token should be transmitted on secure protocols

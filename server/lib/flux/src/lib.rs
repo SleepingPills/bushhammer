@@ -8,6 +8,6 @@ pub const CONNECTION_TOKEN_EXPIRY_SECS: u64 = 10;
 
 pub type UserId = u64;
 
-pub mod contract;
+pub mod session;
 pub mod crypto;
 pub mod time;

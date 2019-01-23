@@ -311,3 +311,8 @@ https://uterrains.com/demo/
 https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176
 https://assetstore.unity.com/packages/tools/modeling/voxelab-complete-edition-58423
 https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terrain-engine-31100
+
+# Secret Key Handling
+- Game Server send authentication request to Authenticator
+- Authenticator generates session token (secret key) and server id and sends it to the Game Server in the response
+- Authenticator stores the session token as the secret key for generating connection tokens for this server

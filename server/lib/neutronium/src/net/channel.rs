@@ -2,7 +2,8 @@ use crate::net::buffer::Buffer;
 use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
 use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
-use flux::contract::{PrivateData, SECRET_KEY_SIZE};
+use flux::session::server::SessionKey;
+use flux::session::user::PrivateData;
 use flux::crypto;
 use flux::time::timestamp_secs;
 use flux::UserId;
@@ -411,8 +412,8 @@ impl Channel {
 
 impl Channel {
     /// Reads the connection token off the channel, parses the contents and returns the client id.
-    pub fn read_connection_token(&mut self, secret_key: &[u8; SECRET_KEY_SIZE]) -> Result<UserId, NetworkError> {
-        let token = ConnectionToken::read(self.read_buffer.read_slice(), secret_key)?;
+    pub fn read_connection_token(&mut self, session_key: &SessionKey) -> Result<UserId, NetworkError> {
+        let token = ConnectionToken::read(self.read_buffer.read_slice(), session_key)?;
 
         if token.expires < timestamp_secs() {
             return Err(NetworkError::Fatal(ErrorType::Expired));
@@ -582,7 +583,7 @@ mod tests {
 
     #[test]
     fn test_read_connection_token() {
-        let secret_key = [33; crypto::KEY_SIZE];
+        let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
         let mut channel = Channel::new(VERSION, PROTOCOL);
 
@@ -600,7 +601,7 @@ mod tests {
 
     #[test]
     fn test_read_connection_token_err_wait() {
-        let secret_key = [33; crypto::KEY_SIZE];
+        let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
         let mut channel = Channel::new(VERSION, PROTOCOL);
 
@@ -617,7 +618,7 @@ mod tests {
 
     #[test]
     fn test_read_connection_token_err_expired() {
-        let secret_key = [33; crypto::KEY_SIZE];
+        let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
         let mut channel = Channel::new(VERSION, PROTOCOL);
 
@@ -634,7 +635,7 @@ mod tests {
 
     #[test]
     fn test_read_connection_token_err_version() {
-        let secret_key = [33; crypto::KEY_SIZE];
+        let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
         let mut channel = Channel::new(VERSION, PROTOCOL);
 
@@ -654,7 +655,7 @@ mod tests {
 
     #[test]
     fn test_read_connection_token_err_protocol() {
-        let secret_key = [33; crypto::KEY_SIZE];
+        let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
         let mut channel = Channel::new(VERSION, PROTOCOL);
 

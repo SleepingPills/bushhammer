@@ -4,7 +4,7 @@ use crate::net::support::{
     Deserialize, ErrorType, ErrorUtils, NetworkError, NetworkResult, PayloadBatch, Serialize,
 };
 use flux;
-use flux::contract::SECRET_KEY_SIZE;
+use flux::session::server::SessionKey;
 use indexmap::IndexSet;
 use mio;
 use mio::net::TcpListener;
@@ -29,7 +29,7 @@ pub struct Endpoint {
     live_poll: mio::Poll,
     events: mio::Events,
 
-    secret_key: [u8; SECRET_KEY_SIZE],
+    session_key: SessionKey,
 
     channels: Vec<Channel>,
     free: Vec<ChannelId>,
@@ -55,7 +55,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: [u8; SECRET_KEY_SIZE]) -> NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: SessionKey) -> NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
@@ -74,7 +74,7 @@ impl Endpoint {
             handshake_poll: mio::Poll::new()?,
             live_poll: mio::Poll::new()?,
             events: mio::Events::with_capacity(8192),
-            secret_key,
+            session_key: secret_key,
             channels: Vec::new(),
             free: Vec::new(),
             live: IndexSet::new(),
@@ -207,7 +207,7 @@ impl Endpoint {
             if event.readiness().is_readable() {
                 let channel_id: ChannelId = event.token().into();
                 let channel = &mut channels[channel_id];
-                match channel.read_connection_token(&self.secret_key) {
+                match channel.read_connection_token(&self.session_key) {
                     Ok(user_id) => {
                         // The channel is now fully connected. Deregister from the handshake poll and
                         // register on the live poll.

@@ -316,3 +316,126 @@ https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terr
 - Game Server send authentication request to Authenticator
 - Authenticator generates session token (secret key) and server id and sends it to the Game Server in the response
 - Authenticator stores the session token as the secret key for generating connection tokens for this server
+
+# Overall Architecture
+
+```
+                                +---------------+  +--------------+  +-----------------+
+                                |               |  |              |  | Internal Dash   |
+                                |  Public Dash  |  | Mgmt Console |  | Grafana/Kibana  |
++-----------------+             |               |  |              |  |                 |
+|                 |             +---^-----------+  +----------^---+  +--------+--------+
+|  Authenticator  <---------+       |                         |               |
+|                 |         |       |    +---------------+    |      +--------|--------+
++--------+--------+         |       |    |               |    |      |  Log Store      |
+         |                  |       +----> Master Server <----+      |  Elasticsearch  |
+         |                  |            |               |           |                 |
+         |                  |            +-------^-------+           +--------+--------+
+         |                  |                    |                            |
+         |          Server  |                    |                   +--------|--------+
+         |          Auth    |                    |                   | Log Aggregator  |
+         |    User          |                    |                   | Kafka           |
+         |    Auth          |                    |                   |                 |
+         |                  |                    |                   +--------^--------+
+         |                  |                    |                            |
+         |                  |                    |                            |
+         |                  |                    |                            |
+         |             +----|---------------+    |                            |
+         |             |Game Servers        |    |                            |
+         |             |                    |    |   Tail log files           |
+         |-------------- +----------------+ <----+   Fluentd/Logstash         |
+         |             | |    Server 1    | |                                 |
+         |             | +----------------+ |                                 |
+         |             | +----------------+ |                                 |
+     +---|---+         | |   Server ...   | |                                 |
+     |       |         | +----------------+ |                                 |
+     | Users |         | +----------------+ ----------------------------------+
+     |       |         | |    Server N    | |
+     +-------+         | +----------------+ |
+                       +--------------------+
+```
+## Server Session Proces
+1. Account holder creates token in the management console
+2. Token added to the game server config
+3. On startup, game server authenticates itself with the token
+3. Game server recieves unique server id and session key
+4. Game server forwards server id and session key to the master server
+5. Session key is used to share private user session data between Authenticator and Game Server
+6. SEssion key is used to share heartbeat data with master server 
+
+## User Session Process
+1. User selects server from the browser
+2. User application sends Server Id and credentials to Authenticator
+3. Authenticator sends connection token to user application encrypting the private part with the session key
+
+## Authenticator
+- Authenticates users and game servers (two separate URIs)
+- Initial implementation just uses serial keys for users to authenticate and skips server authentication
+
+## Users
+- Select server from the server browser
+- Authenticate with the Authenticator
+- Receive connection token
+- Forward token to the game server
+
+## Game Servers
+- Initially run purely in-house, so no need for server authentication
+- Receive connection token from the users
+- Authenticate server with the Authenticator
+- Receive session key and server id from the Authenticator. This will be the shared secret key between Authenticator
+  and the game server used to decrypt the private part of the user connection tokens.  
+- Create session on Master Server (private data contains the session key, it can only be decrypted by the internal
+  secret key and the dashboard can thus validate that the session key is valid).
+- Send heartbeats to public dashboard using session key
+- Log everything to files
+
+## Master Server
+- Game servers register here to get listed using the session key and server id received from the Authenticator
+- Provides the ServerId to the server browser in clients so they can include it in their authentication request
+- Provides APIs for the Public Dashboard
+- Porivdes APIs for the Management Console to administer servers and authorization info
+- Maintains authorization data for servers and users
+- All server management goes through this service, as it can provide a central place for managing all servers belonging
+  to an account.
+
+## Log Aggregator
+- Tails all relevant log files and aggregates them into one log store
+
+## Log Store
+- Collects logs from various sources for analytics
+
+## Internal Dash
+- Internal log analytics
+
+## Public Dash
+- Maintains public facing server information like connected users, uptime etc..
+
+## Management Console
+- Administer a group of servers belonging to a specific account
+- Manage bans
+- Manage user privileges
+  - This has to be flexible, e.g. one can define any groups and assign privileges
+  - Built-in groups like Everyone
+  - The game servers will load and refresh the authorization info periodically, in addition to receiving
+    authorization change notifications.
+- Etc...
+
+## User Data Store
+- Store global user info (name, contacts, payment info)
+
+## User Authorization Store
+- Store global bans, etc..
+- Store authorization structures defined for server groups
+- Store user memberships in the authorization structures. This should be done such that removing structures doesn't
+  leave dangling data - in a RDBMS it should cascade the deletes. In a document store, the mappings should be stored
+  around the structure and not the user data.
+
+## Internal Game Server Architecture
+The following high level components are present:
+- Controller: Runs on it's own tokio runtime and relays messages between the endpoint and the master server
+- Endpoint
+- Replicator System
+- Game systems
+
+# V1 Simplifications
+- Game Server authentication is skipped. A session key is pre-shared through a config file. 

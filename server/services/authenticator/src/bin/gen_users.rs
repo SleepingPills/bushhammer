@@ -29,9 +29,9 @@ fn main() {
     let matches = App::new("Key Generator")
         .version("1.0")
         .author("Bush Hammer Industries")
-        .about("Generates client and serial key entries.")
+        .about("Generates user serial key entries.")
         .arg(
-            Arg::with_name("CLIENT_FILE")
+            Arg::with_name("USER_FILE")
                 .help("Path to the client file")
                 .required(true),
         )
@@ -47,14 +47,14 @@ fn main() {
         )
         .get_matches();
 
-    let client_file_path = matches.value_of("CLIENT_FILE").unwrap();
+    let user_file_path = matches.value_of("USER_FILE").unwrap();
     let key_count: usize = matches
         .value_of("NKEYS")
         .unwrap()
         .parse()
         .expect("Key count must be a valid integer");
 
-    let client_data = match fs::read_to_string(client_file_path) {
+    let client_data = match fs::read_to_string(user_file_path) {
         Ok(content) => {
             println!("Read in {} bytes of data", content.len());
             content
@@ -68,26 +68,26 @@ fn main() {
         }
     };
 
-    let mut client_data: HashMap<String, UserInfo> = serde_json::from_str(&client_data).unwrap();
+    let mut user_data: HashMap<String, UserInfo> = serde_json::from_str(&client_data).unwrap();
     let mut rng = thread_rng();
     let mut keys = Vec::new();
 
-    let id_base = client_data.len() as u64;
+    let id_base = user_data.len() as u64;
 
-    println!("Current client data contains {} entries", client_data.len());
+    println!("Current client data contains {} entries", user_data.len());
     println!("Generating {} keys", key_count);
     for i in 0..key_count as u64 {
         let key = make_key(&mut rng);
         keys.push(key.clone());
-        client_data
+        user_data
             .entry(key)
             .and_modify(|_| panic!("Key collision! What are the odds?"))
             .or_insert_with(|| UserInfo::new(id_base + i));
     }
 
     fs::write(
-        client_file_path,
-        serde_json::to_string_pretty(&client_data).unwrap(),
+        user_file_path,
+        serde_json::to_string_pretty(&user_data).unwrap(),
     )
     .unwrap();
 

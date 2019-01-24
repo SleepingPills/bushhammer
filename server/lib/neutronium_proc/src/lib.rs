@@ -14,18 +14,6 @@ pub fn derive_message(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
     )
 }
 
-#[proc_macro_derive(Component)]
-pub fn derive_component(item: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let ast: syn::DeriveInput = syn::parse(item).unwrap();
-    derive_core(
-        &ast.ident.to_string(),
-        "Component",
-        "ComponentId",
-        "acquire_unique_id",
-        "get_unique_id",
-    )
-}
-
 fn derive_core(
     struct_name: &str,
     main_trait: &str,

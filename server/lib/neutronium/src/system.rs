@@ -117,7 +117,8 @@ where
 
     #[inline]
     pub fn init_resources(&mut self, resources: &AnyMap) {
-        self.resource_tup.put(<T::Resources as ResourceQueryTup>::reify(resources));
+        self.resource_tup
+            .put(<T::Resources as ResourceQueryTup>::reify(resources));
     }
 
     #[inline]
@@ -162,7 +163,12 @@ where
 }
 
 pub trait System {
-    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext, incoming: &Bus);
+    fn run(
+        &mut self,
+        entities: &HashMap<EntityId, ComponentCoords>,
+        transactions: &mut TransactionContext,
+        incoming: &Bus,
+    );
     fn init(&mut self, resources: &AnyMap, central_bus: &Bus);
     fn transfer_messages(&mut self, central_bus: &mut Bus);
     fn add_shard(&mut self, shard: &Shard);
@@ -175,7 +181,12 @@ where
     T: RunSystem,
 {
     #[inline]
-    fn run(&mut self, entities: &HashMap<EntityId, ComponentCoords>, transactions: &mut TransactionContext, incoming: &Bus) {
+    fn run(
+        &mut self,
+        entities: &HashMap<EntityId, ComponentCoords>,
+        transactions: &mut TransactionContext,
+        incoming: &Bus,
+    ) {
         self.runstate.run(
             Context {
                 system_data: &mut self.data,
@@ -286,7 +297,10 @@ pub trait ComponentQueryTup {
 }
 
 pub mod store {
-    use super::{Component, ComponentDataTup, ComponentQueryTup, IndexablePtrTup, PhantomData, Read, Shard, ShardKey, Write};
+    use super::{
+        Component, ComponentDataTup, ComponentQueryTup, IndexablePtrTup, PhantomData, Read, Shard, ShardKey,
+        Write,
+    };
     use std::ptr;
 
     pub trait Indexable {
@@ -365,7 +379,10 @@ pub mod store {
     impl<'a, T> ReadData<'a, T> {
         #[inline]
         fn new(store: *const Vec<T>) -> ReadData<'a, T> {
-            ReadData { store, _x: PhantomData }
+            ReadData {
+                store,
+                _x: PhantomData,
+            }
         }
 
         #[inline]
@@ -383,7 +400,10 @@ pub mod store {
     impl<'a, T> WriteData<'a, T> {
         #[inline]
         fn new(store: *mut Vec<T>) -> WriteData<'a, T> {
-            WriteData { store, _x: PhantomData }
+            WriteData {
+                store,
+                _x: PhantomData,
+            }
         }
 
         #[inline]
@@ -951,43 +971,52 @@ pub mod context {
 mod tests {
     use super::*;
     use crate::component::ComponentVec;
+    use crate::component_id_init;
     use crate::identity::{ComponentId, TopicId};
+    use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
     use std::sync::MutexGuard;
-    use neutronium_proc::{Component, Message};
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    component_id_init!(CompA);
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompB(u64);
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    component_id_init!(CompB);
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompC {
         x: i32,
         y: i32,
     }
 
-    #[derive(Component, Serialize, Deserialize, Debug, Eq, PartialEq)]
+    component_id_init!(CompC);
+
+    #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
     struct CompD(u8);
+
+    component_id_init!(CompD);
 
     #[derive(Message, Debug, Clone, Eq, PartialEq)]
     struct Msg(i32);
 
-    fn setup() -> (ComponentId, ComponentId, ComponentId, ComponentId, MutexGuard<'static, ()>) {
-        let lock = ComponentId::static_init();
-
-        EntityId::acquire_unique_id();
-
+    fn setup() -> (
+        ComponentId,
+        ComponentId,
+        ComponentId,
+        ComponentId,
+    ) {
         (
-            CompA::acquire_unique_id(),
-            CompB::acquire_unique_id(),
-            CompC::acquire_unique_id(),
-            CompD::acquire_unique_id(),
-            lock,
+            CompA::get_unique_id(),
+            CompB::get_unique_id(),
+            CompC::get_unique_id(),
+            CompD::get_unique_id(),
         )
     }
 
@@ -1025,7 +1054,7 @@ mod tests {
 
     #[test]
     fn test_check_shard() {
-        let (a_id, b_id, c_id, d_id, _) = setup();
+        let (a_id, b_id, c_id, d_id) = setup();
 
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
@@ -1048,8 +1077,6 @@ mod tests {
 
     #[test]
     fn test_add_shard() {
-        let _ = setup();
-
         struct TestSystem<'a>(PhantomData<&'a ()>);
 
         impl<'a> RunSystem for TestSystem<'a> {
@@ -1068,8 +1095,14 @@ mod tests {
         system.add_shard(&shard_1);
         system.add_shard(&shard_2);
 
-        assert_eq!(system.data.shards[&shard_1.key].get_ptr(), shard_1.data_ptr::<CompB>());
-        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+        assert_eq!(
+            system.data.shards[&shard_1.key].get_ptr(),
+            shard_1.data_ptr::<CompB>()
+        );
+        assert_eq!(
+            system.data.shards[&shard_2.key].get_ptr(),
+            shard_2.data_ptr::<CompB>()
+        );
     }
 
     #[test]
@@ -1094,13 +1127,15 @@ mod tests {
 
         system.remove_shard(shard_1.key);
 
-        assert_eq!(system.data.shards[&shard_2.key].get_ptr(), shard_2.data_ptr::<CompB>());
+        assert_eq!(
+            system.data.shards[&shard_2.key].get_ptr(),
+            shard_2.data_ptr::<CompB>()
+        );
         assert!(!system.data.shards.contains_key(&shard_1.key));
     }
 
     #[test]
     fn test_run() {
-        let _comp_state = setup();
         let _msg_state = setup_messaging();
 
         struct TestSystem<'a> {

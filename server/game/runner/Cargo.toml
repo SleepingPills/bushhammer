@@ -6,7 +6,8 @@ edition = "2018"
 
 [dependencies]
 chrono = "*"
+serde = "*"
 serde_json = "*"
+serde_derive = "*"
 neutronium = { path = "../../lib/neutronium" }
-neutronium_proc = { path = "../../lib/neutronium_proc" }
 byteorder = "*"

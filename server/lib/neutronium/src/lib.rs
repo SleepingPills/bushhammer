@@ -9,11 +9,14 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::new_without_default_derive)]
 
+pub mod prelude;
+
+#[macro_use]
+pub mod identity;
 pub mod alloc;
 pub mod messagebus;
 pub mod component;
 pub mod entity;
-pub mod identity;
 pub mod registry;
 pub mod sentinel;
 pub mod sync;
@@ -21,5 +24,3 @@ pub mod sync;
 pub mod net;
 pub mod system;
 pub mod world;
-
-pub mod prelude;

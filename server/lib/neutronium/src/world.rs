@@ -14,7 +14,10 @@ use std::sync::MutexGuard;
 use std::thread;
 use std::time;
 
-type StaticGuards = (MutexGuard<'static, ()>, MutexGuard<'static, ()>, MutexGuard<'static, ()>);
+type StaticGuards = (
+    MutexGuard<'static, ()>,
+    MutexGuard<'static, ()>,
+);
 
 pub struct World {
     // Global Settings
@@ -58,7 +61,10 @@ impl World {
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
             messages: Bus::new(),
-            _static_guard: (ComponentId::static_init(), SystemId::static_init(), TopicId::static_init()),
+            _static_guard: (
+                SystemId::static_init(),
+                TopicId::static_init(),
+            ),
         };
         // Entity ID is always a registered component
         world.register_component::<EntityId>();
@@ -190,11 +196,13 @@ impl World {
             panic!("Can't add component to finalized world")
         }
 
-        let id = T::acquire_unique_id();
+        let id = T::get_unique_id();
 
         // Register the entity and component builder vector types
         self.transactions.add_builder::<T>();
-        self.state.builders.insert(id, Box::new(|| Box::new(Vec::<T>::new())));
+        self.state
+            .builders
+            .insert(id, Box::new(|| Box::new(Vec::<T>::new())));
     }
 
     /// Register the supplied resource instance.
@@ -269,14 +277,20 @@ impl GameState {
 
         // Get the shard (or add a new one)
         let shard = self.shards.entry(shard_key).or_insert_with(|| {
-            let store: HashMap<_, _> = shard_def.components.keys().map(|cid| (*cid, builders[cid]())).collect();
+            let store: HashMap<_, _> = shard_def
+                .components
+                .keys()
+                .map(|cid| (*cid, builders[cid]()))
+                .collect();
 
             Shard::new(shard_key, store)
         });
 
         // Notify systems in case the shard was empty before
         if shard.len() == 0 {
-            systems.iter_mut::<System>().for_each(|(_, mut sys)| sys.add_shard(shard));
+            systems
+                .iter_mut::<System>()
+                .for_each(|(_, mut sys)| sys.add_shard(shard));
         }
 
         // Ingest the data and grab the location of the first item added
@@ -309,26 +323,33 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_id_init;
     use crate::system::Context;
     use crate::system::{Components, Read, Resources, Router, Write};
+    use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
+    use std::cell::RefCell;
     use std::marker::PhantomData;
     use std::ptr::NonNull;
-    use neutronium_proc::{Component, Message};
     use std::rc::Rc;
-    use std::cell::RefCell;
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    component_id_init!(CompA);
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompB(u64);
 
-    #[derive(Component, Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
+    component_id_init!(CompB);
+
+    #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompC {
         x: i32,
         y: i32,
     }
+
+    component_id_init!(CompC);
 
     impl CompC {
         fn new(x: i32, y: i32) -> CompC {
@@ -365,16 +386,25 @@ mod tests {
         assert_eq!(world.state.shards.len(), 2);
         assert_eq!(
             world.state.entities[&0.into()],
-            (EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(), 0)
+            (
+                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(),
+                0
+            )
         );
         assert_eq!(
             world.state.entities[&1.into()],
-            (EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(), 1)
+            (
+                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(),
+                1
+            )
         );
         assert_eq!(
             world.state.entities[&2.into()],
             (
-                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id() + CompC::get_unique_id(),
+                EntityId::get_unique_id()
+                    + CompA::get_unique_id()
+                    + CompB::get_unique_id()
+                    + CompC::get_unique_id(),
                 0
             )
         );

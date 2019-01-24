@@ -312,11 +312,6 @@ https://assetstore.unity.com/packages/tools/modeling/ruaumoko-8176
 https://assetstore.unity.com/packages/tools/modeling/voxelab-complete-edition-58423
 https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terrain-engine-31100
 
-# Secret Key Handling
-- Game Server send authentication request to Authenticator
-- Authenticator generates session token (secret key) and server id and sends it to the Game Server in the response
-- Authenticator stores the session token as the secret key for generating connection tokens for this server
-
 # Overall Architecture
 
 ```
@@ -355,13 +350,13 @@ https://assetstore.unity.com/packages/tools/terrain/ultimate-terrains-voxel-terr
                        +--------------------+
 ```
 ## Server Session Proces
-1. Account holder creates token in the management console
+1. Account holder creates server token in the management console
 2. Token added to the game server config
-3. On startup, game server authenticates itself with the token
+3. On startup, game server authenticates with the Authenticator using the token
 3. Game server recieves unique server id and session key
 4. Game server forwards server id and session key to the master server
 5. Session key is used to share private user session data between Authenticator and Game Server
-6. SEssion key is used to share heartbeat data with master server 
+6. Session key is used to share heartbeat data with master server 
 
 ## User Session Process
 1. User selects server from the browser

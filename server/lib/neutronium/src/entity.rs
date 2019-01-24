@@ -1,5 +1,6 @@
 use crate::alloc::{DynVec, DynVecOps};
 use crate::component::Component;
+use crate::component_id_init;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
@@ -8,11 +9,12 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
-use neutronium_proc::Component;
 
 #[repr(transparent)]
-#[derive(Component, Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct EntityId(usize);
+
+component_id_init!(EntityId);
 
 impl From<usize> for EntityId {
     #[inline]

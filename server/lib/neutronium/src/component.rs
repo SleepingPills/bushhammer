@@ -141,28 +141,19 @@ impl Shard {
 mod tests {
     use super::*;
     use serde_derive::{Deserialize, Serialize};
-    use std::sync::MutexGuard;
-    use neutronium_proc::Component;
+    use crate::component_id_init;
 
-    #[derive(Component, Serialize, Deserialize, Debug)]
+    #[derive(Serialize, Deserialize, Debug)]
     struct SomeComponent {
         x: i32,
         y: i32,
     }
 
-    fn setup() -> (ComponentId, ComponentId, MutexGuard<'static, ()>) {
-        let lock = ComponentId::static_init();
-
-        (
-            EntityId::acquire_unique_id(),
-            SomeComponent::acquire_unique_id(),
-            lock
-        )
-    }
+    component_id_init!(SomeComponent);
 
     #[test]
     fn test_ingest() {
-        let (some_comp_id, _, _) = setup();
+        let some_comp_id = SomeComponent::get_unique_id();
 
         let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
         shard.store.insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
@@ -188,7 +179,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let (some_comp_id, _, _) = setup();
+        let some_comp_id = SomeComponent::get_unique_id();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
 
@@ -226,8 +217,6 @@ mod tests {
 
     #[test]
     fn test_data_ptr() {
-        let _ = setup();
-
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
 
@@ -239,8 +228,6 @@ mod tests {
 
     #[test]
     fn test_data_mut_ptr() {
-        let _ = setup();
-
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
 

@@ -6,6 +6,10 @@ use std::mem;
 use std::ops;
 use std::sync::{Mutex, MutexGuard};
 
+lazy_static! {
+    static ref ID_GEN_LOCK: Mutex<()> = { Mutex::new(()) };
+}
+
 #[macro_export]
 macro_rules! custom_type_id {
     ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $lock: ident) => {
@@ -24,6 +28,13 @@ macro_rules! custom_type_id {
             #[inline]
             pub unsafe fn get_id_vec() -> &'static mut Vec<$name> {
                 &mut $id_vec
+            }
+
+            #[inline]
+            pub fn id_gen_lock() -> MutexGuard<'static, ()> {
+                ID_GEN_LOCK
+                    .lock()
+                    .expect("Failed to acquire ID generator lock")
             }
 
             #[inline]
@@ -236,6 +247,50 @@ macro_rules! bitflag_type_id {
     };
 }
 
+#[macro_export]
+macro_rules! custom_type_id_init {
+    ($name: ident, $id_type: ty, $trait_type: ty, $accessor: ident) => {
+        $crate::identity::paste::item! {
+            #[allow(non_snake_case)]
+            mod [<_ $name _internal>] {
+                use super::*;
+
+                #[allow(non_upper_case_globals)]
+                pub static mut [<_ $name _id>]: $id_type = $id_type{id: 0};
+
+                #[$crate::identity::ctor::ctor]
+                fn [<_ $name _init>]() {
+                    unsafe {
+                        let _lock = $id_type::id_gen_lock();
+                        let name_vec = $id_type::get_name_vec();
+                        let id_vec = $id_type::get_id_vec();
+
+                        let counter = name_vec.len();
+
+                        [<_ $name _id>] = $id_type::new::<$name>(counter);
+
+                        name_vec.push(stringify!($name));
+                        id_vec.push([<_ $name _id>]);
+                    }
+                }
+            }
+
+            impl $trait_type for $name {
+                // TODO: Remove
+                fn acquire_unique_id() -> $id_type {
+                    unimplemented!()
+                }
+
+                fn $accessor() -> $id_type {
+                    unsafe {
+                        [<_ $name _internal>]::[<_ $name _id>]
+                    }
+                }
+            }
+        }
+    };
+}
+
 pub(crate) type BitFlagId = u64;
 const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
@@ -247,6 +302,14 @@ bitflag_type_id!(
     ShardKey,
     ComponentIdMutex
 );
+
+#[macro_export]
+macro_rules! component_id_init {
+    ($name: ident) => {
+        $crate::custom_type_id_init!($name, ComponentId, Component, get_unique_id);
+    }
+}
+
 bitflag_type_id!(
     SystemId,
     BitFlagId,
@@ -255,6 +318,7 @@ bitflag_type_id!(
     BundleKey,
     SystemIdMutex
 );
+
 bitflag_type_id!(
     TopicId,
     BitFlagId,
@@ -263,3 +327,7 @@ bitflag_type_id!(
     TopicBundle,
     TopicIdMutex
 );
+
+// Re-export dependencies to avoid the need for consumers to handle them
+pub use ctor;
+pub use paste;

@@ -13,11 +13,13 @@ hashbrown = "*"
 byteorder = "*"
 indexmap = "*"
 lazy_static = "*"
+ctor = "*"
+mio = "*"
+paste = "*"
 serde = "*"
 serde_derive = "*"
 serde_json = "*"
 slice-deque = "*"
-mio = "*"
 flux = { path = "../flux" }
 neutronium_proc = { path = "../neutronium_proc" }
 

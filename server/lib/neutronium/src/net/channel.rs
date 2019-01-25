@@ -10,7 +10,6 @@ use flux::UserId;
 use mio::net::TcpStream;
 use std::io;
 use std::io::{Cursor, Read, Write};
-use std::mem;
 use std::net::Shutdown;
 use std::time::{Duration, Instant};
 
@@ -458,33 +457,37 @@ impl ConnectionToken {
         }
 
         // Parse the data into the token structure.
-        let mut instance = unsafe { mem::uninitialized::<ConnectionToken>() };
-
-        stream.read_exact(&mut instance.version)?;
-        instance.protocol = stream.read_u16::<BigEndian>()?;
-        instance.expires = stream.read_u64::<BigEndian>()?;
-        instance.sequence = stream.read_u64::<BigEndian>()?;
+        let mut version: [u8; 16] = [0u8; 16];
+        stream.read_exact(&mut version)?;
+        let protocol = stream.read_u16::<BigEndian>()?;
+        let expires = stream.read_u64::<BigEndian>()?;
+        let sequence = stream.read_u64::<BigEndian>()?;
 
         // Extract out the encrypted private data part.
         let mut plain = [0u8; PrivateData::SIZE];
 
         // Construct the additional data used for the encryption.
         let additional_data =
-            PrivateData::additional_data(&instance.version, instance.protocol, instance.expires)?;
+            PrivateData::additional_data(&version, protocol, expires)?;
 
         // Decrypt the cipher into the plain data.
         if !crypto::decrypt(
             &mut plain,
             &stream[..PrivateData::SIZE + crypto::MAC_SIZE],
             &additional_data,
-            instance.sequence,
+            sequence,
             &secret_key,
         ) {
             return Err(NetworkError::Fatal(ErrorType::Crypto));
         }
 
-        // Deserialize the private data part.
-        instance.data = PrivateData::read(&plain[..])?;
+        let instance = ConnectionToken {
+            version,
+            protocol,
+            expires,
+            sequence,
+            data: PrivateData::read(&plain[..])?
+        };
 
         Ok(instance)
     }

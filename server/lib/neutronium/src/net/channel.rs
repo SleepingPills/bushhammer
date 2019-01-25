@@ -2,9 +2,9 @@ use crate::net::buffer::Buffer;
 use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
 use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
+use flux::crypto;
 use flux::session::server::SessionKey;
 use flux::session::user::PrivateData;
-use flux::crypto;
 use flux::time::timestamp_secs;
 use flux::UserId;
 use mio::net::TcpStream;
@@ -467,8 +467,7 @@ impl ConnectionToken {
         let mut plain = [0u8; PrivateData::SIZE];
 
         // Construct the additional data used for the encryption.
-        let additional_data =
-            PrivateData::additional_data(&version, protocol, expires)?;
+        let additional_data = PrivateData::additional_data(&version, protocol, expires)?;
 
         // Decrypt the cipher into the plain data.
         if !crypto::decrypt(
@@ -486,7 +485,7 @@ impl ConnectionToken {
             protocol,
             expires,
             sequence,
-            data: PrivateData::read(&plain[..])?
+            data: PrivateData::read(&plain[..])?,
         };
 
         Ok(instance)
@@ -497,6 +496,7 @@ impl ConnectionToken {
 mod tests {
     use super::*;
     use crate::net::support::{Deserialize, SizedRead, SizedWrite};
+    use std::mem;
 
     const VERSION: [u8; 16] = [5; 16];
     const PROTOCOL: u16 = 123;

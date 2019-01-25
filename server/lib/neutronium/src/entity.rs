@@ -1,6 +1,6 @@
 use crate::alloc::{DynVec, DynVecOps};
 use crate::component::Component;
-use crate::component_id_init;
+use crate::component_init;
 use crate::identity::{ComponentId, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use std::sync::Arc;
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub struct EntityId(usize);
 
-component_id_init!(EntityId);
+component_init!(EntityId);
 
 impl From<usize> for EntityId {
     #[inline]

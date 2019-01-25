@@ -251,17 +251,13 @@ macro_rules! bitflag_type_id {
 macro_rules! custom_type_id_init {
     ($name: ident, $id_type: ty, $trait_type: ty, $accessor: ident) => {
         $crate::identity::paste::item! {
-            #[allow(non_snake_case)]
-            mod [<_ $name _internal>] {
-                use super::*;
+            #[allow(non_upper_case_globals)]
+            pub static mut [<_ $name _id>]: $id_type = $id_type{id: 0};
 
-                #[allow(non_upper_case_globals)]
-                pub static mut [<_ $name _id>]: $id_type = $id_type{id: 0};
-
-                #[$crate::identity::ctor::ctor]
-                fn [<_ $name _init>]() {
+            impl $name {
+                #[allow(non_snake_case)]
+                fn custom_id_type_init() {
                     unsafe {
-                        let _lock = $id_type::id_gen_lock();
                         let name_vec = $id_type::get_name_vec();
                         let id_vec = $id_type::get_id_vec();
 
@@ -276,14 +272,9 @@ macro_rules! custom_type_id_init {
             }
 
             impl $trait_type for $name {
-                // TODO: Remove
-                fn acquire_unique_id() -> $id_type {
-                    unimplemented!()
-                }
-
                 fn $accessor() -> $id_type {
                     unsafe {
-                        [<_ $name _internal>]::[<_ $name _id>]
+                        [<_ $name _id>]
                     }
                 }
             }
@@ -302,13 +293,6 @@ bitflag_type_id!(
     ShardKey,
     ComponentIdMutex
 );
-
-#[macro_export]
-macro_rules! component_id_init {
-    ($name: ident) => {
-        $crate::custom_type_id_init!($name, ComponentId, Component, get_unique_id);
-    }
-}
 
 bitflag_type_id!(
     SystemId,

@@ -7,8 +7,33 @@ use std::fmt::Debug;
 
 pub(crate) type ComponentCoords = (ShardKey, usize);
 
+#[macro_export]
+macro_rules! component_init {
+    ($name: ident) => {
+        $crate::custom_type_id_init!($name, ComponentId, Component, get_unique_id);
+
+        $crate::identity::paste::item! {
+
+
+            #[allow(non_snake_case)]
+            #[$crate::identity::ctor::ctor]
+            fn [<_ $name _component_init>]() {
+                // Get lock
+                let _lock = ComponentId::id_gen_lock();
+
+                // Initialize the id
+                $name::custom_id_type_init();
+
+                // 1. Append to the component def builders
+                // 2. Append to the component vec builders
+            }
+        }
+    };
+}
+
+//static COMP_VEC_BUILDER: Box<Fn() -> Box<ComponentVec> + Sync + Send> = unsafe { ::std::mem::uninitialized() };
+
 pub trait Component: DeserializeOwned + Debug {
-    fn acquire_unique_id() -> ComponentId;
     fn get_unique_id() -> ComponentId;
 
     #[inline]
@@ -72,7 +97,11 @@ impl Shard {
         }
     }
 
-    pub fn new_with_ents(key: ShardKey, entities: Vec<EntityId>, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+    pub fn new_with_ents(
+        key: ShardKey,
+        entities: Vec<EntityId>,
+        store: HashMap<ComponentId, Box<ComponentVec>>,
+    ) -> Shard {
         Shard {
             key,
             entities: Box::new(entities),
@@ -120,7 +149,13 @@ impl Shard {
         if T::get_unique_id() == EntityId::get_unique_id() {
             unsafe { self.entities.get_ptr().cast_checked_raw() }
         } else {
-            unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr().cast_checked_raw() }
+            unsafe {
+                self.store
+                    .get(&T::get_unique_id())
+                    .unwrap()
+                    .get_ptr()
+                    .cast_checked_raw()
+            }
         }
     }
 
@@ -133,15 +168,21 @@ impl Shard {
             panic!("Entity ID vector is not writeable")
         }
 
-        unsafe { self.store.get(&T::get_unique_id()).unwrap().get_ptr().cast_checked_raw() }
+        unsafe {
+            self.store
+                .get(&T::get_unique_id())
+                .unwrap()
+                .get_ptr()
+                .cast_checked_raw()
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::component_init;
     use serde_derive::{Deserialize, Serialize};
-    use crate::component_id_init;
 
     #[derive(Serialize, Deserialize, Debug)]
     struct SomeComponent {
@@ -149,14 +190,16 @@ mod tests {
         y: i32,
     }
 
-    component_id_init!(SomeComponent);
+    component_init!(SomeComponent);
 
     #[test]
     fn test_ingest() {
         let some_comp_id = SomeComponent::get_unique_id();
 
         let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
-        shard.store.insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
+        shard
+            .store
+            .insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
 
         let mut shard_def = ShardDef {
             entity_ids: vec![0.into(), 1.into(), 2.into()],
@@ -218,7 +261,10 @@ mod tests {
     #[test]
     fn test_data_ptr() {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
-        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+        map.insert(
+            SomeComponent::get_unique_id(),
+            Box::new(Vec::<SomeComponent>::new()),
+        );
 
         let shard = Shard::new(ShardKey::empty(), map);
 
@@ -229,7 +275,10 @@ mod tests {
     #[test]
     fn test_data_mut_ptr() {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
-        map.insert(SomeComponent::get_unique_id(), Box::new(Vec::<SomeComponent>::new()));
+        map.insert(
+            SomeComponent::get_unique_id(),
+            Box::new(Vec::<SomeComponent>::new()),
+        );
 
         let shard = Shard::new(ShardKey::empty(), map);
 

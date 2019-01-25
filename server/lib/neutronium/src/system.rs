@@ -971,7 +971,7 @@ pub mod context {
 mod tests {
     use super::*;
     use crate::component::ComponentVec;
-    use crate::component_id_init;
+    use crate::component_init;
     use crate::identity::{ComponentId, TopicId};
     use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
@@ -983,12 +983,12 @@ mod tests {
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
 
-    component_id_init!(CompA);
+    component_init!(CompA);
 
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompB(u64);
 
-    component_id_init!(CompB);
+    component_init!(CompB);
 
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompC {
@@ -996,12 +996,12 @@ mod tests {
         y: i32,
     }
 
-    component_id_init!(CompC);
+    component_init!(CompC);
 
     #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
     struct CompD(u8);
 
-    component_id_init!(CompD);
+    component_init!(CompD);
 
     #[derive(Message, Debug, Clone, Eq, PartialEq)]
     struct Msg(i32);

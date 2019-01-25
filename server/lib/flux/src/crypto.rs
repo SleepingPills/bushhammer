@@ -1,11 +1,22 @@
 use byteorder::{LittleEndian, WriteBytesExt};
 use libsodium_sys;
+use ctor::ctor;
 
 pub const MAC_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_ABYTES as usize;
 pub const KEY_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_KEYBYTES as usize;
 pub const NONCE_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_NPUBBYTES as usize;
 
 const NONCE_OFFSET: usize = NONCE_SIZE - 8;
+
+/// Initialize the sodium infrastructure
+#[ctor]
+fn init_sodium() {
+    unsafe {
+        if libsodium_sys::sodium_init() < 0 {
+            panic!("Cryptography initialization failed")
+        }
+    }
+}
 
 #[inline]
 fn nonce_to_bytes(nonce: u64) -> [u8; NONCE_SIZE] {

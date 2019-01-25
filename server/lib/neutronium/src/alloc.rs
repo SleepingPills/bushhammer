@@ -3,6 +3,8 @@ use std::marker::Unsize;
 use std::ops::{Deref, DerefMut};
 use std::ptr::NonNull;
 
+//pub const
+
 /// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
 #[derive(Debug)]
 pub struct DynPtr(NonNull<()>, TypeId);

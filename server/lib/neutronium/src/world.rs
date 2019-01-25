@@ -323,7 +323,7 @@ impl GameState {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component_id_init;
+    use crate::component_init;
     use crate::system::Context;
     use crate::system::{Components, Read, Resources, Router, Write};
     use neutronium_proc::Message;
@@ -336,12 +336,12 @@ mod tests {
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
 
-    component_id_init!(CompA);
+    component_init!(CompA);
 
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompB(u64);
 
-    component_id_init!(CompB);
+    component_init!(CompB);
 
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompC {
@@ -349,7 +349,7 @@ mod tests {
         y: i32,
     }
 
-    component_id_init!(CompC);
+    component_init!(CompC);
 
     impl CompC {
         fn new(x: i32, y: i32) -> CompC {

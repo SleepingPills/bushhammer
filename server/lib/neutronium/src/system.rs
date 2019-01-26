@@ -630,7 +630,7 @@ pub mod store {
 
                 #[inline]
                 fn get_shard_key() -> ShardKey {
-                    ($($field_type::DataType::get_unique_id())|*).into()
+                    ($($field_type::DataType::get_class())|*).into()
                 }
             }
         };
@@ -672,7 +672,7 @@ pub mod store {
 
         #[inline]
         fn get_shard_key() -> ShardKey {
-            T::DataType::get_unique_id().into()
+            T::DataType::get_class().into()
         }
     }
 }
@@ -1013,10 +1013,10 @@ mod tests {
         ComponentClass,
     ) {
         (
-            CompA::get_unique_id(),
-            CompB::get_unique_id(),
-            CompC::get_unique_id(),
-            CompD::get_unique_id(),
+            CompA::get_class(),
+            CompB::get_class(),
+            CompC::get_class(),
+            CompD::get_class(),
         )
     }
 
@@ -1027,8 +1027,8 @@ mod tests {
 
     fn make_shard_1() -> Shard {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
-        let comp_1_id = CompA::get_unique_id();
-        let comp_2_id = CompB::get_unique_id();
+        let comp_1_id = CompA::get_class();
+        let comp_2_id = CompB::get_class();
 
         let data_a = vec![CompA(0), CompA(1), CompA(2)];
         let data_b = vec![CompB(0), CompB(1), CompB(2)];
@@ -1038,18 +1038,18 @@ mod tests {
 
         let entities: Vec<EntityId> = vec![0.into(), 1.into(), 2.into()];
 
-        Shard::new_with_ents(comp_1_id + comp_2_id + EntityId::get_unique_id(), entities, map)
+        Shard::new_with_ents(comp_1_id + comp_2_id + EntityId::get_class(), entities, map)
     }
 
     fn make_shard_2() -> Shard {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
-        let comp_1_id = CompB::get_unique_id();
-        let comp_2_id = CompC::get_unique_id();
+        let comp_1_id = CompB::get_class();
+        let comp_2_id = CompC::get_class();
 
         map.insert(comp_1_id, Box::new(Vec::<CompB>::new()));
         map.insert(comp_2_id, Box::new(Vec::<CompC>::new()));
 
-        Shard::new(comp_1_id + comp_2_id + EntityId::get_unique_id(), map)
+        Shard::new(comp_1_id + comp_2_id + EntityId::get_class(), map)
     }
 
     #[test]

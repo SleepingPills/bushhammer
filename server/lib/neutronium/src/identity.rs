@@ -303,6 +303,7 @@ bitflag_type_id!(
     SystemIdMutex
 );
 
+// TODO: Rename to Topic
 bitflag_type_id!(
     TopicId,
     BitFlagId,

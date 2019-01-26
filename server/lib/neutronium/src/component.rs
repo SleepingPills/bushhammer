@@ -5,12 +5,10 @@ use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
 
-pub(crate) type ComponentCoords = (ShardKey, usize);
-
 #[macro_export]
 macro_rules! component_init {
     ($name: ident) => {
-        $crate::custom_type_id_init!($name, ComponentClass, Component, get_unique_id);
+        $crate::custom_type_id_init!($name, ComponentClass, Component, get_class);
 
         $crate::identity::paste::item! {
             #[allow(non_upper_case_globals)]
@@ -49,12 +47,20 @@ macro_rules! component_init {
     };
 }
 
+static mut COMP_VEC_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
+
+pub trait ComponentClassAux {
+    fn comp_vec_builder() -> &'static Box<Fn() -> Box<ComponentVec>>;
+}
+
+pub(crate) type ComponentCoords = (ShardKey, usize);
+
 pub trait Component: DeserializeOwned + Debug {
-    fn get_unique_id() -> ComponentClass;
+    fn get_class() -> ComponentClass;
 
     #[inline]
     fn get_type_indexer() -> usize {
-        Self::get_unique_id().indexer()
+        Self::get_class().indexer()
     }
 
     #[inline]
@@ -162,12 +168,12 @@ impl Shard {
     where
         T: 'static + Component,
     {
-        if T::get_unique_id() == EntityId::get_unique_id() {
+        if T::get_class() == EntityId::get_class() {
             unsafe { self.entities.get_ptr().cast_checked_raw() }
         } else {
             unsafe {
                 self.store
-                    .get(&T::get_unique_id())
+                    .get(&T::get_class())
                     .unwrap()
                     .get_ptr()
                     .cast_checked_raw()
@@ -180,13 +186,13 @@ impl Shard {
     where
         T: 'static + Component,
     {
-        if T::get_unique_id() == EntityId::get_unique_id() {
+        if T::get_class() == EntityId::get_class() {
             panic!("Entity ID vector is not writeable")
         }
 
         unsafe {
             self.store
-                .get(&T::get_unique_id())
+                .get(&T::get_class())
                 .unwrap()
                 .get_ptr()
                 .cast_checked_raw()
@@ -210,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_ingest() {
-        let some_comp_cls = SomeComponent::get_unique_id();
+        let some_comp_cls = SomeComponent::get_class();
 
         let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
         shard
@@ -238,7 +244,7 @@ mod tests {
 
     #[test]
     fn test_remove() {
-        let some_comp_cls = SomeComponent::get_unique_id();
+        let some_comp_cls = SomeComponent::get_class();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
 
@@ -278,7 +284,7 @@ mod tests {
     fn test_data_ptr() {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(
-            SomeComponent::get_unique_id(),
+            SomeComponent::get_class(),
             Box::new(Vec::<SomeComponent>::new()),
         );
 
@@ -292,7 +298,7 @@ mod tests {
     fn test_data_mut_ptr() {
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
         map.insert(
-            SomeComponent::get_unique_id(),
+            SomeComponent::get_class(),
             Box::new(Vec::<SomeComponent>::new()),
         );
 

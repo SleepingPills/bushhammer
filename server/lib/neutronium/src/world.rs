@@ -190,7 +190,7 @@ impl World {
             panic!("Can't add component to finalized world")
         }
 
-        let id = T::get_unique_id();
+        let id = T::get_class();
 
         // Register the entity and component builder vector types
         self.transactions.add_builder::<T>();
@@ -261,7 +261,7 @@ impl GameState {
     }
 
     fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut ShardDef) {
-        let entity_comp_cls = EntityId::get_unique_id();
+        let entity_comp_cls = EntityId::get_class();
 
         // Add the entity component id to the shard key
         let shard_key = shard_key + entity_comp_cls;
@@ -381,24 +381,24 @@ mod tests {
         assert_eq!(
             world.state.entities[&0.into()],
             (
-                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(),
+                EntityId::get_class() + CompA::get_class() + CompB::get_class(),
                 0
             )
         );
         assert_eq!(
             world.state.entities[&1.into()],
             (
-                EntityId::get_unique_id() + CompA::get_unique_id() + CompB::get_unique_id(),
+                EntityId::get_class() + CompA::get_class() + CompB::get_class(),
                 1
             )
         );
         assert_eq!(
             world.state.entities[&2.into()],
             (
-                EntityId::get_unique_id()
-                    + CompA::get_unique_id()
-                    + CompB::get_unique_id()
-                    + CompC::get_unique_id(),
+                EntityId::get_class()
+                    + CompA::get_class()
+                    + CompB::get_class()
+                    + CompC::get_class(),
                 0
             )
         );

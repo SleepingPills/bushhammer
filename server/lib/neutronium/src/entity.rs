@@ -339,7 +339,7 @@ macro_rules! comp_tup {
             #[inline]
             fn get_ids() -> Self::IdTuple {
                 (
-                    $($field_type::get_unique_id()),*,
+                    $($field_type::get_class()),*,
                 )
             }
 

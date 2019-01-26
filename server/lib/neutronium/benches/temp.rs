@@ -49,17 +49,17 @@ fn hashset_vs_bitset(c: &mut Criterion) {
             || {
                 let mut hash_set = HashSet::new();
 
-                hash_set.insert(C1::get_unique_id());
-                hash_set.insert(C2::get_unique_id());
-                hash_set.insert(C3::get_unique_id());
-                hash_set.insert(C4::get_unique_id());
-                hash_set.insert(C5::get_unique_id());
-                hash_set.insert(C7::get_unique_id());
-                hash_set.insert(C8::get_unique_id());
+                hash_set.insert(C1::get_class());
+                hash_set.insert(C2::get_class());
+                hash_set.insert(C3::get_class());
+                hash_set.insert(C4::get_class());
+                hash_set.insert(C5::get_class());
+                hash_set.insert(C7::get_class());
+                hash_set.insert(C8::get_class());
                 hash_set
             },
             |mut hash_set| {
-                hash_set.insert(C6::get_unique_id());
+                hash_set.insert(C6::get_class());
                 black_box(hash_set);
             },
         )
@@ -70,13 +70,13 @@ fn hashset_vs_bitset(c: &mut Criterion) {
             || {
                 let mut hash_set = HashSet::new();
 
-                hash_set.insert(C1::get_unique_id());
-                hash_set.insert(C2::get_unique_id());
-                hash_set.insert(C3::get_unique_id());
-                hash_set.insert(C4::get_unique_id());
-                hash_set.insert(C5::get_unique_id());
-                hash_set.insert(C7::get_unique_id());
-                hash_set.insert(C8::get_unique_id());
+                hash_set.insert(C1::get_class());
+                hash_set.insert(C2::get_class());
+                hash_set.insert(C3::get_class());
+                hash_set.insert(C4::get_class());
+                hash_set.insert(C5::get_class());
+                hash_set.insert(C7::get_class());
+                hash_set.insert(C8::get_class());
                 hash_set
             },
             |mut hash_set| {
@@ -90,16 +90,16 @@ fn hashset_vs_bitset(c: &mut Criterion) {
     c.bench_function("Bitset Insertion", move |b| {
         b.iter_with_setup(
             || {
-                C1::get_unique_id()
-                    + C2::get_unique_id()
-                    + C3::get_unique_id()
-                    + C4::get_unique_id()
-                    + C5::get_unique_id()
-                    + C7::get_unique_id()
-                    + C8::get_unique_id()
+                C1::get_class()
+                    + C2::get_class()
+                    + C3::get_class()
+                    + C4::get_class()
+                    + C5::get_class()
+                    + C7::get_class()
+                    + C8::get_class()
             },
             |mut bit_set| {
-                bit_set += C6::get_unique_id();
+                bit_set += C6::get_class();
                 black_box(bit_set);
             },
         )
@@ -108,13 +108,13 @@ fn hashset_vs_bitset(c: &mut Criterion) {
     c.bench_function("Bitset Drain", move |b| {
         b.iter_with_setup(
             || {
-                C1::get_unique_id()
-                    + C2::get_unique_id()
-                    + C3::get_unique_id()
-                    + C4::get_unique_id()
-                    + C5::get_unique_id()
-                    + C7::get_unique_id()
-                    + C8::get_unique_id()
+                C1::get_class()
+                    + C2::get_class()
+                    + C3::get_class()
+                    + C4::get_class()
+                    + C5::get_class()
+                    + C7::get_class()
+                    + C8::get_class()
             },
             |bit_set| {
                 for id in bit_set.decompose() {

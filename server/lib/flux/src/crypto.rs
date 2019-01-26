@@ -9,8 +9,9 @@ pub const NONCE_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_N
 const NONCE_OFFSET: usize = NONCE_SIZE - 8;
 
 /// Initialize the sodium infrastructure
+#[allow(non_upper_case_globals)]
 #[ctor]
-fn INIT_SODIUM() {
+fn init_sodium() {
     unsafe {
         if libsodium_sys::sodium_init() < 0 {
             panic!("Cryptography initialization failed")

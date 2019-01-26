@@ -13,7 +13,10 @@ macro_rules! component_init {
         $crate::custom_type_id_init!($name, ComponentId, Component, get_unique_id);
 
         $crate::identity::paste::item! {
-
+            #[allow(non_upper_case_globals)]
+            static mut [<_ $name _ COMP_VEC_BUILDER>]:
+                $crate::alloc::StaticPtr<Box<Fn() -> Box<$crate::component::ComponentVec>>>
+                    = $crate::alloc::StaticPtr::empty();
 
             #[allow(non_snake_case)]
             #[$crate::identity::ctor::ctor]
@@ -24,14 +27,27 @@ macro_rules! component_init {
                 // Initialize the id
                 $name::custom_id_type_init();
 
-                // 1. Append to the component def builders
+                // Set up component builder
+                unsafe {
+                    [<_ $name _ COMP_VEC_BUILDER>].ingest(Box::new(|| Box::new(Vec::<$name>::new())))
+                }
+
                 // 2. Append to the component vec builders
+            }
+
+            // TODO: This has to become available off of the ID to be ubiquitously usable...
+            // Just add a new trait that we'll implement here for ComponentId that will make the
+            // required statics available.
+            impl $name {
+                pub(crate) fn comp_vec_builder() -> &'static Box<Fn() -> Box<$crate::component::ComponentVec>> {
+                    unsafe {
+                        [<_ $name _ COMP_VEC_BUILDER>].as_ref()
+                    }
+                }
             }
         }
     };
 }
-
-//static COMP_VEC_BUILDER: Box<Fn() -> Box<ComponentVec> + Sync + Send> = unsafe { ::std::mem::uninitialized() };
 
 pub trait Component: DeserializeOwned + Debug {
     fn get_unique_id() -> ComponentId;

@@ -1,13 +1,41 @@
 use std::any::TypeId;
 use std::marker::Unsize;
 use std::ops::{Deref, DerefMut};
-use std::ptr::NonNull;
+use std::ptr;
+use std::mem;
 
-//pub const
+/// Pointer for lazy initialized statics.
+pub(crate) struct StaticPtr<T>(*const T);
+
+impl<T> StaticPtr<T> {
+    #[inline]
+    pub const fn empty() -> StaticPtr<T> {
+        StaticPtr(ptr::null())
+    }
+
+    #[inline]
+    pub fn ingest(&mut self, inst: T) {
+        if !self.0.is_null() {
+            panic!("Pointer already initialized")
+        }
+
+        self.0 = &inst as *const T;
+
+        mem::forget(inst);
+    }
+
+    #[inline]
+    pub unsafe fn as_ref(&self) -> &T {
+        &*self.0
+    }
+}
+
+unsafe impl<T> Sync for StaticPtr<T> {}
+unsafe impl<T> Send for StaticPtr<T> {}
 
 /// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
 #[derive(Debug)]
-pub struct DynPtr(NonNull<()>, TypeId);
+pub struct DynPtr(ptr::NonNull<()>, TypeId);
 
 impl DynPtr {
     /// New dynamic non-null pointer.
@@ -17,7 +45,7 @@ impl DynPtr {
         T: 'static,
     {
         DynPtr(
-            NonNull::new(inst as *mut T)
+            ptr::NonNull::new(inst as *mut T)
                 .expect("Dynamic pointer can't be null")
                 .cast::<()>(),
             TypeId::of::<T>(),
@@ -31,7 +59,7 @@ impl DynPtr {
         T: 'static,
     {
         DynPtr(
-            NonNull::new_unchecked(inst as *mut T).cast::<()>(),
+            ptr::NonNull::new_unchecked(inst as *mut T).cast::<()>(),
             TypeId::of::<T>(),
         )
     }
@@ -39,7 +67,7 @@ impl DynPtr {
     /// Cast the pointer to the specified type. Will panic if the desired type does not match
     /// the original.
     #[inline]
-    pub fn cast_checked<T>(&self) -> NonNull<T>
+    pub fn cast_checked<T>(&self) -> ptr::NonNull<T>
     where
         T: 'static,
     {
@@ -62,7 +90,7 @@ impl DynPtr {
 }
 
 impl Deref for DynPtr {
-    type Target = NonNull<()>;
+    type Target = ptr::NonNull<()>;
 
     #[inline]
     fn deref(&self) -> &Self::Target {

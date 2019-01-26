@@ -3,6 +3,7 @@
 #![feature(integer_atomics)]
 #![feature(core_intrinsics)]
 #![feature(const_vec_new)]
+#![feature(const_raw_ptr_deref)]
 #![feature(box_into_raw_non_null)]
 
 #![allow(clippy::len_without_is_empty)]

@@ -8,9 +8,9 @@ pub fn derive_message(item: proc_macro::TokenStream) -> proc_macro::TokenStream 
     derive_core(
         &ast.ident.to_string(),
         "Message",
-        "TopicId",
+        "Topic",
         "acquire_topic_id",
-        "get_topic_id",
+        "get_topic",
     )
 }
 

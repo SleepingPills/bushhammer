@@ -972,7 +972,7 @@ mod tests {
     use super::*;
     use crate::component::ComponentVec;
     use crate::component_init;
-    use crate::identity::{ComponentClass, TopicId};
+    use crate::identity::{ComponentClass, Topic};
     use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
@@ -1020,8 +1020,8 @@ mod tests {
         )
     }
 
-    fn setup_messaging() -> (TopicId, MutexGuard<'static, ()>) {
-        let lock = TopicId::static_init();
+    fn setup_messaging() -> (Topic, MutexGuard<'static, ()>) {
+        let lock = Topic::static_init();
         (Msg::acquire_topic_id(), lock)
     }
 

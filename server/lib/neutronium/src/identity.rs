@@ -305,7 +305,7 @@ bitflag_type_id!(
 
 // TODO: Rename to Topic
 bitflag_type_id!(
-    TopicId,
+    Topic,
     BitFlagId,
     TOPIC_NAME_VEC,
     TOPIC_ID_VEC,

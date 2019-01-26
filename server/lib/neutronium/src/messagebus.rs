@@ -1,26 +1,26 @@
 use crate::alloc::{DynVec, DynVecOps};
-use crate::identity::{TopicBundle, TopicId};
+use crate::identity::{TopicBundle, Topic};
 use std::fmt::Debug;
 
 /// Designates a struct as a topic for the message bus
 pub trait Message: Clone + Debug {
-    fn acquire_topic_id() -> TopicId;
-    fn get_topic_id() -> TopicId;
+    fn acquire_topic_id() -> Topic;
+    fn get_topic() -> Topic;
 
     #[inline]
     fn get_indexer() -> usize {
-        Self::get_topic_id().indexer()
+        Self::get_topic().indexer()
     }
 
     #[inline]
     fn get_topic_name() -> &'static str {
-        unsafe { TopicId::get_name_vec()[Self::get_indexer()] }
+        unsafe { Topic::get_name_vec()[Self::get_indexer()] }
     }
 }
 
 /// Appendable and cloneable message queue
 pub trait MessageQueue: DynVecOps {
-    fn get_topic_id(&self) -> TopicId;
+    fn get_topic(&self) -> Topic;
     fn append(&mut self, other: &mut DynVec<MessageQueue>);
     fn clone_box(&self) -> Box<MessageQueue>;
 }
@@ -29,8 +29,8 @@ impl<T> MessageQueue for Vec<T>
 where
     T: 'static + Message,
 {
-    fn get_topic_id(&self) -> TopicId {
-        T::get_topic_id()
+    fn get_topic(&self) -> Topic {
+        T::get_topic()
     }
 
     #[inline]
@@ -120,7 +120,7 @@ impl Bus {
     where
         T: 'static + Message,
     {
-        self.activity += T::get_topic_id();
+        self.activity += T::get_topic();
         self.topics[T::get_indexer()].cast_mut_vector::<T>().push(message);
     }
 
@@ -130,7 +130,7 @@ impl Bus {
     where
         T: 'static + Message,
     {
-        self.activity += T::get_topic_id();
+        self.activity += T::get_topic();
         Batcher::new(self.topics[T::get_indexer()].cast_mut_vector::<T>())
     }
 
@@ -180,8 +180,8 @@ mod tests {
     #[derive(Message, Debug, Clone)]
     pub struct T2(i32);
 
-    fn setup() -> (TopicId, TopicId, MutexGuard<'static, ()>) {
-        let lock = TopicId::static_init();
+    fn setup() -> (Topic, Topic, MutexGuard<'static, ()>) {
+        let lock = Topic::static_init();
 
         (
             T1::acquire_topic_id(),
@@ -266,7 +266,7 @@ mod tests {
         assert_eq!(bus2.topics[0].cast_vector::<T1>()[0].0, 0);
         assert_eq!(bus2.topics[0].cast_vector::<T1>()[1].0, 1);
         assert_eq!(bus2.topics[1].cast_vector::<T2>()[0].0, 1);
-        assert_eq!(bus2.activity, T1::get_topic_id() + T2::get_topic_id());
+        assert_eq!(bus2.activity, T1::get_topic() + T2::get_topic());
     }
 
     #[test]
@@ -299,7 +299,7 @@ mod tests {
 
         let messages = bus.read::<T1>();
 
-        assert_eq!(bus.activity, T1::get_topic_id().into());
+        assert_eq!(bus.activity, T1::get_topic().into());
 
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].0, 0);
@@ -319,7 +319,7 @@ mod tests {
 
         let messages = bus.read::<T1>();
 
-        assert_eq!(bus.activity, T1::get_topic_id().into());
+        assert_eq!(bus.activity, T1::get_topic().into());
 
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0].0, 0);

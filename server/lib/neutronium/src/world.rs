@@ -1,7 +1,7 @@
 use crate::component::Component;
 use crate::component::{ComponentClassAux, ComponentCoords, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
-use crate::identity::{ShardKey, SystemId, TopicId};
+use crate::identity::{ShardKey, SystemId, Topic};
 use crate::messagebus::Bus;
 use crate::messagebus::Message;
 use crate::registry::Registry;
@@ -62,7 +62,7 @@ impl World {
             transactions: TransactionContext::new(counter),
             finalized: false,
             messages: Bus::new(),
-            _static_guard: (SystemId::static_init(), TopicId::static_init()),
+            _static_guard: (SystemId::static_init(), Topic::static_init()),
         };
 
         world

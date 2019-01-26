@@ -8,7 +8,7 @@ use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
 use hashbrown::HashMap;
-use std::sync::atomic::ATOMIC_USIZE_INIT;
+use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
 use std::sync::MutexGuard;
 use std::thread;
@@ -21,6 +21,7 @@ pub struct World {
     frame_delta_time: time::Duration,
 
     // Game State
+    entity_counter: Arc<AtomicUsize>,
     state: GameState,
 
     // Transactions
@@ -51,17 +52,19 @@ impl World {
     /// FPS: 20
     #[inline]
     pub fn default() -> Self {
-        let mut world = World {
+        let counter = Arc::new(ATOMIC_USIZE_INIT);
+
+        let world = World {
             frame_delta_time: time::Duration::from_millis(50),
+            entity_counter: counter.clone(),
             state: GameState::new(),
             system_transactions: Vec::new(),
-            transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
+            transactions: TransactionContext::new(counter),
             finalized: false,
             messages: Bus::new(),
             _static_guard: (SystemId::static_init(), TopicId::static_init()),
         };
-        // Entity ID is always a registered component
-        world.register_component::<EntityId>();
+
         world
     }
 
@@ -74,7 +77,7 @@ impl World {
             system.init(&self.state.resources, &self.messages);
 
             // Create a copy of the main transaction context for each system so they can be run in parallel
-            self.system_transactions.push(self.transactions.clone());
+            self.system_transactions.push(TransactionContext::new(self.entity_counter.clone()));
         }
     }
 
@@ -181,19 +184,6 @@ impl World {
 }
 
 impl World {
-    /// Register the supplied component type.
-    pub fn register_component<T>(&mut self)
-    where
-        T: 'static + Component,
-    {
-        if self.finalized {
-            panic!("Can't add component to finalized world")
-        }
-
-        // Register the entity and component builder vector types
-        self.transactions.add_builder::<T>();
-    }
-
     /// Register the supplied resource instance.
     pub fn register_resource<T>(&mut self, resource: T)
     where
@@ -352,9 +342,6 @@ mod tests {
     #[test]
     fn test_add_entity() {
         let mut world = World::default();
-        world.register_component::<CompA>();
-        world.register_component::<CompB>();
-        world.register_component::<CompC>();
         world.build();
 
         {
@@ -390,9 +377,6 @@ mod tests {
     #[test]
     fn test_remove_entity() {
         let mut world = World::default();
-        world.register_component::<CompA>();
-        world.register_component::<CompB>();
-        world.register_component::<CompC>();
         world.build();
 
         {
@@ -491,9 +475,6 @@ mod tests {
         }
 
         let mut world = World::default();
-        world.register_component::<CompA>();
-        world.register_component::<CompB>();
-        world.register_component::<CompC>();
         world.register_system(TestSystem { _p: PhantomData });
         world.build();
 

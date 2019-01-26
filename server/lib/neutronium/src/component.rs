@@ -1,5 +1,6 @@
 use crate::alloc::DynPtr;
-use crate::entity::{CompDefVec, EntityId, ShardDef};
+use crate::entity::{EntityId, ShardDef};
+use crate::alloc::{DynVec, DynVecOps};
 use crate::identity::{ComponentClass, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
@@ -31,11 +32,11 @@ macro_rules! component_init {
 }
 
 pub static mut COMP_VEC_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
-pub static mut COMP_DEF_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
+pub static mut COMP_DEF_BUILDERS: Vec<Box<Fn() -> CompDefVec>> = Vec::new();
 
 pub trait ComponentClassAux {
     fn comp_vec_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>>;
-    fn comp_def_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>>;
+    fn comp_def_builder(&self) -> &'static Box<Fn() -> CompDefVec>;
 }
 
 impl ComponentClassAux for ComponentClass {
@@ -45,9 +46,9 @@ impl ComponentClassAux for ComponentClass {
         }
     }
 
-    fn comp_def_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>> {
+    fn comp_def_builder(&self) -> &'static Box<Fn() -> CompDefVec> {
         unsafe {
-            COMP_VEC_BUILDERS.get_unchecked(self.indexer())
+            COMP_DEF_BUILDERS.get_unchecked(self.indexer())
         }
     }
 }
@@ -98,6 +99,48 @@ where
     #[inline]
     unsafe fn get_ptr(&self) -> DynPtr {
         DynPtr::new_unchecked(self as *const Vec<T>)
+    }
+}
+
+pub trait CompDef: DynVecOps + Debug {
+    fn push_json(&mut self, json: &str);
+    fn clone_box(&self) -> Box<CompDef>;
+}
+
+impl<T> CompDef for Vec<T>
+    where
+        T: 'static + Component,
+{
+    #[inline]
+    fn push_json(&mut self, json: &str) {
+        self.push(serde_json::from_str(json).expect("Error deserializing component"));
+    }
+
+    #[inline]
+    fn clone_box(&self) -> Box<CompDef> {
+        Box::new(Vec::<T>::new())
+    }
+}
+
+pub type CompDefVec = DynVec<CompDef>;
+
+impl CompDefVec {
+    #[inline]
+    pub fn push<T>(&mut self, item: T)
+        where
+            T: 'static + Component,
+    {
+        self.cast_mut_vector::<T>().push(item);
+    }
+
+    // Quite nasty hack to allow internal mutability
+    #[allow(clippy::mut_from_ref)]
+    #[inline]
+    pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
+        where
+            T: 'static + Component,
+    {
+        &mut *(self.get_inner_ptr().cast_checked_raw())
     }
 }
 

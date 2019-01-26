@@ -1,12 +1,9 @@
-use crate::alloc::{DynVec, DynVecOps};
-use crate::component::Component;
+use crate::alloc::DynVec;
+use crate::component::{CompDefVec, Component, ComponentClassAux};
 use crate::component_init;
 use crate::identity::{ComponentClass, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
-use serde_json;
-use std::fmt::Debug;
-use std::marker::PhantomData;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
@@ -53,7 +50,7 @@ pub struct Entity {
 }
 
 /// Shard definition for accumulating components for new entities.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct ShardDef {
     pub(crate) entity_ids: Vec<EntityId>,
     pub(crate) components: HashMap<ComponentClass, CompDefVec>,
@@ -61,11 +58,12 @@ pub struct ShardDef {
 
 impl ShardDef {
     #[inline]
-    fn new(comp_cls: &[ComponentClass], builders: &[Box<BuildCompDef>]) -> ShardDef {
+    fn new(comp_cls: &[ComponentClass]) -> ShardDef {
         let map: HashMap<_, _> = comp_cls
             .iter()
-            .map(|id| (*id, builders[id.indexer()].build()))
+            .map(|cls| (*cls, cls.comp_def_builder()()))
             .collect();
+
         ShardDef {
             entity_ids: Vec::new(),
             components: map,
@@ -80,11 +78,10 @@ impl ShardDef {
 
 /// Context for recording entity transactions. Prepared by the `World` after all components have been
 /// registered and the world is finalized.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct TransactionContext {
     pub(crate) added: HashMap<ShardKey, ShardDef>,
     pub(crate) deleted: Vec<EntityId>,
-    pub(crate) builders: Vec<Box<BuildCompDef>>,
     pub(crate) id_counter: Arc<AtomicUsize>,
 }
 
@@ -93,7 +90,6 @@ impl TransactionContext {
         TransactionContext {
             added: HashMap::new(),
             deleted: Vec::new(),
-            builders: Vec::new(),
             id_counter: counter,
         }
     }
@@ -111,11 +107,10 @@ impl TransactionContext {
     pub fn batch_json<'i>(&'i mut self, comp_classes: &'i [ComponentClass]) -> JsonBatchBuilder<'i> {
         let shard_key: ShardKey = comp_classes.iter().collect();
 
-        let builders = &self.builders;
         let shard = self
             .added
             .entry(shard_key)
-            .or_insert_with(|| ShardDef::new(comp_classes, builders));
+            .or_insert_with(|| ShardDef::new(comp_classes));
 
         JsonBatchBuilder {
             comp_classes,
@@ -138,19 +133,6 @@ impl TransactionContext {
     #[inline]
     pub fn remove(&mut self, id: EntityId) {
         self.deleted.push(id);
-    }
-
-    /// Add a vector builder for the given component type. This is required to be able to
-    /// create shards for collecting 'weakly' typed input like json strings.
-    pub(crate) fn add_builder<T>(&mut self)
-    where
-        T: 'static + Component,
-    {
-        if T::get_type_indexer() != self.builders.len() {
-            panic!("Indexer mismatch - builders must be registered in lockstep with the world")
-        }
-
-        self.builders.push(Box::new(CompDefBuilder::<T>(PhantomData)));
     }
 }
 
@@ -409,82 +391,3 @@ comp_ingress!(A:0, B:1, C:2, D:3, E:4);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6);
 comp_ingress!(A:0, B:1, C:2, D:3, E:4, F:5, G:6, H:7);
-
-pub trait CompDef: DynVecOps + Debug {
-    fn push_json(&mut self, json: &str);
-    fn clone_box(&self) -> Box<CompDef>;
-}
-
-impl<T> CompDef for Vec<T>
-where
-    T: 'static + Component,
-{
-    #[inline]
-    fn push_json(&mut self, json: &str) {
-        self.push(serde_json::from_str(json).expect("Error deserializing component"));
-    }
-
-    #[inline]
-    fn clone_box(&self) -> Box<CompDef> {
-        Box::new(Vec::<T>::new())
-    }
-}
-
-pub type CompDefVec = DynVec<CompDef>;
-
-impl CompDefVec {
-    #[inline]
-    pub fn push<T>(&mut self, item: T)
-    where
-        T: 'static + Component,
-    {
-        self.cast_mut_vector::<T>().push(item);
-    }
-
-    // Quite nasty hack to allow internal mutability
-    #[allow(clippy::mut_from_ref)]
-    #[inline]
-    pub unsafe fn cast_mut_unchecked<T>(&self) -> &mut Vec<T>
-    where
-        T: 'static + Component,
-    {
-        &mut *(self.get_inner_ptr().cast_checked_raw())
-    }
-}
-
-impl Clone for CompDefVec {
-    fn clone(&self) -> Self {
-        DynVec::from_box(self.clone_box())
-    }
-}
-
-pub trait BuildCompDef: Debug {
-    fn build(&self) -> CompDefVec;
-    fn clone_box(&self) -> Box<BuildCompDef>;
-}
-
-#[derive(Debug)]
-pub struct CompDefBuilder<T>(pub PhantomData<T>)
-where
-    T: 'static + Component;
-
-impl<T> BuildCompDef for CompDefBuilder<T>
-where
-    T: 'static + Component,
-{
-    #[inline]
-    fn build(&self) -> CompDefVec {
-        DynVec::new(Vec::<T>::new())
-    }
-
-    #[inline]
-    fn clone_box(&self) -> Box<BuildCompDef> {
-        Box::new(CompDefBuilder::<T>(PhantomData))
-    }
-}
-
-impl Clone for Box<BuildCompDef> {
-    fn clone(&self) -> Self {
-        self.clone_box()
-    }
-}

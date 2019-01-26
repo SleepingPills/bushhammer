@@ -1,7 +1,7 @@
 use crate::component::Component;
 use crate::component::{ComponentCoords, ComponentVec, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
-use crate::identity::{ComponentId, ShardKey, SystemId, TopicId};
+use crate::identity::{ComponentClass, ShardKey, SystemId, TopicId};
 use crate::messagebus::Bus;
 use crate::messagebus::Message;
 use crate::registry::Registry;
@@ -14,10 +14,7 @@ use std::sync::MutexGuard;
 use std::thread;
 use std::time;
 
-type StaticGuards = (
-    MutexGuard<'static, ()>,
-    MutexGuard<'static, ()>,
-);
+type StaticGuards = (MutexGuard<'static, ()>, MutexGuard<'static, ()>);
 
 pub struct World {
     // Global Settings
@@ -61,10 +58,7 @@ impl World {
             transactions: TransactionContext::new(Arc::new(ATOMIC_USIZE_INIT)),
             finalized: false,
             messages: Bus::new(),
-            _static_guard: (
-                SystemId::static_init(),
-                TopicId::static_init(),
-            ),
+            _static_guard: (SystemId::static_init(), TopicId::static_init()),
         };
         // Entity ID is always a registered component
         world.register_component::<EntityId>();
@@ -233,7 +227,7 @@ pub struct GameState {
     systems: Registry<SystemId>,
     resources: AnyMap,
     shards: HashMap<ShardKey, Shard>,
-    builders: HashMap<ComponentId, Box<Fn() -> Box<ComponentVec>>>,
+    builders: HashMap<ComponentClass, Box<Fn() -> Box<ComponentVec>>>,
 }
 
 impl GameState {
@@ -267,10 +261,10 @@ impl GameState {
     }
 
     fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut ShardDef) {
-        let entity_comp_id = EntityId::get_unique_id();
+        let entity_comp_cls = EntityId::get_unique_id();
 
         // Add the entity component id to the shard key
-        let shard_key = shard_key + entity_comp_id;
+        let shard_key = shard_key + entity_comp_cls;
 
         let systems = &self.systems;
         let builders = &self.builders;

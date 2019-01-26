@@ -1,7 +1,7 @@
 use chrono;
 use serde_derive::{Serialize, Deserialize};
 
-use neutronium::prelude::{ComponentId, Component};
+use neutronium::prelude::{ComponentClass, Component};
 use neutronium::component_init;
 
 #[derive(Serialize, Deserialize, Debug)]

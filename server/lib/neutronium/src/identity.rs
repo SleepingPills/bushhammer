@@ -286,12 +286,12 @@ pub(crate) type BitFlagId = u64;
 const ID_BIT_LENGTH: usize = mem::size_of::<BitFlagId>() * 8;
 
 bitflag_type_id!(
-    ComponentId,
+    ComponentClass,
     BitFlagId,
     COMP_NAME_VEC,
-    COMP_ID_VEC,
+    COMP_CLASS_VEC,
     ShardKey,
-    ComponentIdMutex
+    ComponentClassMutex
 );
 
 bitflag_type_id!(

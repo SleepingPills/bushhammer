@@ -972,7 +972,7 @@ mod tests {
     use super::*;
     use crate::component::ComponentVec;
     use crate::component_init;
-    use crate::identity::{ComponentId, TopicId};
+    use crate::identity::{ComponentClass, TopicId};
     use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
@@ -1007,10 +1007,10 @@ mod tests {
     struct Msg(i32);
 
     fn setup() -> (
-        ComponentId,
-        ComponentId,
-        ComponentId,
-        ComponentId,
+        ComponentClass,
+        ComponentClass,
+        ComponentClass,
+        ComponentClass,
     ) {
         (
             CompA::get_unique_id(),

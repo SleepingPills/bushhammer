@@ -1,6 +1,6 @@
 use crate::alloc::DynPtr;
 use crate::entity::{CompDefVec, EntityId, ShardDef};
-use crate::identity::{ComponentId, ShardKey};
+use crate::identity::{ComponentClass, ShardKey};
 use hashbrown::HashMap;
 use serde::de::DeserializeOwned;
 use std::fmt::Debug;
@@ -10,7 +10,7 @@ pub(crate) type ComponentCoords = (ShardKey, usize);
 #[macro_export]
 macro_rules! component_init {
     ($name: ident) => {
-        $crate::custom_type_id_init!($name, ComponentId, Component, get_unique_id);
+        $crate::custom_type_id_init!($name, ComponentClass, Component, get_unique_id);
 
         $crate::identity::paste::item! {
             #[allow(non_upper_case_globals)]
@@ -22,7 +22,7 @@ macro_rules! component_init {
             #[$crate::identity::ctor::ctor]
             fn [<_ $name _component_init>]() {
                 // Get lock
-                let _lock = ComponentId::id_gen_lock();
+                let _lock = ComponentClass::id_gen_lock();
 
                 // Initialize the id
                 $name::custom_id_type_init();
@@ -36,7 +36,7 @@ macro_rules! component_init {
             }
 
             // TODO: This has to become available off of the ID to be ubiquitously usable...
-            // Just add a new trait that we'll implement here for ComponentId that will make the
+            // Just add a new trait that we'll implement here for ComponentClass that will make the
             // required statics available.
             impl $name {
                 pub(crate) fn comp_vec_builder() -> &'static Box<Fn() -> Box<$crate::component::ComponentVec>> {
@@ -50,7 +50,7 @@ macro_rules! component_init {
 }
 
 pub trait Component: DeserializeOwned + Debug {
-    fn get_unique_id() -> ComponentId;
+    fn get_unique_id() -> ComponentClass;
 
     #[inline]
     fn get_type_indexer() -> usize {
@@ -59,7 +59,7 @@ pub trait Component: DeserializeOwned + Debug {
 
     #[inline]
     fn get_type_name() -> &'static str {
-        unsafe { ComponentId::get_name_vec()[Self::get_type_indexer()] }
+        unsafe { ComponentClass::get_name_vec()[Self::get_type_indexer()] }
     }
 }
 
@@ -101,11 +101,11 @@ pub struct Shard {
     pub(crate) key: ShardKey,
     // The pointer to the vec itself needs to be stable, hence the box.
     entities: Box<Vec<EntityId>>,
-    store: HashMap<ComponentId, Box<ComponentVec>>,
+    store: HashMap<ComponentClass, Box<ComponentVec>>,
 }
 
 impl Shard {
-    pub fn new(key: ShardKey, store: HashMap<ComponentId, Box<ComponentVec>>) -> Shard {
+    pub fn new(key: ShardKey, store: HashMap<ComponentClass, Box<ComponentVec>>) -> Shard {
         Shard {
             key,
             entities: Box::new(Vec::new()),
@@ -116,7 +116,7 @@ impl Shard {
     pub fn new_with_ents(
         key: ShardKey,
         entities: Vec<EntityId>,
-        store: HashMap<ComponentId, Box<ComponentVec>>,
+        store: HashMap<ComponentClass, Box<ComponentVec>>,
     ) -> Shard {
         Shard {
             key,
@@ -210,12 +210,12 @@ mod tests {
 
     #[test]
     fn test_ingest() {
-        let some_comp_id = SomeComponent::get_unique_id();
+        let some_comp_cls = SomeComponent::get_unique_id();
 
         let mut shard = Shard::new(ShardKey::empty(), HashMap::new());
         shard
             .store
-            .insert(some_comp_id, Box::new(Vec::<SomeComponent>::new()));
+            .insert(some_comp_cls, Box::new(Vec::<SomeComponent>::new()));
 
         let mut shard_def = ShardDef {
             entity_ids: vec![0.into(), 1.into(), 2.into()],
@@ -229,16 +229,16 @@ mod tests {
             SomeComponent { x: 2, y: 2 },
         ];
 
-        shard_def.components.insert(some_comp_id, CompDefVec::new(data));
+        shard_def.components.insert(some_comp_cls, CompDefVec::new(data));
 
         assert_eq!(shard.ingest(&mut shard_def), 0);
         assert_eq!(shard.entities.len(), 3);
-        assert_eq!(shard.store[&some_comp_id].len(), 3);
+        assert_eq!(shard.store[&some_comp_cls].len(), 3);
     }
 
     #[test]
     fn test_remove() {
-        let some_comp_id = SomeComponent::get_unique_id();
+        let some_comp_cls = SomeComponent::get_unique_id();
 
         let mut map: HashMap<_, Box<ComponentVec>> = HashMap::new();
 
@@ -249,7 +249,7 @@ mod tests {
             SomeComponent { x: 2, y: 2 },
         ];
 
-        map.insert(some_comp_id, Box::new(data));
+        map.insert(some_comp_cls, Box::new(data));
 
         let mut shard = Shard::new(ShardKey::empty(), map);
 
@@ -261,17 +261,17 @@ mod tests {
         // Remove from front, swapping id 2 in
         assert_eq!(shard.remove(0).unwrap(), 2.into());
         assert_eq!(shard.entities.len(), 2);
-        assert_eq!(shard.store[&some_comp_id].len(), 2);
+        assert_eq!(shard.store[&some_comp_cls].len(), 2);
 
         // Remove the tail, no swapping
         assert!(shard.remove(1).is_none());
         assert_eq!(shard.entities.len(), 1);
-        assert_eq!(shard.store[&some_comp_id].len(), 1);
+        assert_eq!(shard.store[&some_comp_cls].len(), 1);
 
         // Remove last item, no swapping
         assert!(shard.remove(0).is_none());
         assert_eq!(shard.entities.len(), 0);
-        assert_eq!(shard.store[&some_comp_id].len(), 0);
+        assert_eq!(shard.store[&some_comp_cls].len(), 0);
     }
 
     #[test]

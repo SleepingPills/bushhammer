@@ -1,7 +1,7 @@
 use crate::alloc::{DynVec, DynVecOps};
 use crate::component::Component;
 use crate::component_init;
-use crate::identity::{ComponentId, ShardKey};
+use crate::identity::{ComponentClass, ShardKey};
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use serde_json;
@@ -56,13 +56,13 @@ pub struct Entity {
 #[derive(Debug, Clone)]
 pub struct ShardDef {
     pub(crate) entity_ids: Vec<EntityId>,
-    pub(crate) components: HashMap<ComponentId, CompDefVec>,
+    pub(crate) components: HashMap<ComponentClass, CompDefVec>,
 }
 
 impl ShardDef {
     #[inline]
-    fn new(comp_ids: &[ComponentId], builders: &[Box<BuildCompDef>]) -> ShardDef {
-        let map: HashMap<_, _> = comp_ids
+    fn new(comp_cls: &[ComponentClass], builders: &[Box<BuildCompDef>]) -> ShardDef {
+        let map: HashMap<_, _> = comp_cls
             .iter()
             .map(|id| (*id, builders[id.indexer()].build()))
             .collect();
@@ -73,8 +73,8 @@ impl ShardDef {
     }
 
     #[inline]
-    fn get_mut_vec(&mut self, comp_id: &ComponentId) -> &mut CompDefVec {
-        self.components.get_mut(comp_id).unwrap()
+    fn get_mut_vec(&mut self, comp_cls: &ComponentClass) -> &mut CompDefVec {
+        self.components.get_mut(comp_cls).unwrap()
     }
 }
 
@@ -108,17 +108,17 @@ impl TransactionContext {
     }
 
     /// Create a batch entity builder for ingesting JSON data
-    pub fn batch_json<'i>(&'i mut self, comp_ids: &'i [ComponentId]) -> JsonBatchBuilder<'i> {
-        let shard_key: ShardKey = comp_ids.iter().collect();
+    pub fn batch_json<'i>(&'i mut self, comp_classes: &'i [ComponentClass]) -> JsonBatchBuilder<'i> {
+        let shard_key: ShardKey = comp_classes.iter().collect();
 
         let builders = &self.builders;
         let shard = self
             .added
             .entry(shard_key)
-            .or_insert_with(|| ShardDef::new(comp_ids, builders));
+            .or_insert_with(|| ShardDef::new(comp_classes, builders));
 
         JsonBatchBuilder {
-            comp_ids,
+            comp_classes,
             shard,
             id_counter: self.id_counter.clone(),
             batch_counter: 0,
@@ -155,7 +155,7 @@ impl TransactionContext {
 }
 
 pub struct JsonBatchBuilder<'a> {
-    comp_ids: &'a [ComponentId],
+    comp_classes: &'a [ComponentClass],
     shard: &'a mut ShardDef,
     id_counter: Arc<AtomicUsize>,
     batch_counter: usize,
@@ -164,11 +164,11 @@ pub struct JsonBatchBuilder<'a> {
 impl<'a> JsonBatchBuilder<'a> {
     #[inline]
     pub fn add(&mut self, json_str: &[String]) {
-        if self.comp_ids.len() != json_str.len() {
+        if self.comp_classes.len() != json_str.len() {
             panic!("Number of component Ids does not match the number of data inputs")
         }
 
-        for (id, json) in self.comp_ids.iter().zip(json_str) {
+        for (id, json) in self.comp_classes.iter().zip(json_str) {
             self.shard.get_mut_vec(id).push_json(json);
         }
 
@@ -334,7 +334,7 @@ macro_rules! comp_tup {
         where
             $($field_type: 'static + Component),*,
         {
-            type IdTuple = ($(_decl_entity_replace_expr!($field_type ComponentId)),*,);
+            type IdTuple = ($(_decl_entity_replace_expr!($field_type ComponentClass)),*,);
 
             #[inline]
             fn get_ids() -> Self::IdTuple {

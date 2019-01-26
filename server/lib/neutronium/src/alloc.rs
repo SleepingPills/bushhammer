@@ -2,36 +2,6 @@ use std::any::TypeId;
 use std::marker::Unsize;
 use std::ops::{Deref, DerefMut};
 use std::ptr;
-use std::mem;
-
-/// Pointer for lazy initialized statics.
-pub(crate) struct StaticPtr<T>(*const T);
-
-impl<T> StaticPtr<T> {
-    #[inline]
-    pub const fn empty() -> StaticPtr<T> {
-        StaticPtr(ptr::null())
-    }
-
-    #[inline]
-    pub fn ingest(&mut self, inst: T) {
-        if !self.0.is_null() {
-            panic!("Pointer already initialized")
-        }
-
-        self.0 = &inst as *const T;
-
-        mem::forget(inst);
-    }
-
-    #[inline]
-    pub unsafe fn as_ref(&self) -> &T {
-        &*self.0
-    }
-}
-
-unsafe impl<T> Sync for StaticPtr<T> {}
-unsafe impl<T> Send for StaticPtr<T> {}
 
 /// Dynamic pointer type that encapsulates a non-null pointer and can be cast with a type check.
 #[derive(Debug)]

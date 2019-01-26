@@ -1,7 +1,7 @@
 use crate::component::Component;
-use crate::component::{ComponentCoords, ComponentVec, Shard};
+use crate::component::{ComponentClassAux, ComponentCoords, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
-use crate::identity::{ComponentClass, ShardKey, SystemId, TopicId};
+use crate::identity::{ShardKey, SystemId, TopicId};
 use crate::messagebus::Bus;
 use crate::messagebus::Message;
 use crate::registry::Registry;
@@ -190,13 +190,8 @@ impl World {
             panic!("Can't add component to finalized world")
         }
 
-        let id = T::get_class();
-
         // Register the entity and component builder vector types
         self.transactions.add_builder::<T>();
-        self.state
-            .builders
-            .insert(id, Box::new(|| Box::new(Vec::<T>::new())));
     }
 
     /// Register the supplied resource instance.
@@ -227,7 +222,6 @@ pub struct GameState {
     systems: Registry<SystemId>,
     resources: AnyMap,
     shards: HashMap<ShardKey, Shard>,
-    builders: HashMap<ComponentClass, Box<Fn() -> Box<ComponentVec>>>,
 }
 
 impl GameState {
@@ -238,7 +232,6 @@ impl GameState {
             systems: Registry::new(),
             resources: AnyMap::new(),
             shards: HashMap::new(),
-            builders: HashMap::new(),
         }
     }
 }
@@ -267,14 +260,13 @@ impl GameState {
         let shard_key = shard_key + entity_comp_cls;
 
         let systems = &self.systems;
-        let builders = &self.builders;
 
         // Get the shard (or add a new one)
         let shard = self.shards.entry(shard_key).or_insert_with(|| {
             let store: HashMap<_, _> = shard_def
                 .components
                 .keys()
-                .map(|cid| (*cid, builders[cid]()))
+                .map(|cls| (*cls, cls.comp_vec_builder()()))
                 .collect();
 
             Shard::new(shard_key, store)
@@ -318,8 +310,8 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::component_init;
-    use crate::system::Context;
-    use crate::system::{Components, Read, Resources, Router, Write};
+    use crate::identity::ComponentClass;
+    use crate::system::{Components, Context, Read, Resources, Router, Write};
     use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::cell::RefCell;
@@ -380,25 +372,16 @@ mod tests {
         assert_eq!(world.state.shards.len(), 2);
         assert_eq!(
             world.state.entities[&0.into()],
-            (
-                EntityId::get_class() + CompA::get_class() + CompB::get_class(),
-                0
-            )
+            (EntityId::get_class() + CompA::get_class() + CompB::get_class(), 0)
         );
         assert_eq!(
             world.state.entities[&1.into()],
-            (
-                EntityId::get_class() + CompA::get_class() + CompB::get_class(),
-                1
-            )
+            (EntityId::get_class() + CompA::get_class() + CompB::get_class(), 1)
         );
         assert_eq!(
             world.state.entities[&2.into()],
             (
-                EntityId::get_class()
-                    + CompA::get_class()
-                    + CompB::get_class()
-                    + CompC::get_class(),
+                EntityId::get_class() + CompA::get_class() + CompB::get_class() + CompC::get_class(),
                 0
             )
         );

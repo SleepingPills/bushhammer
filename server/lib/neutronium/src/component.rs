@@ -12,45 +12,44 @@ macro_rules! component_init {
 
         $crate::identity::paste::item! {
             #[allow(non_upper_case_globals)]
-            static mut [<_ $name _ COMP_VEC_BUILDER>]:
-                $crate::alloc::StaticPtr<Box<Fn() -> Box<$crate::component::ComponentVec>>>
-                    = $crate::alloc::StaticPtr::empty();
-
             #[allow(non_snake_case)]
             #[$crate::identity::ctor::ctor]
             fn [<_ $name _component_init>]() {
                 // Get lock
                 let _lock = ComponentClass::id_gen_lock();
 
-                // Initialize the id
+                // Initialize the class
                 $name::custom_id_type_init();
 
-                // Set up component builder
+                // Set up component builders
                 unsafe {
-                    [<_ $name _ COMP_VEC_BUILDER>].ingest(Box::new(|| Box::new(Vec::<$name>::new())))
-                }
-
-                // 2. Append to the component vec builders
-            }
-
-            // TODO: This has to become available off of the ID to be ubiquitously usable...
-            // Just add a new trait that we'll implement here for ComponentClass that will make the
-            // required statics available.
-            impl $name {
-                pub(crate) fn comp_vec_builder() -> &'static Box<Fn() -> Box<$crate::component::ComponentVec>> {
-                    unsafe {
-                        [<_ $name _ COMP_VEC_BUILDER>].as_ref()
-                    }
+                    $crate::component::COMP_VEC_BUILDERS.push(Box::new(|| Box::new(Vec::<$name>::new())))
                 }
             }
         }
     };
 }
 
-static mut COMP_VEC_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
+pub static mut COMP_VEC_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
+pub static mut COMP_DEF_BUILDERS: Vec<Box<Fn() -> Box<ComponentVec>>> = Vec::new();
 
 pub trait ComponentClassAux {
-    fn comp_vec_builder() -> &'static Box<Fn() -> Box<ComponentVec>>;
+    fn comp_vec_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>>;
+    fn comp_def_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>>;
+}
+
+impl ComponentClassAux for ComponentClass {
+    fn comp_vec_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>> {
+        unsafe {
+            COMP_VEC_BUILDERS.get_unchecked(self.indexer())
+        }
+    }
+
+    fn comp_def_builder(&self) -> &'static Box<Fn() -> Box<ComponentVec>> {
+        unsafe {
+            COMP_VEC_BUILDERS.get_unchecked(self.indexer())
+        }
+    }
 }
 
 pub(crate) type ComponentCoords = (ShardKey, usize);

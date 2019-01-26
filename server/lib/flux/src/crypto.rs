@@ -10,7 +10,7 @@ const NONCE_OFFSET: usize = NONCE_SIZE - 8;
 
 /// Initialize the sodium infrastructure
 #[ctor]
-fn init_sodium() {
+fn INIT_SODIUM() {
     unsafe {
         if libsodium_sys::sodium_init() < 0 {
             panic!("Cryptography initialization failed")

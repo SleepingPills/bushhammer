@@ -2,9 +2,47 @@ use crate::alloc::{DynVec, DynVecOps};
 use crate::identity::{TopicBundle, Topic};
 use std::fmt::Debug;
 
+#[macro_export]
+macro_rules! topic_init {
+    ($name: ident) => {
+        $crate::custom_type_id_init!($name, Topic, Message, get_topic);
+
+        $crate::identity::paste::item! {
+            #[allow(non_upper_case_globals)]
+            #[allow(non_snake_case)]
+            #[$crate::identity::ctor::ctor]
+            fn [<_ $name _topic_init>]() {
+                // Get lock
+                let _lock = Topic::id_gen_lock();
+
+                // Initialize the topic
+                $name::custom_id_type_init();
+
+                // Set up component builders
+                unsafe {
+                    $crate::messagebuf::MSG_QUEUE_TPL.push(DynVec::empty::<$name>())
+                }
+            }
+        }
+    };
+}
+
+pub static mut MSG_QUEUE_TPL: Vec<DynVec<MessageQueue>> = Vec::new();
+
+pub trait TopicAux {
+    fn clone_msg_queues(&self) -> Vec<DynVec<MessageQueue>>;
+}
+
+impl TopicAux for Topic {
+    fn clone_msg_queues(&self) -> Vec<DynVec<MessageQueue>> {
+        unsafe {
+            MSG_QUEUE_TPL.clone()
+        }
+    }
+}
+
 /// Designates a struct as a topic for the message bus
 pub trait Message: Clone + Debug {
-    fn acquire_topic_id() -> Topic;
     fn get_topic() -> Topic;
 
     #[inline]

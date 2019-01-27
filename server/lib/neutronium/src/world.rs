@@ -3,7 +3,6 @@ use crate::component::{ComponentClassAux, ComponentCoords, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
 use crate::identity::{ShardKey, SystemId, Topic};
 use crate::messagebus::Bus;
-use crate::messagebus::Message;
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
@@ -74,7 +73,7 @@ impl World {
         self.finalized = true;
 
         for (_, mut system) in self.state.systems.iter_mut::<System>() {
-            system.init(&self.state.resources, &self.messages);
+            system.init(&self.state.resources);
 
             // Create a copy of the main transaction context for each system so they can be run in parallel
             self.system_transactions.push(TransactionContext::new(self.entity_counter.clone()));
@@ -196,15 +195,6 @@ impl World {
         let boxed = Box::new(resource);
         self.state.resources.insert(Box::into_raw_non_null(boxed));
     }
-
-    /// Register the supplied message type.
-    pub fn register_topic<T>(&mut self)
-    where
-        T: 'static + Message,
-    {
-        T::acquire_topic_id();
-        self.messages.register::<T>();
-    }
 }
 
 pub struct GameState {
@@ -300,9 +290,10 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::component_init;
+    use crate::topic_init;
+    use crate::messagebus::Message;
     use crate::identity::ComponentClass;
     use crate::system::{Components, Context, Read, Resources, Router, Write};
-    use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::cell::RefCell;
     use std::marker::PhantomData;
@@ -333,11 +324,15 @@ mod tests {
         }
     }
 
-    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct Msg1(i32);
 
-    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    topic_init!(Msg1);
+
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct Msg2(i32);
+
+    topic_init!(Msg2);
 
     #[test]
     fn test_add_entity() {
@@ -547,8 +542,6 @@ mod tests {
         let system_messages2 = Rc::new(RefCell::new(Vec::new()));
 
         let mut world = World::default();
-        world.register_topic::<Msg1>();
-        world.register_topic::<Msg2>();
 
         world.register_system(TestSystem1 {
             _p: PhantomData,

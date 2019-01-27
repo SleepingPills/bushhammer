@@ -169,7 +169,7 @@ pub trait System {
         transactions: &mut TransactionContext,
         incoming: &Bus,
     );
-    fn init(&mut self, resources: &AnyMap, central_bus: &Bus);
+    fn init(&mut self, resources: &AnyMap);
     fn transfer_messages(&mut self, central_bus: &mut Bus);
     fn add_shard(&mut self, shard: &Shard);
     fn remove_shard(&mut self, key: ShardKey);
@@ -201,9 +201,8 @@ where
     }
 
     #[inline]
-    fn init(&mut self, resources: &AnyMap, central_bus: &Bus) {
+    fn init(&mut self, resources: &AnyMap) {
         self.data.init_resources(resources);
-        self.messages.restructure(central_bus);
     }
 
     fn transfer_messages(&mut self, central_bus: &mut Bus) {
@@ -972,13 +971,12 @@ mod tests {
     use super::*;
     use crate::component::ComponentVec;
     use crate::component_init;
+    use crate::topic_init;
     use crate::identity::{ComponentClass, Topic};
-    use neutronium_proc::Message;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
     use std::sync::Arc;
-    use std::sync::MutexGuard;
 
     #[derive(Serialize, Deserialize, Clone, Debug, Eq, PartialEq)]
     struct CompA(i32);
@@ -1003,8 +1001,10 @@ mod tests {
 
     component_init!(CompD);
 
-    #[derive(Message, Debug, Clone, Eq, PartialEq)]
+    #[derive(Debug, Clone, Eq, PartialEq)]
     struct Msg(i32);
+
+    topic_init!(Msg);
 
     fn setup() -> (
         ComponentClass,
@@ -1018,11 +1018,6 @@ mod tests {
             CompC::get_class(),
             CompD::get_class(),
         )
-    }
-
-    fn setup_messaging() -> (Topic, MutexGuard<'static, ()>) {
-        let lock = Topic::static_init();
-        (Msg::acquire_topic_id(), lock)
     }
 
     fn make_shard_1() -> Shard {
@@ -1136,8 +1131,6 @@ mod tests {
 
     #[test]
     fn test_run() {
-        let _msg_state = setup_messaging();
-
         struct TestSystem<'a> {
             collect_run: Vec<(EntityId, CompA, CompB)>,
             collect_foreach: Vec<(EntityId, CompA, CompB)>,
@@ -1190,12 +1183,8 @@ mod tests {
 
         // Set up central bus with some messages
         let mut messages = Bus::new();
-        messages.register::<Msg>();
         messages.publish(Msg(1));
         messages.publish(Msg(2));
-
-        // Adjust the system messages to mirror the central bus structure
-        system.messages.restructure(&messages);
 
         system.run(&entities, &mut transactions, &messages);
 

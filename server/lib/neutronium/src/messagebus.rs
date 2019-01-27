@@ -1,5 +1,4 @@
-use crate::alloc::{DynVec, DynVecOps};
-use crate::identity::{TopicBundle, Topic};
+use crate::alloc::{DynVec, DynVecOps};ddddd
 use std::fmt::Debug;
 
 #[macro_export]
@@ -20,7 +19,7 @@ macro_rules! topic_init {
 
                 // Set up component builders
                 unsafe {
-                    $crate::messagebuf::MSG_QUEUE_TPL.push(DynVec::empty::<$name>())
+                    $crate::messagebus::MSG_QUEUE_TPL.push($crate::alloc::DynVec::empty::<$name>())
                 }
             }
         }
@@ -28,18 +27,6 @@ macro_rules! topic_init {
 }
 
 pub static mut MSG_QUEUE_TPL: Vec<DynVec<MessageQueue>> = Vec::new();
-
-pub trait TopicAux {
-    fn clone_msg_queues(&self) -> Vec<DynVec<MessageQueue>>;
-}
-
-impl TopicAux for Topic {
-    fn clone_msg_queues(&self) -> Vec<DynVec<MessageQueue>> {
-        unsafe {
-            MSG_QUEUE_TPL.clone()
-        }
-    }
-}
 
 /// Designates a struct as a topic for the message bus
 pub trait Message: Clone + Debug {
@@ -101,38 +88,22 @@ impl Bus {
     #[inline]
     pub fn new() -> Bus {
         Bus {
-            topics: Vec::new(),
+            topics: unsafe { MSG_QUEUE_TPL.clone() },
             activity: TopicBundle::empty(),
-        }
-    }
-
-    /// Register a new topic on the bus.
-    #[inline]
-    pub fn register<T>(&mut self)
-    where
-        T: 'static + Message,
-    {
-        if T::get_indexer() != self.topics.len() {
-            panic!("Indexer mismatch - topics must be registered in lockstep with the world")
-        }
-
-        self.topics.push(DynVec::empty::<T>());
-    }
-
-    /// Restructure the current bus to match the setup of the template.
-    #[inline]
-    pub fn restructure(&mut self, template: &Bus) {
-        self.activity = TopicBundle::empty();
-        self.topics.clear();
-
-        for dyn_vec in template.topics.iter() {
-            self.topics.push(dyn_vec.clone());
         }
     }
 
     /// Transfer the messages in the `other` `Bus` into the current `Bus`.
     #[inline]
     pub fn transfer(&mut self, other: &mut Bus) {
+        println!("{:?} {:?}", self.activity, other.activity);
+        println!("{:?} {:?}", self.topics.len(), other.topics.len());
+
+        unsafe {
+            println!("{:?}", Topic::get_id_vec());
+            println!("{:?}", Topic::get_name_vec());
+        }
+
         // Iter all the active topics in the other bus and move over the messages to the current.
         for topic_id in other.activity.decompose() {
             self.topics[topic_id.indexer()].append(&mut other.topics[topic_id.indexer()]);
@@ -208,88 +179,30 @@ where
 
 #[cfg(test)]
 mod tests {
+    use crate::topic_init;
     use super::*;
-    use neutronium_proc::Message;
-    use std::sync::MutexGuard;
 
-    #[derive(Message, Debug, Clone)]
+    #[derive(Debug, Clone)]
     pub struct T1(i32);
 
-    #[derive(Message, Debug, Clone)]
+    topic_init!(T1);
+
+    #[derive(Debug, Clone)]
     pub struct T2(i32);
 
-    fn setup() -> (Topic, Topic, MutexGuard<'static, ()>) {
-        let lock = Topic::static_init();
-
-        (
-            T1::acquire_topic_id(),
-            T2::acquire_topic_id(),
-            lock
-        )
-    }
-
+    topic_init!(T2);
 
     #[test]
-    fn test_register_topic() {
-        let _state = setup();
-
+    fn test_auto_register_topics() {
         let mut bus = Bus::new();
 
-        bus.register::<T1>();
-        bus.register::<T2>();
-
-        assert_eq!(bus.topics.len(), 2);
-    }
-
-    #[test]
-    #[should_panic(expected = "Indexer mismatch - topics must be registered in lockstep with the world")]
-    fn test_register_fail_lockstep() {
-        let _state = setup();
-
-        let mut bus = Bus::new();
-
-        bus.register::<T2>();
-        bus.register::<T1>();
-    }
-
-    #[test]
-    fn test_restructure() {
-        let _state = setup();
-
-        let mut bus1 = Bus::new();
-        bus1.register::<T1>();
-        bus1.publish(T1(1));
-        bus1.publish(T1(2));
-
-        let mut bus2 = Bus::new();
-        bus2.register::<T1>();
-        bus2.register::<T2>();
-
-        bus1.restructure(&bus2);
-        bus1.publish(T1(4));
-        bus1.publish(T2(5));
-
-        assert_eq!(bus1.topics.len(), 2);
-        assert_eq!(bus1.topics[0].cast_vector::<T1>().len(), 1);
-        assert_eq!(bus1.topics[0].cast_vector::<T1>()[0].0, 4);
-        assert_eq!(bus1.topics[1].cast_vector::<T2>().len(), 1);
-        assert_eq!(bus1.topics[1].cast_vector::<T2>()[0].0, 5);
-
-        assert_eq!(bus2.topics[0].cast_vector::<T1>().len(), 0);
-        assert_eq!(bus2.topics[1].cast_vector::<T2>().len(), 0);
+        assert!(bus.topics.len() >= 2);
     }
 
     #[test]
     fn test_transfer() {
-        let _state = setup();
-
         let mut bus1 = Bus::new();
-        bus1.register::<T1>();
-        bus1.register::<T2>();
-
         let mut bus2 = Bus::new();
-        bus2.register::<T1>();
-        bus2.register::<T2>();
 
         bus1.publish(T1(0));
         bus1.publish(T1(1));
@@ -297,22 +210,19 @@ mod tests {
 
         bus2.transfer(&mut bus1);
 
-        assert_eq!(bus1.topics[0].len(), 0);
-        assert_eq!(bus1.topics[1].len(), 0);
+        assert_eq!(bus1.topics[T1::get_indexer()].len(), 0);
+        assert_eq!(bus1.topics[T2::get_indexer()].len(), 0);
         assert_eq!(bus1.activity, TopicBundle::empty());
 
-        assert_eq!(bus2.topics[0].cast_vector::<T1>()[0].0, 0);
-        assert_eq!(bus2.topics[0].cast_vector::<T1>()[1].0, 1);
-        assert_eq!(bus2.topics[1].cast_vector::<T2>()[0].0, 1);
+        assert_eq!(bus2.topics[T1::get_indexer()].cast_vector::<T1>()[0].0, 0);
+        assert_eq!(bus2.topics[T1::get_indexer()].cast_vector::<T1>()[1].0, 1);
+        assert_eq!(bus2.topics[T2::get_indexer()].cast_vector::<T2>()[0].0, 1);
         assert_eq!(bus2.activity, T1::get_topic() + T2::get_topic());
     }
 
     #[test]
     fn test_read() {
-        let _state = setup();
-
         let mut bus = Bus::new();
-        bus.register::<T1>();
 
         bus.publish(T1(0));
         bus.publish(T1(1));
@@ -328,10 +238,7 @@ mod tests {
 
     #[test]
     fn test_publish() {
-        let _state = setup();
-
         let mut bus = Bus::new();
-        bus.register::<T1>();
 
         bus.publish(T1(0));
 
@@ -345,10 +252,7 @@ mod tests {
 
     #[test]
     fn test_batch() {
-        let _state = setup();
-
         let mut bus = Bus::new();
-        bus.register::<T1>();
 
         let mut batch = bus.batch::<T1>();
         batch.publish(T1(0));
@@ -367,10 +271,7 @@ mod tests {
 
     #[test]
     fn test_clear() {
-        let _state = setup();
-
         let mut bus = Bus::new();
-        bus.register::<T1>();
 
         bus.publish(T1(0));
 

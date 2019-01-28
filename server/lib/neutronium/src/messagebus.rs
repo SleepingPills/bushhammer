@@ -88,6 +88,12 @@ pub struct Bus {
 impl Bus {
     #[inline]
     pub fn new() -> Bus {
+        unsafe {
+            let name_vec = Topic::get_name_vec();
+            println!("Constr: {:?}", name_vec);
+            println!("Constr: {}", MSG_QUEUE_TPL.len());
+        }
+
         Bus {
             topics: unsafe { MSG_QUEUE_TPL.clone() },
             activity: TopicBundle::empty(),
@@ -97,14 +103,6 @@ impl Bus {
     /// Transfer the messages in the `other` `Bus` into the current `Bus`.
     #[inline]
     pub fn transfer(&mut self, other: &mut Bus) {
-        println!("{:?} {:?}", self.activity, other.activity);
-        println!("{:?} {:?}", self.topics.len(), other.topics.len());
-
-        unsafe {
-            println!("{:?}", Topic::get_id_vec());
-            println!("{:?}", Topic::get_name_vec());
-        }
-
         // Iter all the active topics in the other bus and move over the messages to the current.
         for topic_id in other.activity.decompose() {
             self.topics[topic_id.indexer()].append(&mut other.topics[topic_id.indexer()]);
@@ -195,7 +193,7 @@ mod tests {
 
     #[test]
     fn test_auto_register_topics() {
-        let mut bus = Bus::new();
+        let bus = Bus::new();
 
         assert!(bus.topics.len() >= 2);
     }

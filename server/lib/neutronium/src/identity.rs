@@ -12,7 +12,7 @@ lazy_static! {
 
 #[macro_export]
 macro_rules! custom_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $lock: ident) => {
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident) => {
         #[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
         #[repr(transparent)]
         pub struct $name {
@@ -36,21 +36,6 @@ macro_rules! custom_type_id {
                     .lock()
                     .expect("Failed to acquire ID generator lock")
             }
-
-            #[inline]
-            pub fn static_init() -> MutexGuard<'static, ()> {
-                unsafe {
-                    // The lock guards ID generation only, which is safe to restart
-                    // in case the previous lock-holder thread paniced.
-                    let lock = match $lock.lock() {
-                        Ok(guard) => guard,
-                        Err(poisoned) => poisoned.into_inner(),
-                    };
-                    Self::get_name_vec().clear();
-                    Self::get_id_vec().clear();
-                    lock
-                }
-            }
         }
 
         impl fmt::Display for $name {
@@ -60,10 +45,6 @@ macro_rules! custom_type_id {
             }
         }
 
-        lazy_static! {
-            static ref $lock: Mutex<()> = { Mutex::new(()) };
-        }
-
         static mut $name_vec: Vec<&'static str> = Vec::new();
         static mut $id_vec: Vec<$name> = Vec::new();
     };
@@ -71,8 +52,8 @@ macro_rules! custom_type_id {
 
 #[macro_export]
 macro_rules! bitflag_type_id {
-    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident, $lock: ident) => {
-        custom_type_id!($name, $type, $name_vec, $id_vec, $lock);
+    ($name: ident, $type: ty, $name_vec: ident, $id_vec: ident, $composite_key: ident) => {
+        custom_type_id!($name, $type, $name_vec, $id_vec);
 
         impl $name {
             /// Creates a new instance. Unique ids are distinguished by a bitmask, there is thus a limit to the
@@ -290,8 +271,7 @@ bitflag_type_id!(
     BitFlagId,
     COMP_NAME_VEC,
     COMP_CLASS_VEC,
-    ShardKey,
-    ComponentClassMutex
+    ShardKey
 );
 
 bitflag_type_id!(
@@ -299,8 +279,7 @@ bitflag_type_id!(
     BitFlagId,
     SYS_NAME_VEC,
     SYS_ID_VEC,
-    BundleKey,
-    SystemIdMutex
+    BundleKey
 );
 
 // TODO: Rename to Topic
@@ -309,8 +288,7 @@ bitflag_type_id!(
     BitFlagId,
     TOPIC_NAME_VEC,
     TOPIC_ID_VEC,
-    TopicBundle,
-    TopicIdMutex
+    TopicBundle
 );
 
 // Re-export dependencies to avoid the need for consumers to handle them

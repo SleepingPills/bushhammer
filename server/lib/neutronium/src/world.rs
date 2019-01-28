@@ -1,7 +1,7 @@
 use crate::component::Component;
 use crate::component::{ComponentClassAux, ComponentCoords, Shard};
 use crate::entity::{EntityId, ShardDef, TransactionContext};
-use crate::identity::{ShardKey, SystemId, Topic};
+use crate::identity::{ShardKey, SystemId};
 use crate::messagebus::Bus;
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
@@ -9,11 +9,8 @@ use anymap::AnyMap;
 use hashbrown::HashMap;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
-use std::sync::MutexGuard;
 use std::thread;
 use std::time;
-
-type StaticGuards = (MutexGuard<'static, ()>, MutexGuard<'static, ()>);
 
 pub struct World {
     // Global Settings
@@ -30,9 +27,6 @@ pub struct World {
 
     // Messaging
     messages: Bus,
-
-    // Static State Guard
-    _static_guard: StaticGuards,
 }
 
 impl World {
@@ -61,7 +55,6 @@ impl World {
             transactions: TransactionContext::new(counter),
             finalized: false,
             messages: Bus::new(),
-            _static_guard: (SystemId::static_init(), Topic::static_init()),
         };
 
         world
@@ -76,7 +69,8 @@ impl World {
             system.init(&self.state.resources);
 
             // Create a copy of the main transaction context for each system so they can be run in parallel
-            self.system_transactions.push(TransactionContext::new(self.entity_counter.clone()));
+            self.system_transactions
+                .push(TransactionContext::new(self.entity_counter.clone()));
         }
     }
 
@@ -290,10 +284,10 @@ impl GameState {
 mod tests {
     use super::*;
     use crate::component_init;
-    use crate::topic_init;
+    use crate::identity::{ComponentClass, Topic};
     use crate::messagebus::Message;
-    use crate::identity::ComponentClass;
     use crate::system::{Components, Context, Read, Resources, Router, Write};
+    use crate::topic_init;
     use serde_derive::{Deserialize, Serialize};
     use std::cell::RefCell;
     use std::marker::PhantomData;
@@ -547,6 +541,7 @@ mod tests {
             _p: PhantomData,
             messages: system_messages1.clone(),
         });
+
         world.register_system(TestSystem2 {
             _p: PhantomData,
             messages: system_messages2.clone(),

@@ -3,13 +3,14 @@ use authenticator::core::{Authenticator, Config, UserInfo, ConnectionToken, Auth
 use clap::{App, Arg};
 use hashbrown::HashMap;
 use rocket;
-use rocket::{post, routes, State, Json};
+use rocket::{post, routes, State};
+use rocket_contrib::json::{Json};
 use serde_json;
 use std::fs;
 
 #[post("/auth", data="<auth_key>")]
 fn auth(auth: State<Authenticator>, auth_key: String) -> Result<Json<ConnectionToken>, AuthError> {
-    auth.authenticate(auth_key)
+    auth.authenticate(auth_key).map(|token| Json(token))
 }
 
 pub fn main() {

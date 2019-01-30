@@ -29,7 +29,7 @@ impl Authenticator {
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
-                    return Err(AuthError::Banned(ban));
+                    return Err(AuthError::Banned(ban.clone()));
                 }
 
                 Ok(self.create_token(info))
@@ -143,7 +143,7 @@ impl UserInfo {
 }
 
 #[derive(Serialize, Debug)]
-pub enum AuthError<'a> {
+pub enum AuthError {
     Failed,
-    Banned(&'a Ban),
+    Banned(Ban),
 }

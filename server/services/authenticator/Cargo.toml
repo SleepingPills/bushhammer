@@ -12,6 +12,7 @@ serde_json = "*"
 serde_derive = "*"
 byteorder = "*"
 rocket = "*"
+rocket_contrib = "*"
 hashbrown = { version ="*", features = ["serde"] }
 chrono = { version = "*", features = ["serde"] }
 flux = { path = "../../lib/flux" }

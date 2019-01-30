@@ -5,7 +5,6 @@ use flux::crypto;
 use flux::time::timestamp_secs;
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
-use serde_json;
 use std::sync::atomic::{AtomicU64, Ordering, ATOMIC_U64_INIT};
 
 /// Simple authenticator that constructs connection tokens based on client supplied serial keys.
@@ -117,7 +116,7 @@ pub struct Note {
     pub created: chrono::DateTime<chrono::Utc>,
 }
 
-#[derive(Serialize, Deserialize, Clone)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Ban {
     pub created: chrono::DateTime<chrono::Utc>,
     pub expiry: Option<chrono::DateTime<chrono::Utc>>,
@@ -143,7 +142,7 @@ impl UserInfo {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub enum AuthError<'a> {
     Failed,
     Banned(&'a Ban),

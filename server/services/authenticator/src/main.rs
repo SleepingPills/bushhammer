@@ -1,8 +1,16 @@
-use authenticator::core::{Authenticator, UserInfo, Config};
+#![feature(proc_macro_hygiene, decl_macro)]
+use authenticator::core::{Authenticator, Config, UserInfo, ConnectionToken, AuthError};
 use clap::{App, Arg};
 use hashbrown::HashMap;
+use rocket;
+use rocket::{post, routes, State, Json};
 use serde_json;
 use std::fs;
+
+#[post("/auth", data="<auth_key>")]
+fn auth(auth: State<Authenticator>, auth_key: String) -> Result<Json<ConnectionToken>, AuthError> {
+    auth.authenticate(auth_key)
+}
 
 pub fn main() {
     let matches = App::new("Authenticator Service")
@@ -19,21 +27,10 @@ pub fn main() {
                 .help("Path to the client file")
                 .required(true),
         )
-        .arg(
-            Arg::with_name("NTHREADS")
-                .help("Number of threads for handling requests")
-                .default_value("2")
-        )
         .get_matches();
 
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
     let client_file_path = matches.value_of("CLIENT_FILE").unwrap();
-
-    let nthreads: usize = matches
-        .value_of("NTHREADS")
-        .unwrap()
-        .parse()
-        .expect("Thread count must be a valid integer");
 
     let config: Config =
         serde_json::from_reader(fs::File::open(config_file_path).expect("Error opening config file"))
@@ -43,4 +40,9 @@ pub fn main() {
             .expect("Error parsing client data file");
 
     let authenticator = Authenticator::new(config, user_info);
+
+    rocket::ignite()
+        .mount("/user", routes![auth])
+        .manage(authenticator)
+        .launch();
 }

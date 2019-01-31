@@ -24,14 +24,14 @@ pub fn main() {
                 .required(true),
         )
         .arg(
-            Arg::with_name("CLIENT_FILE")
+            Arg::with_name("USER_FILE")
                 .help("Path to the client file")
                 .required(true),
         )
         .get_matches();
 
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
-    let client_file_path = matches.value_of("CLIENT_FILE").unwrap();
+    let client_file_path = matches.value_of("USER_FILE").unwrap();
 
     let config: Config =
         serde_json::from_reader(fs::File::open(config_file_path).expect("Error opening config file"))

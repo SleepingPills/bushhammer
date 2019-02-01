@@ -1,7 +1,7 @@
 import json
 import pprint
 
-from urllib.request import Request, urlopen
+from urllib.request import urlopen
 
 
 if __name__ == "__main__":

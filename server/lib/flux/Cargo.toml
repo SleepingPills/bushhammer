@@ -6,6 +6,7 @@ edition = "2018"
 
 [dependencies]
 ctor = "*"
+base64 = "*"
 serde = "*"
 byteorder = "*"
 serde_derive = "*"

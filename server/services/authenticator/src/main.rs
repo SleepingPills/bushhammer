@@ -1,5 +1,5 @@
 #![feature(proc_macro_hygiene, decl_macro)]
-use authenticator::core::{Authenticator, Config, UserInfo, ConnectionToken, AuthError};
+use authenticator::core::{Authenticator, Config, UserInfo, AuthResult};
 use clap::{App, Arg};
 use hashbrown::HashMap;
 use rocket;
@@ -9,8 +9,8 @@ use serde_json;
 use std::fs;
 
 #[post("/auth", data="<auth_key>")]
-fn auth(auth: State<Authenticator>, auth_key: String) -> Result<Json<ConnectionToken>, AuthError> {
-    auth.authenticate(auth_key).map(|token| Json(token))
+fn auth(auth: State<Authenticator>, auth_key: String) -> Json<AuthResult> {
+    Json(auth.authenticate(auth_key))
 }
 
 pub fn main() {

@@ -416,6 +416,7 @@ dependencies = [
 name = "flux"
 version = "0.1.0"
 dependencies = [
+ "base64 0.9.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "byteorder 1.3.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ctor 0.1.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "libsodium-sys 0.2.0 (registry+https://github.com/rust-lang/crates.io-index)",

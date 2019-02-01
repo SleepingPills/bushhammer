@@ -1,6 +1,7 @@
 use chrono;
 use flux::session::server::SessionKey;
 use flux::session::user::PrivateData;
+use flux::encoding::base64;
 use flux::crypto;
 use flux::time::timestamp_secs;
 use hashbrown::HashMap;
@@ -25,16 +26,16 @@ impl Authenticator {
 
     /// Authenticate the provided serial key and return a `ConnectionToken` upon success.
     /// The key must exist and there must not be an active ban on it.
-    pub fn authenticate(&self, serial_key: String) -> Result<ConnectionToken, AuthError> {
+    pub fn authenticate(&self, serial_key: String) -> AuthResult {
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
-                    return Err(AuthError::Banned(ban.clone()));
+                    return AuthResult::Banned(ban.clone());
                 }
 
-                Ok(self.create_token(info))
+                AuthResult::Ok(self.create_token(info))
             }
-            None => Err(AuthError::Failed),
+            None => AuthResult::Failed,
         }
     }
 
@@ -100,13 +101,16 @@ pub struct Config {
 /// as it contains sensitive information.
 #[derive(Serialize)]
 pub struct ConnectionToken {
+    #[serde(with = "base64")]
     pub version: [u8; 16],
     pub protocol: u16,
     pub expires: u64,
     pub sequence: u64,
+    #[serde(with = "base64")]
     pub server_key: [u8; 32],
+    #[serde(with = "base64")]
     pub client_key: [u8; 32],
-    #[serde(serialize_with = "<[_]>::serialize")]
+    #[serde(with = "base64")]
     pub data: [u8; PrivateData::SIZE + crypto::MAC_SIZE],
 }
 
@@ -142,8 +146,10 @@ impl UserInfo {
     }
 }
 
-#[derive(Serialize, Debug)]
-pub enum AuthError {
+#[derive(Serialize)]
+#[serde(tag = "result", content = "data")]
+pub enum AuthResult {
+    Ok(ConnectionToken),
     Failed,
     Banned(Ban),
 }

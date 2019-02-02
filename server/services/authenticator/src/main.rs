@@ -1,14 +1,15 @@
 #![feature(proc_macro_hygiene, decl_macro)]
-use authenticator::core::{Authenticator, Config, UserInfo, AuthResult};
+use authenticator::core::{AuthResult, Authenticator, Config, UserInfo};
 use clap::{App, Arg};
+use flux::logging;
 use hashbrown::HashMap;
 use rocket;
 use rocket::{post, routes, State};
-use rocket_contrib::json::{Json};
+use rocket_contrib::json::Json;
 use serde_json;
 use std::fs;
 
-#[post("/auth", data="<auth_key>")]
+#[post("/auth", data = "<auth_key>")]
 fn auth(auth: State<Authenticator>, auth_key: String) -> Json<AuthResult> {
     Json(auth.authenticate(auth_key))
 }
@@ -40,10 +41,14 @@ pub fn main() {
         serde_json::from_reader(fs::File::open(client_file_path).expect("Error opening client data file"))
             .expect("Error parsing client data file");
 
-    let authenticator = Authenticator::new(config, user_info);
+    // Create rocket instnace
+    let rocket_instance = rocket::ignite().mount("/user", routes![auth]);
 
-    rocket::ignite()
-        .mount("/user", routes![auth])
-        .manage(authenticator)
+    // Initialize logging
+    let logger = logging::init();
+
+    logging::info!(logger, "starting web server");
+    rocket_instance
+        .manage(Authenticator::new(config, user_info))
         .launch();
 }

@@ -41,14 +41,22 @@ pub fn main() {
         serde_json::from_reader(fs::File::open(client_file_path).expect("Error opening client data file"))
             .expect("Error parsing client data file");
 
-    // Create rocket instnace
-    let rocket_instance = rocket::ignite().mount("/user", routes![auth]);
-
     // Initialize logging
     let logger = logging::init();
 
     logging::info!(logger, "starting web server");
-    rocket_instance
-        .manage(Authenticator::new(config, user_info))
-        .launch();
+
+    // Create rocket instnace
+    let rocket_instance = rocket::ignite()
+        .mount("/user", routes![auth])
+        .manage(Authenticator::new(config, user_info));
+
+//    println!("{:?}", rocket_instance.config());
+    logging::info!(
+        logger,
+        "rocket config: {rocket_config}",
+        rocket_config = rocket_instance.config()
+    );
+
+    rocket_instance.launch();
 }

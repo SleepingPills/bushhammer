@@ -18,7 +18,7 @@ pub fn init() -> slog::Logger {
         panic!("Logging: invalid executable path")
     }
 
-    path.set_extension(".logging.toml");
+    path.set_extension(".log.toml");
 
     if path.exists() {
         let config: LoggerConfig = serdeconv::from_json_file(&path).expect("");

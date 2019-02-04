@@ -1,4 +1,4 @@
-[globa]
+[global]
 log = "off"
 limits = { forms = 32768 }
 

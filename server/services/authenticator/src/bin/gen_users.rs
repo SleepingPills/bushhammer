@@ -4,11 +4,8 @@ use authenticator::core::UserInfo;
 use clap::{App, Arg};
 use rand::distributions::Uniform;
 use rand::prelude::*;
-use serde_json;
+use serdeconv;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fs;
-use std::io::{LineWriter, Write};
 
 const ALLOWED_CHARS: [char; 35] = [
     '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l',
@@ -54,21 +51,7 @@ fn main() {
         .parse()
         .expect("Key count must be a valid integer");
 
-    let client_data = match fs::read_to_string(user_file_path) {
-        Ok(content) => {
-            println!("Read in {} bytes of data", content.len());
-            content
-        }
-        Err(err) => {
-            println!(
-                "Failed opening client file: {} (assuming empty input)",
-                err.description()
-            );
-            "{}".into()
-        }
-    };
-
-    let mut user_data: HashMap<String, UserInfo> = serde_json::from_str(&client_data).unwrap();
+    let mut user_data: HashMap<String, UserInfo> = serdeconv::from_toml_file(user_file_path).unwrap();
     let mut rng = thread_rng();
     let mut keys = Vec::new();
 
@@ -85,27 +68,10 @@ fn main() {
             .or_insert_with(|| UserInfo::new(id_base + i));
     }
 
-    fs::write(
-        user_file_path,
-        serde_json::to_string_pretty(&user_data).unwrap(),
-    )
-    .unwrap();
+    serdeconv::to_toml_file(&user_data, user_file_path).unwrap();
 
     if let Some(key_file_path) = matches.value_of("KEY_FILE") {
         println!("Writing keys to key file `{}`", key_file_path);
-
-        let key_file = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(key_file_path)
-            .unwrap();
-
-        let mut key_file = LineWriter::new(key_file);
-
-        for key in keys {
-            key_file.write_all(key.as_bytes()).unwrap();
-            key_file.write_all("\n".as_bytes()).unwrap();
-        }
+        serdeconv::to_toml_file(&keys, key_file_path).unwrap();
     }
 }

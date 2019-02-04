@@ -18,12 +18,12 @@ pub fn init() -> slog::Logger {
         panic!("Logging: invalid executable path")
     }
 
-    path.set_extension(".log.toml");
+    path.set_extension("log.toml");
 
     if path.exists() {
-        let config: LoggerConfig = serdeconv::from_json_file(&path).expect("");
+        let config: LoggerConfig = serdeconv::from_toml_file(&path).expect("");
         let logger = config.build_logger().expect("Logging: invalid configuration");
-        slog::info!(logger, "log config file: {log_config_file}", log_config_file = path.to_str().unwrap());
+        slog::info!(logger, ""; "log_config_file" => path.to_str().unwrap());
         logger
     } else {
         let config: LoggerConfig = serdeconv::from_toml_str(LOG_CONFIG).unwrap();

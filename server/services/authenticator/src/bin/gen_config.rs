@@ -2,8 +2,7 @@ use authenticator::core::Config;
 use clap::{App, Arg};
 use flux::crypto;
 use flux::session::server::SessionKey;
-use serde_json;
-use std::fs;
+use serdeconv;
 
 fn main() {
     let matches = App::new("Key Generator")
@@ -23,16 +22,9 @@ fn main() {
 
     crypto::random_bytes(&mut key[..]);
 
-    let key_file = fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(config_file_path)
-        .unwrap();
-
     let config = Config {
         session_key: SessionKey::new(key),
     };
 
-    serde_json::to_writer_pretty(key_file, &config).expect("Config serialization failed")
+    serdeconv::to_toml_file(&config, config_file_path).expect("Config serialization failed");
 }

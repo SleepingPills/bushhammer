@@ -24,7 +24,7 @@ impl Authenticator {
         }
     }
 
-    /// Authenticate the provided serial key and return a `ConnectionToken` upon success.
+    /// Authenticate the provided serial key and return an `AuthResult`.
     /// The key must exist and there must not be an active ban on it.
     pub fn authenticate(&self, serial_key: String) -> AuthResult {
         match self.user_info.get(&serial_key) {

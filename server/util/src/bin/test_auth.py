@@ -5,5 +5,5 @@ from urllib.request import urlopen
 
 
 if __name__ == "__main__":
-    response = urlopen("http://localhost:8000/user/auth", b"1hlevn5o7uhuj398h6t2nu79")
+    response = urlopen("http://localhost:8000/user/auth", b"l6z985dz5k4jhgn265c6291r")
     pprint.pprint(json.loads(response.read().decode("utf8")))

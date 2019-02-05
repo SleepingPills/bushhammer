@@ -4,7 +4,7 @@ use sloggers;
 use sloggers::{Config, LoggerConfig};
 use std::env::current_exe;
 
-pub use slog::{trace, debug, info, warn, error, crit};
+pub use slog::{crit, debug, error, info, o, trace, warn, Logger};
 
 const LOG_CONFIG: &str = r#"
 type = "terminal"

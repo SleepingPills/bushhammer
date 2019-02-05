@@ -1,26 +1,32 @@
 use chrono;
+use flux::choose;
+use flux::crypto;
+use flux::encoding::base64;
+use flux::logging;
 use flux::session::server::SessionKey;
 use flux::session::user::PrivateData;
-use flux::encoding::base64;
-use flux::crypto;
 use flux::time::timestamp_secs;
 use hashbrown::HashMap;
 use serde_derive::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicU64, Ordering, ATOMIC_U64_INIT};
+
+pub const KEY_LEN: usize = 24;
 
 /// Simple authenticator that constructs connection tokens based on client supplied serial keys.
 pub struct Authenticator {
     sequence: AtomicU64,
     session_key: SessionKey,
     user_info: HashMap<String, UserInfo>,
+    log: logging::Logger,
 }
 
 impl Authenticator {
-    pub fn new(config: Config, user_info: HashMap<String, UserInfo>) -> Authenticator {
+    pub fn new(config: Config, user_info: HashMap<String, UserInfo>, log: &logging::Logger) -> Authenticator {
         Authenticator {
             sequence: ATOMIC_U64_INIT,
             session_key: config.session_key,
             user_info,
+            log: log.new(logging::o!()),
         }
     }
 
@@ -30,12 +36,40 @@ impl Authenticator {
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
+                    let expiry_str = ban.expiry.map_or("N/A".to_string(), |expiry| expiry.to_rfc3339());
+                    logging::info!(
+                        self.log,
+                        "authentication";
+                        "result" => "banned",
+                        "id" => info.id,
+                        "key" => Self::protect_key(&serial_key),
+                        "reason" => &ban.reason,
+                        "expiry" => &expiry_str
+                    );
                     return AuthResult::Banned(ban.clone());
                 }
 
-                AuthResult::Ok(self.create_token(info))
+                let token = self.create_token(info);
+                logging::info!(
+                    self.log,
+                    "authentication";
+                    "result" => "ok",
+                    "id" => info.id,
+                    "key" => Self::protect_key(&serial_key),
+                    "sequence" => token.sequence,
+                    "expiry" => token.expires
+                );
+                AuthResult::Ok(token)
             }
-            None => AuthResult::Failed,
+            None => {
+                logging::info!(
+                    self.log,
+                    "authentication";
+                    "result" => "notfound",
+                    "key" => Self::protect_key(&serial_key),
+                );
+                AuthResult::Failed
+            }
         }
     }
 
@@ -53,6 +87,7 @@ impl Authenticator {
             server_key: [0u8; 32],
         };
 
+        logging::debug!(self.log, "generating key pair"; "user_id" => user.id);
         // Generate a random key pair
         crypto::random_bytes(&mut data.client_key);
         crypto::random_bytes(&mut data.server_key);
@@ -72,10 +107,12 @@ impl Authenticator {
             data: [0u8; PrivateData::SIZE + crypto::MAC_SIZE],
         };
 
+        logging::debug!(self.log, "coalescing additional data"; "user_id" => user.id);
         // Construct the additional data for the encryption.
         let aed =
             PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
 
+        logging::debug!(self.log, "encrypting private token data"; "user_id" => user.id);
         // Encrypt the private data into the relevant field in the token.
         crypto::encrypt(
             &mut token.data[..],
@@ -86,6 +123,15 @@ impl Authenticator {
         );
 
         token
+    }
+
+    #[inline]
+    fn protect_key(serial_key: &String) -> String {
+        serial_key
+            .chars()
+            .enumerate()
+            .map(|(idx, chr)| choose!(idx < KEY_LEN - 8 => '*', chr))
+            .collect()
     }
 }
 

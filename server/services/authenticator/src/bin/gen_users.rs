@@ -1,6 +1,6 @@
 #![feature(const_slice_len)]
 
-use authenticator::core::UserInfo;
+use authenticator::core::{UserInfo, KEY_LEN};
 use clap::{App, Arg};
 use rand::distributions::Uniform;
 use rand::prelude::*;
@@ -13,7 +13,6 @@ const ALLOWED_CHARS: [char; 35] = [
 ];
 
 const RANGE: usize = ALLOWED_CHARS.len();
-const KEY_LEN: usize = 24;
 
 fn make_key(rng: &mut ThreadRng) -> String {
     rng.sample_iter(&Uniform::new(0, RANGE))

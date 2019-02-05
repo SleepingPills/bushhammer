@@ -30,22 +30,24 @@ pub fn main() {
         )
         .get_matches();
 
+    // Initialize logging
+    let logger = logging::init();
+
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
+    logging::debug!(logger, "setup"; "config_file_path" => config_file_path);
+
     let client_file_path = matches.value_of("USER_FILE").unwrap();
+    logging::debug!(logger, "setup"; "client_file_path" => config_file_path);
 
     let config: Config = serdeconv::from_toml_file(config_file_path).expect("Error parsing config file");
     let user_info: HashMap<String, UserInfo> =
         serdeconv::from_toml_file(client_file_path).expect("Error parsing client data file");
 
-    // Initialize logging
-    let logger = logging::init();
-
     logging::info!(logger, "starting web server");
-
     // Create rocket instnace
     let rocket_instance = rocket::ignite()
         .mount("/user", routes![auth])
-        .manage(Authenticator::new(config, user_info));
+        .manage(Authenticator::new(config, user_info, &logger));
 
     let cfg = rocket_instance.config();
 

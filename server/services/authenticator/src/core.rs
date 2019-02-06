@@ -33,6 +33,7 @@ impl Authenticator {
     /// Authenticate the provided serial key and return an `AuthResult`.
     /// The key must exist and there must not be an active ban on it.
     pub fn authenticate(&self, serial_key: String) -> AuthResult {
+        logging::debug!(self.log, "authentication"; "key" => Self::protect_key(&serial_key));
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
@@ -87,7 +88,7 @@ impl Authenticator {
             server_key: [0u8; 32],
         };
 
-        logging::debug!(self.log, "generating key pair"; "user_id" => user.id);
+        logging::debug!(self.log, "create token"; "user_id" => user.id, "step" => "generate key pair");
         // Generate a random key pair
         crypto::random_bytes(&mut data.client_key);
         crypto::random_bytes(&mut data.server_key);
@@ -107,12 +108,12 @@ impl Authenticator {
             data: [0u8; PrivateData::SIZE + crypto::MAC_SIZE],
         };
 
-        logging::debug!(self.log, "coalescing additional data"; "user_id" => user.id);
+        logging::debug!(self.log, "create token"; "user_id" => user.id, "step" => "coalesce aead");
         // Construct the additional data for the encryption.
         let aed =
             PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
 
-        logging::debug!(self.log, "encrypting private token data"; "user_id" => user.id);
+        logging::debug!(self.log, "create_token"; "user_id" => user.id, "step" => "encrypt private data");
         // Encrypt the private data into the relevant field in the token.
         crypto::encrypt(
             &mut token.data[..],

@@ -4,6 +4,7 @@ use crate::net::support::{
     Deserialize, ErrorType, ErrorUtils, NetworkError, NetworkResult, PayloadBatch, Serialize,
 };
 use flux;
+use flux::logging;
 use flux::session::server::SessionKey;
 use indexmap::IndexSet;
 use mio;
@@ -39,6 +40,8 @@ pub struct Endpoint {
 
     current_time: time::Instant,
     housekeeping_time: time::Instant,
+
+    log: logging::Logger,
 }
 
 impl Endpoint {
@@ -55,7 +58,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: SessionKey) -> NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: SessionKey, log: logging::Logger) -> NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 
@@ -81,11 +84,17 @@ impl Endpoint {
             changes: Vec::new(),
             current_time: now,
             housekeeping_time: now,
+            log: log.new(logging::o!()),
         })
     }
 
     #[inline]
     pub fn push<P: Serialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
+        logging::debug!(self.log, "pushing payload to channel";
+                        "context" => "push",
+                        "channel_id" => channel_id,
+                        "size" => data.len());
+
         let channel = &mut self.channels[channel_id];
 
         if channel.write_payload(data).has_failed() {
@@ -94,6 +103,10 @@ impl Endpoint {
     }
 
     pub fn pull<P: Deserialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
+        logging::debug!(self.log, "pulling data into payload";
+                        "context" => "pull",
+                        "channel_id" => channel_id);
+
         let mut ctx = self.get_comm_ctx(channel_id);
 
         match ctx.channel.read() {
@@ -102,57 +115,120 @@ impl Endpoint {
                     Frame::Control(ctr) => {
                         match ctr {
                             // Disconnect notice sent by client. Close channel but don't send notice back.
-                            ControlFrame::ConnectionClosed(_) => ctx.disconnect(false),
+                            ControlFrame::ConnectionClosed(_) => {
+                                logging::debug!(ctx.log, "connection closed by client";
+                                                "context" => "pull",
+                                                "channel_id" => channel_id,
+                                                "result" => "ok",
+                                                "type" => "control",
+                                                "message" => "ConnectionClosed");
+                                ctx.disconnect(false)
+                            }
                             // Connection accepted sent by client in error, close channel and notify.
-                            ControlFrame::ConnectionAccepted(_) => ctx.disconnect(true),
+                            ControlFrame::ConnectionAccepted(_) => {
+                                logging::debug!(ctx.log, "erroneous connection acceptance message received";
+                                                "context" => "pull",
+                                                "channel_id" => channel_id,
+                                                "result" => "error",
+                                                "type" => "control",
+                                                "message" => "ConnectionAccepted");
+                                ctx.disconnect(true)
+                            }
                             // Keepalive requests are ignored at this stage.
-                            ControlFrame::Keepalive(_) => (),
+                            ControlFrame::Keepalive(_) => {
+                                logging::debug!(ctx.log, "keepalive message received";
+                                                "context" => "pull",
+                                                "channel_id" => channel_id,
+                                                "result" => "ok",
+                                                "type" => "control",
+                                                "message" => "KeepAlive");
+                            }
                         };
                     }
                     Frame::Payload(pinfo) => {
+                        logging::debug!(ctx.log, "payload message received";
+                                        "context" => "pull",
+                                        "channel_id" => channel_id,
+                                        "result" => "ok",
+                                        "type" => "payload",
+                                        "payload_info" => ?pinfo);
                         if ctx.channel.read_payload(data, pinfo).has_failed() {
                             ctx.disconnect(true)
                         }
                     }
                 }
             }
-            Err(NetworkError::Fatal(_)) => ctx.disconnect(true),
-            _ => (),
+            Err(NetworkError::Fatal(err)) => {
+                logging::error!(ctx.log, "fatal read error";
+                                "context" => "pull",
+                                "channel_id" => channel_id,
+                                "result" => "error",
+                                "error" => ?err);
+                ctx.disconnect(true)
+            }
+            Err(NetworkError::Wait) => {
+                logging::debug!(ctx.log, "pull";
+                                "context" => "pull",
+                                "channel_id" => channel_id,
+                                "result" => "wait");
+            }
         }
     }
 
     pub fn sync(&mut self, now: time::Instant) {
         self.current_time = now;
+        logging::debug!(self.log, "starting network sync";
+                        "context" => "sync",
+                        "current_time" => ?self.current_time);
 
         if now.duration_since(self.housekeeping_time) >= Self::HOUSEKEEPING_INTERVAL {
             self.housekeeping();
             self.housekeeping_time = now;
         }
 
+        let log = &self.log;
         let live_set = &mut self.live;
         let free_set = &mut self.free;
         let channels = &mut self.channels;
         let changes = &mut self.changes;
 
+        logging::debug!(log, "sending data on {live_channel_count} live channels",
+                        live_channel_count = live_set.len();
+                        "context" => "sync");
+
         // Force send data on all live channels
         live_set.retain(|&channel_id| {
+            logging::debug!(log, "sending data";
+                            "context" => "sync",
+                            "channel_id" => channel_id);
+
             let channel = &mut channels[channel_id];
 
-            let retain = if channel.has_egress() {
-                !channel.send(now).has_failed()
+            let result = if channel.has_egress() {
+                channel.send(now)
             } else {
-                true
+                Ok(())
             };
 
             // Close the channel in case of a send error. No point in trying to send a notice.
-            if !retain {
+            if result.has_failed() {
+                let err = result.unwrap_err();
+
+                logging::error!(log, "disconnecting channel due to write error";
+                                "context" => "sync",
+                                "channel_id" => channel_id,
+                                "error" => ?err);
+
                 channel.close(false);
                 free_set.push(channel_id);
                 changes.push(ConnectionChange::Disconnected(channel_id));
+                return false;
             }
 
-            retain
+            true
         });
+
+        logging::debug!(log, "running listen poll"; "context" => "sync");
 
         // Run listen poll
         self.server_poll
@@ -164,7 +240,7 @@ impl Endpoint {
             if event.readiness().is_writable() {
                 // See if there is a connection to be accepted
                 match self.server.accept() {
-                    Ok((stream, _)) => {
+                    Ok((stream, addr)) => {
                         // Retrieve an existing channel instance or create a new one
                         let id = match free_set.pop() {
                             Some(id) => id,
@@ -174,6 +250,11 @@ impl Endpoint {
                                 id
                             }
                         };
+
+                        logging::info!(log, "incoming connection";
+                                       "context" => "sync",
+                                       "address" => ?addr,
+                                       "channel_id" => id);
 
                         // Register the channel on the handshake poll. Clients must deliver a valid
                         // handshake message before the connection is fully accepted
@@ -334,6 +415,7 @@ impl Endpoint {
             changes: &mut self.changes,
             live: &mut self.live,
             free: &mut self.free,
+            log: &self.log,
         }
     }
 }
@@ -344,6 +426,7 @@ struct CommCtx<'a> {
     changes: &'a mut Vec<ConnectionChange>,
     live: &'a mut IndexSet<ChannelId>,
     free: &'a mut Vec<ChannelId>,
+    log: &'a logging::Logger,
 }
 
 impl<'a> CommCtx<'a> {

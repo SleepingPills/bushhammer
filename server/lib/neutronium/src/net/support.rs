@@ -1,3 +1,5 @@
+use std::error;
+use std::fmt;
 use std::io;
 use std::net;
 
@@ -8,6 +10,14 @@ pub enum NetworkError {
     Wait,
     Fatal(ErrorType),
 }
+
+impl fmt::Display for NetworkError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl error::Error for NetworkError {}
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum ErrorType {
@@ -25,6 +35,14 @@ pub enum ErrorType {
     AddrParse,
     Io(io::ErrorKind),
 }
+
+impl fmt::Display for ErrorType {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{:?}", self)
+    }
+}
+
+impl error::Error for ErrorType {}
 
 impl From<io::Error> for NetworkError {
     #[inline]

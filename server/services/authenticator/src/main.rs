@@ -34,10 +34,14 @@ pub fn main() {
     let logger = logging::init();
 
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
-    logging::debug!(logger, "init"; "config_file_path" => config_file_path);
+    logging::debug!(logger, "reading configuration file path";
+                    "context" => "main",
+                    "config_file_path" => config_file_path);
 
     let client_file_path = matches.value_of("USER_FILE").unwrap();
-    logging::debug!(logger, "init"; "client_file_path" => config_file_path);
+    logging::debug!(logger, "reading user file path";
+                    "context" => "main",
+                    "user_file_path" => config_file_path);
 
     let config: Config = serdeconv::from_toml_file(config_file_path).expect("Error parsing config file");
     let user_info: HashMap<String, UserInfo> =

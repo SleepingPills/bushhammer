@@ -1,6 +1,6 @@
 use crate::net::support::{ErrorType, NetworkError, SizedWrite};
-use flux::UserId;
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use flux::UserId;
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum Category {

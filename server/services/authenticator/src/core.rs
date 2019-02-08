@@ -33,14 +33,17 @@ impl Authenticator {
     /// Authenticate the provided serial key and return an `AuthResult`.
     /// The key must exist and there must not be an active ban on it.
     pub fn authenticate(&self, serial_key: String) -> AuthResult {
-        logging::debug!(self.log, "authentication"; "key" => Self::protect_key(&serial_key));
+        logging::debug!(self.log, "authenticating key";
+                        "context" => "authentication",
+                        "key" => Self::protect_key(&serial_key));
         match self.user_info.get(&serial_key) {
             Some(info) => {
                 if let Some(ban) = &info.ban {
                     let expiry_str = ban.expiry.map_or("N/A".to_string(), |expiry| expiry.to_rfc3339());
-                    logging::info!(
+                    logging::warn!(
                         self.log,
-                        "authentication";
+                        "serial key is banned";
+                        "context" => "authenticate",
                         "result" => "banned",
                         "id" => info.id,
                         "key" => Self::protect_key(&serial_key),
@@ -53,7 +56,8 @@ impl Authenticator {
                 let token = self.create_token(info);
                 logging::info!(
                     self.log,
-                    "authentication";
+                    "serial key successfully authenticated";
+                    "context" => "authenticate",
                     "result" => "ok",
                     "id" => info.id,
                     "key" => Self::protect_key(&serial_key),
@@ -63,9 +67,10 @@ impl Authenticator {
                 AuthResult::Ok(token)
             }
             None => {
-                logging::info!(
+                logging::warn!(
                     self.log,
-                    "authentication";
+                    "serial key not found";
+                    "context" => "authenticate",
                     "result" => "notfound",
                     "key" => Self::protect_key(&serial_key),
                 );
@@ -81,6 +86,10 @@ impl Authenticator {
 
     /// Creates a connection token based on the provided `UserInfo` object.
     fn create_token(&self, user: &UserInfo) -> ConnectionToken {
+        logging::debug!(self.log, "creating connection token";
+                        "context" => "create_token",
+                        "user_id" => user.id);
+
         // Temporary container for storing the private data
         let mut data = PrivateData {
             user_id: user.id,
@@ -88,7 +97,10 @@ impl Authenticator {
             server_key: [0u8; 32],
         };
 
-        logging::debug!(self.log, "create token"; "user_id" => user.id, "step" => "generate key pair");
+        logging::debug!(self.log, "creating key pair";
+                        "context" => "create_token",
+                        "user_id" => user.id);
+
         // Generate a random key pair
         crypto::random_bytes(&mut data.client_key);
         crypto::random_bytes(&mut data.server_key);
@@ -108,12 +120,16 @@ impl Authenticator {
             data: [0u8; PrivateData::SIZE + crypto::MAC_SIZE],
         };
 
-        logging::debug!(self.log, "create token"; "user_id" => user.id, "step" => "coalesce aead");
+        logging::debug!(self.log, "coalescing additional encryption data";
+                        "context" => "create_token",
+                        "user_id" => user.id);
         // Construct the additional data for the encryption.
         let aed =
             PrivateData::additional_data(&flux::VERSION_ID[..], flux::PROTOCOL_ID, token.expires).unwrap();
 
-        logging::debug!(self.log, "create_token"; "user_id" => user.id, "step" => "encrypt private data");
+        logging::debug!(self.log, "encrypting private data";
+                        "context" => "create_token",
+                        "user_id" => user.id);
         // Encrypt the private data into the relevant field in the token.
         crypto::encrypt(
             &mut token.data[..],

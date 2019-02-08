@@ -5,6 +5,7 @@
 #![feature(const_vec_new)]
 #![feature(const_raw_ptr_deref)]
 #![feature(box_into_raw_non_null)]
+#![feature(crate_visibility_modifier)]
 
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::new_without_default)]

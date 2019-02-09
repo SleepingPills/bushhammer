@@ -11,6 +11,8 @@
 #![allow(clippy::new_without_default)]
 #![allow(clippy::new_without_default_derive)]
 
+#![recursion_limit="512"]
+
 pub mod prelude;
 
 #[macro_use]

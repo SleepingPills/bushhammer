@@ -12,6 +12,7 @@ pub mod server {
     impl SessionKey {
         pub const SIZE: usize = SESSION_KEY_SIZE;
 
+        #[inline]
         pub fn new(key: [u8; Self::SIZE]) -> SessionKey {
             SessionKey(key)
         }
@@ -20,12 +21,14 @@ pub mod server {
     impl Deref for SessionKey {
         type Target = [u8; SessionKey::SIZE];
 
+        #[inline]
         fn deref(&self) -> &[u8; SessionKey::SIZE] {
             &self.0
         }
     }
 
     impl DerefMut for SessionKey {
+        #[inline]
         fn deref_mut(&mut self) -> &mut [u8; SessionKey::SIZE] {
             &mut self.0
         }

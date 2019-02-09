@@ -21,6 +21,7 @@ pub struct Authenticator {
 }
 
 impl Authenticator {
+    #[inline]
     pub fn new(config: Config, user_info: HashMap<String, UserInfo>, log: &logging::Logger) -> Authenticator {
         Authenticator {
             sequence: ATOMIC_U64_INIT,
@@ -80,6 +81,7 @@ impl Authenticator {
     }
 
     /// Returns a snapshot copy of the current user information mapping.
+    #[inline]
     pub fn snapshot(&self) -> HashMap<String, UserInfo> {
         self.user_info.clone()
     }

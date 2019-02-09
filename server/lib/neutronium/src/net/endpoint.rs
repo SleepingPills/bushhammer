@@ -90,7 +90,7 @@ impl Endpoint {
 
     #[inline]
     pub fn push<P: Serialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
-        logging::debug!(self.log, "pushing payload to channel";
+        logging::trace!(self.log, "pushing payload to channel";
                         "context" => "push",
                         "channel_id" => channel_id,
                         "size" => data.len());
@@ -103,7 +103,7 @@ impl Endpoint {
     }
 
     pub fn pull<P: Deserialize>(&mut self, channel_id: ChannelId, data: &mut PayloadBatch<P>) {
-        logging::debug!(self.log, "pulling data into payload";
+        logging::trace!(self.log, "pulling data into payload";
                         "context" => "pull",
                         "channel_id" => channel_id);
 
@@ -146,7 +146,7 @@ impl Endpoint {
                         };
                     }
                     Frame::Payload(pinfo) => {
-                        logging::debug!(ctx.log, "payload message received";
+                        logging::trace!(ctx.log, "payload message received";
                                         "context" => "pull",
                                         "channel_id" => channel_id,
                                         "result" => "ok",
@@ -177,7 +177,7 @@ impl Endpoint {
 
     pub fn sync(&mut self, now: time::Instant) {
         self.current_time = now;
-        logging::debug!(self.log, "starting network sync";
+        logging::trace!(self.log, "starting network sync";
                         "context" => "sync",
                         "current_time" => ?self.current_time);
 
@@ -192,9 +192,11 @@ impl Endpoint {
         let channels = &mut self.channels;
         let changes = &mut self.changes;
 
-        logging::debug!(log, "sending data on {live_channel_count} live channels",
-                        live_channel_count = live_set.len();
-                        "context" => "sync");
+        logging::trace!(log, "current status";
+                        "context" => "sync",
+                        "live_count" => live_set.len(),
+                        "free_count" => free_set.len(),
+                        "channel_count" => channels.len());
 
         // Force send data on all live channels
         live_set.retain(|&channel_id| {
@@ -207,7 +209,7 @@ impl Endpoint {
             let result = if channel.has_egress() {
                 channel.send(now)
             } else {
-                Ok(())
+                Ok(0)
             };
 
             // Close the channel in case of a send error. No point in trying to send a notice.
@@ -228,7 +230,7 @@ impl Endpoint {
             true
         });
 
-        logging::debug!(log, "running listen poll"; "context" => "sync");
+        logging::trace!(log, "running listen poll"; "context" => "sync");
 
         // Run listen poll
         self.server_poll
@@ -246,7 +248,11 @@ impl Endpoint {
                             Some(id) => id,
                             None => {
                                 let id = channels.len();
-                                channels.push(Channel::new(flux::VERSION_ID, flux::PROTOCOL_ID));
+                                channels.push(Channel::new(
+                                    flux::VERSION_ID,
+                                    flux::PROTOCOL_ID,
+                                    Some(&self.log),
+                                ));
                                 id
                             }
                         };
@@ -256,6 +262,9 @@ impl Endpoint {
                                        "address" => ?addr,
                                        "channel_id" => id);
 
+                        logging::debug!(log, "registering channel with handshake poll";
+                                        "context" => "sync",
+                                        "channel_id" => id);
                         // Register the channel on the handshake poll. Clients must deliver a valid
                         // handshake message before the connection is fully accepted
                         self.handshake_poll
@@ -268,7 +277,7 @@ impl Endpoint {
                             .expect("Stream registration failed");
 
                         // Open the channel
-                        channels[id].open(stream, self.current_time);
+                        channels[id].open(id, stream, self.current_time);
                     }
                     Err(err) => {
                         if err.kind() != io::ErrorKind::WouldBlock {
@@ -279,6 +288,8 @@ impl Endpoint {
             }
         }
 
+        logging::trace!(log, "running handshake poll"; "context" => "sync");
+
         // Run handshake poll
         self.handshake_poll
             .poll(&mut self.events, Some(Self::ZERO_TIME))
@@ -288,8 +299,18 @@ impl Endpoint {
             if event.readiness().is_readable() {
                 let channel_id: ChannelId = event.token().into();
                 let channel = &mut channels[channel_id];
+
+                logging::debug!(log, "handshake received";
+                                "context" => "sync",
+                                "channel_id" => channel_id);
+
                 match channel.read_connection_token(&self.session_key) {
                     Ok(user_id) => {
+                        logging::info!(log, "handshake accepted";
+                                       "context" => "sync",
+                                       "channel_id" => channel_id,
+                                       "user_id" => user_id);
+
                         // The channel is now fully connected. Deregister from the handshake poll and
                         // register on the live poll.
                         if channel
@@ -298,6 +319,10 @@ impl Endpoint {
                         {
                             panic!("Failure writing connection accepted frame")
                         }
+
+                        logging::debug!(log, "moving channel to live poll";
+                                        "context" => "sync",
+                                        "channel_id" => channel_id);
                         changes.push(ConnectionChange::Connected(user_id, channel_id));
                         channel
                             .deregister(&self.handshake_poll)
@@ -309,6 +334,10 @@ impl Endpoint {
                     Err(err) => {
                         // Disconnect the channel in case there is an error
                         if err != NetworkError::Wait {
+                            logging::error!(log, "disconnecting channel due to handshake read error";
+                                            "context" => "sync",
+                                            "channel_id" => channel_id,
+                                            "error" => ?err);
                             channel.close(false);
                             live_set.remove(&channel_id);
                             free_set.push(channel_id);
@@ -318,6 +347,8 @@ impl Endpoint {
                 }
             }
         }
+
+        logging::trace!(log, "running live poll"; "context" => "sync");
 
         // Run connected poll
         let live_poll = &self.live_poll;
@@ -330,17 +361,50 @@ impl Endpoint {
             let channel_id: ChannelId = event.token().into();
             let channel = &mut channels[channel_id];
 
+            logging::debug!(log, "live channel ready for send/receive";
+                            "context" => "sync",
+                            "channel_id" => channel_id);
+
             // Perform both receive and send operations, disconnecting the channel if there is a fatal error.
-            Self::ready_op(readiness.is_readable(), || channel.receive(now))
-                .and_then(|()| Self::ready_op(readiness.is_writable(), || channel.send(now)))
-                .unwrap_or_else(|_| {
-                    channel.deregister(live_poll).expect("Deregistration failed");
-                    channel.close(true);
-                    live_set.remove(&channel_id);
-                    free_set.push(channel_id);
-                    changes.push(ConnectionChange::Disconnected(channel_id));
-                });
+            Self::ready_op(readiness.is_readable(), || {
+                let result = channel.receive(now);
+
+                logging::debug!(log, "received data";
+                                "context" => "sync",
+                                "channel_id" => channel_id,
+                                "result" => ?result);
+
+                result.map(|_| ())
+            })
+            .and_then(|_| {
+                Self::ready_op(readiness.is_writable(), || {
+                    let result = channel.send(now);
+
+                    logging::debug!(log, "sent data";
+                                    "context" => "sync",
+                                    "channel_id" => channel_id,
+                                    "result" => ?result);
+
+                    result.map(|_| ())
+                })
+            })
+            .unwrap_or_else(|err| {
+                logging::error!(log, "disconnecting live channel due to error";
+                            "context" => "sync",
+                            "channel_id" => channel_id,
+                            "error" => ?err);
+
+                channel.deregister(live_poll).expect("Deregistration failed");
+                channel.close(true);
+                live_set.remove(&channel_id);
+                free_set.push(channel_id);
+                changes.push(ConnectionChange::Disconnected(channel_id));
+            });
         }
+
+        logging::trace!(log, "network sync finished";
+                        "context" => "sync",
+                        "change_count" => changes.len());
     }
 
     /// Drains all the changes accumulated since the last `sync`
@@ -366,14 +430,26 @@ impl Endpoint {
     }
 
     fn housekeeping(&mut self) {
+        let log = &self.log;
         let now = self.current_time;
         let live_set = &mut self.live;
         let free_set = &mut self.free;
         let channels = &mut self.channels;
         let changes = &mut self.changes;
 
+        logging::info!(log, "running housekeeping";
+                       "context" => "housekeeping",
+                       "current_time" => ?now,
+                       "live_count" => live_set.len(),
+                       "free_count" => free_set.len(),
+                       "channel_count" => channels.len());
+
         live_set.retain(|&channel_id| {
             let channel = &mut channels[channel_id];
+
+            logging::debug!(log, "processing channel";
+                            "context" => "housekeeping",
+                            "channel_id" => channel_id);
 
             let retain = match channel.get_state() {
                 ChannelState::Handshake(timestamp) => now.duration_since(timestamp) < Self::HANDSHAKE_TIMEOUT,
@@ -398,6 +474,10 @@ impl Endpoint {
             // Close the channel in case of a timeout. Don't send a notification since the connection is
             // most likely dead.
             if !retain {
+                logging::warn!(log, "disconnecting channel due to timeout";
+                              "context" => "housekeeping",
+                              "channel_id" => channel_id);
+
                 channel.close(false);
                 free_set.push(channel_id);
                 changes.push(ConnectionChange::Disconnected(channel_id));

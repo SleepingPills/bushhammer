@@ -55,6 +55,7 @@ pub fn main() {
     let cfg = rocket_instance.config();
 
     logging::info!(logger, "rocket config";
+                   "context" => "main",
                    "environment" => cfg.environment.to_string(),
                    "address" => &cfg.address,
                    "port" => cfg.port,

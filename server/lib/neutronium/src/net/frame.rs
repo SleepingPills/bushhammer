@@ -61,11 +61,11 @@ impl Frame {
 
 impl ControlFrame {
     #[inline]
-    pub fn category(&self) -> u8 {
+    pub fn category(&self) -> Category {
         match self {
-            ControlFrame::Keepalive(_) => Category::Keepalive.into(),
-            ControlFrame::ConnectionAccepted(_) => Category::ConnectionAccepted.into(),
-            ControlFrame::ConnectionClosed(_) => Category::ConnectionClosed.into(),
+            ControlFrame::Keepalive(_) => Category::Keepalive,
+            ControlFrame::ConnectionAccepted(_) => Category::ConnectionAccepted,
+            ControlFrame::ConnectionClosed(_) => Category::ConnectionClosed,
         }
     }
 

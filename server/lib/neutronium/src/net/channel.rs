@@ -3,6 +3,7 @@ use crate::net::frame::{Category, ControlFrame, Frame, PayloadInfo};
 use crate::net::support::{Deserialize, ErrorType, NetworkError, NetworkResult, PayloadBatch, Serialize};
 use byteorder::{BigEndian, LittleEndian, ReadBytesExt, WriteBytesExt};
 use flux::crypto;
+use flux::logging;
 use flux::session::server::SessionKey;
 use flux::session::user::PrivateData;
 use flux::time::timestamp_secs;
@@ -38,6 +39,8 @@ pub enum ChannelState {
 /// Represents a communication channel with a single endpoint. All communication on the channel
 /// is encrypted.
 pub struct Channel {
+    id: Option<ChannelId>,
+
     // Tcp Stream
     stream: Option<TcpStream>,
     state: ChannelState,
@@ -66,15 +69,28 @@ pub struct Channel {
 
     // Payload buffer
     payload: [u8; PAYLOAD_BUF_SIZE],
+
+    // Log
+    log: logging::Logger,
 }
 
 impl Channel {
     /// Initializes a new channel with the supplied TcpStream, version and protocol.
     #[inline]
-    pub fn new(version: [u8; 16], protocol: u16) -> Channel {
+    pub fn new<'a, L: Into<Option<&'a logging::Logger>>>(
+        version: [u8; 16],
+        protocol: u16,
+        log: L,
+    ) -> Channel {
         let now = Instant::now();
 
+        let channel_log = match log.into() {
+            Some(log) => log.new(logging::o!()),
+            _ => logging::Logger::root(logging::Discard, logging::o!()),
+        };
+
         Channel {
+            id: None,
             stream: None,
             state: ChannelState::Handshake(now),
             version,
@@ -88,27 +104,42 @@ impl Channel {
             read_buffer: Buffer::new(READ_BUF_SIZE),
             write_buffer: Buffer::new(WRITE_BUF_SIZE),
             payload: [0; PAYLOAD_BUF_SIZE],
+            log: channel_log,
         }
     }
 
     /// Opens the channel using a new underlying stream. The channel must be closed for this
     /// operation to succeed.
     #[inline]
-    pub fn open(&mut self, stream: TcpStream, now: Instant) {
+    pub fn open(&mut self, id: ChannelId, stream: TcpStream, now: Instant) {
         if self.state != ChannelState::Disconnected {
             panic!("Attempted to open an already open channel");
         }
 
+        self.id = Some(id);
         self.state = ChannelState::Handshake(now);
         self.stream = Some(stream);
+
+        logging::debug!(self.log, "channel opened"; "context" => "open", "channel_id" => self.id);
     }
 
     /// Closes the channel, the underlying stream and clears out all private data.
     #[inline]
     pub fn close(&mut self, notify: bool) {
+        logging::debug!(self.log, "closing channel";
+                        "context" => "close",
+                        "channel_id" => self.id,
+                        "client_sequence" => self.client_sequence,
+                        "server_sequence" => self.server_sequence,
+                        "last_egress" => ?self.last_egress,
+                        "last_ingress" => ?self.last_ingress,
+                        "read_size" => self.read_buffer.len(),
+                        "write_size" => self.write_buffer.len());
+
         if notify {
             // Attempt to send a disconnection notice, but ignore any failures
             if let ChannelState::Connected(user_id) = self.state {
+                logging::debug!(self.log, "notifying client"; "context" => "close", "channel_id" => self.id);
                 drop(self.write_control(ControlFrame::ConnectionClosed(user_id)));
                 drop(self.send_raw());
             }
@@ -118,6 +149,7 @@ impl Channel {
         // corrupted otherwise.
         self.read_buffer.clear();
         self.write_buffer.clear();
+        self.id = None;
 
         self.state = ChannelState::Disconnected;
 
@@ -132,6 +164,8 @@ impl Channel {
             .expect("Channel must have valid stream")
             .shutdown(Shutdown::Both)
             .unwrap_or_else(|err| panic!(err));
+
+        logging::debug!(self.log, "channel closed"; "context" => "close", "channel_id" => self.id);
     }
 
     /// Returns the time elapsed since the last egress.
@@ -161,51 +195,80 @@ impl Channel {
     /// Registers this channel on the supplied poll.
     #[inline]
     pub fn register(&self, id: ChannelId, poll: &mio::Poll) -> NetworkResult<()> {
-        poll.register(
+        logging::trace!(self.log, "registering channel on poll"; "context" => "register", "channel_id" => id);
+
+        let result = poll.register(
             self.stream.as_ref().expect("Can't register disconnected channel"),
             id.into(),
             mio::Ready::readable() | mio::Ready::writable(),
             mio::PollOpt::edge(),
         )
-        .map_err(Into::into)
+        .map_err(Into::into);
+
+        logging::debug!(self.log, "channel registered";
+                        "context" => "register",
+                        "channel_id" => id,
+                        "result" => ?result);
+
+        result
     }
 
     /// Deregisters this channel on the supplied poll.
     #[inline]
     pub fn deregister(&self, poll: &mio::Poll) -> NetworkResult<()> {
-        poll.deregister(
+        logging::trace!(self.log, "deregistering channel on poll";
+                        "context" => "deregister",
+                        "channel_id" => self.id);
+
+        let result = poll.deregister(
             self.stream
                 .as_ref()
                 .expect("Can't deregister disconnected channel"),
         )
-        .map_err(Into::into)
+        .map_err(Into::into);
+
+        logging::debug!(self.log, "channel deregistered";
+                        "context" => "deregister",
+                        "channel_id" => self.id,
+                        "result" => ?result);
+
+        result
     }
 
     /// Read all available data off the network and updates the last ingress time if > 0 bytes have been
     /// transmitted.
     #[inline]
-    pub fn receive(&mut self, now: Instant) -> NetworkResult<()> {
+    pub fn receive(&mut self, now: Instant) -> NetworkResult<usize> {
+        logging::trace!(self.log, "receiving data from network"; "context" => "receive", "channel_id" => self.id);
+
         let stream = &mut self.stream.as_ref().expect("Channel must have valid stream");
-        if Self::fold_result(self.read_buffer.ingress(stream))? > 0 {
+
+        let received = Self::fold_result(self.read_buffer.ingress(stream))?;
+
+        if received > 0 {
             self.last_ingress = now;
         }
 
-        Ok(())
+        Ok(received)
     }
 
     /// Send all the buffered data to the network and updates the last egress time if > 0 bytes have been
     /// transmitted.
     #[inline]
-    pub fn send(&mut self, now: Instant) -> NetworkResult<()> {
+    pub fn send(&mut self, now: Instant) -> NetworkResult<usize> {
+        logging::trace!(self.log, "sending data on the network"; "context" => "send", "channel_id" => self.id);
+
         if self.write_buffer.is_empty() {
-            return Ok(());
+            return Ok(0);
         }
 
-        if Self::fold_result(self.send_raw())? > 0 {
+        let sent = Self::fold_result(self.send_raw())?;
+
+        if sent > 0 {
             self.last_egress = now;
         }
 
-        Ok(())
+        Ok(sent)
     }
 
     /// Sends all the buffered data.
@@ -289,25 +352,41 @@ impl Channel {
         batch.write(&mut cursor)?;
         let payload_size = cursor.position() as usize;
 
-        self.write(payload_size, Category::Payload as u8)
+        self.write(payload_size, Category::Payload)
     }
 
     /// Write the current payload into the buffer
-    fn write(&mut self, payload_size: usize, category: u8) -> NetworkResult<()> {
+    fn write(&mut self, payload_size: usize, category: Category) -> NetworkResult<()> {
         let encrypted_size = payload_size + crypto::MAC_SIZE;
         let total_size = encrypted_size + HEADER_SIZE;
+
+        logging::trace!(self.log, "writing message to output buffer";
+                        "context" => "write",
+                        "channel_id" => self.id,
+                        "server_sequence" => self.server_sequence,
+                        "write_buffer_capacity" => ?self.write_buffer.free_capacity(),
+                        "plaintext_size" => ?payload_size,
+                        "encrypted_size" => ?encrypted_size,
+                        "total_size" => ?total_size);
 
         if total_size > self.write_buffer.free_capacity() {
             return Err(NetworkError::Wait);
         }
 
-        let additional_data = self.additional_data(category);
+        let category_num = category as u8;
+
+        let additional_data = self.additional_data(category_num);
         let mut stream = self.write_buffer.write_slice();
 
         // Write header
-        stream.write_u8(category)?;
+        stream.write_u8(category_num)?;
         stream.write_u64::<BigEndian>(self.server_sequence)?;
         stream.write_u16::<BigEndian>(encrypted_size as u16)?;
+
+        logging::trace!(self.log, "encrypting message";
+                        "context" => "write",
+                        "channel_id" => self.id,
+                        "server_sequence" => self.server_sequence);
 
         // Write payload
         if !crypto::encrypt(
@@ -321,6 +400,12 @@ impl Channel {
         }
 
         self.write_buffer.move_tail(total_size);
+
+        logging::trace!(self.log, "message written to output buffer";
+                        "context" => "write",
+                        "channel_id" => self.id,
+                        "server_sequence" => self.server_sequence);
+
         self.server_sequence += 1;
 
         Ok(())
@@ -338,7 +423,14 @@ impl Channel {
     #[inline]
     pub fn read(&mut self) -> NetworkResult<Frame> {
         let (size, category) = self.read_unpack()?;
-        Frame::read(&self.payload[..size], category)
+        let result = Frame::read(&self.payload[..size], category);
+
+        logging::trace!(self.log, "read in control frame";
+                        "context" => "read",
+                        "channel_id" => self.id,
+                        "result" => ?result);
+
+        result
     }
 
     /// Reads the payload into the supplied batch.
@@ -351,15 +443,37 @@ impl Channel {
         pinfo: PayloadInfo,
     ) -> NetworkResult<()> {
         let mut cursor = Cursor::new(pinfo.select(&self.payload));
-        batch.read(&mut cursor)
+
+        logging::trace!(self.log, "reading payload frame";
+                        "context" => "read_payload",
+                        "channel_id" => self.id);
+
+        let result = batch.read(&mut cursor);
+
+        logging::trace!(self.log, "read in payload frame";
+                        "context" => "read",
+                        "channel_id" => self.id,
+                        "result" => ?result);
+
+        result
     }
 
     /// Read and unpack the data from the read buffer into the payload buffer.
     fn read_unpack(&mut self) -> Result<(usize, u8), NetworkError> {
         let mut stream = self.read_buffer.read_slice();
 
+        logging::trace!(self.log, "reading message into the input buffer";
+                        "context" => "read_unpack",
+                        "channel_id" => self.id,
+                        "client_sequence" => self.client_sequence);
+
         // Wait until there is enough data for the header
         if stream.len() < HEADER_SIZE {
+            logging::trace!(self.log, "not enough data to parse the header";
+                            "context" => "read_unpack",
+                            "channel_id" => self.id,
+                            "client_sequence" => self.client_sequence);
+
             return Err(NetworkError::Wait);
         }
 
@@ -367,6 +481,13 @@ impl Channel {
         let category = stream.read_u8()?;
         let sequence = stream.read_u64::<BigEndian>()?;
         let payload_size = stream.read_u16::<BigEndian>()? as usize;
+
+        logging::trace!(self.log, "read control message header";
+                        "context" => "read_unpack",
+                        "channel_id" => self.id,
+                        "received_sequence" => sequence,
+                        "client_sequence" => self.client_sequence,
+                        "payload_size" => payload_size);
 
         // Bail out if the payload size is zero
         if payload_size == 0 {
@@ -403,6 +524,14 @@ impl Channel {
         }
 
         self.read_buffer.move_head(HEADER_SIZE + payload_size);
+
+        logging::trace!(self.log, "decrypted control message";
+                        "context" => "read_unpack",
+                        "channel_id" => self.id,
+                        "received_sequence" => sequence,
+                        "client_sequence" => self.client_sequence,
+                        "decrypted_size" => decrypted_size);
+
         self.client_sequence += 1;
 
         Ok((decrypted_size, category))
@@ -572,7 +701,7 @@ mod tests {
 
     #[test]
     fn test_additional_data() {
-        let channel = Channel::new(VERSION, PROTOCOL);
+        let channel = Channel::new(VERSION, PROTOCOL, None);
 
         let ad = channel.additional_data(255);
 
@@ -588,7 +717,7 @@ mod tests {
     fn test_read_connection_token() {
         let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let token = make_connection_token();
 
@@ -606,7 +735,7 @@ mod tests {
     fn test_read_connection_token_err_wait() {
         let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel
             .read_buffer
@@ -623,7 +752,7 @@ mod tests {
     fn test_read_connection_token_err_expired() {
         let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut token = make_connection_token();
         token.expires -= 7200;
@@ -640,7 +769,7 @@ mod tests {
     fn test_read_connection_token_err_version() {
         let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut token = make_connection_token();
         token.version = [0u8; 16];
@@ -660,7 +789,7 @@ mod tests {
     fn test_read_connection_token_err_protocol() {
         let secret_key = SessionKey::new([33; crypto::KEY_SIZE]);
 
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut token = make_connection_token();
         token.protocol -= 1;
@@ -678,7 +807,7 @@ mod tests {
 
     #[test]
     fn test_write_read_frame_roundtrip() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -699,7 +828,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_read_batch_roundtrip() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let expected_consumed_messages = 100;
 
@@ -732,7 +861,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_partial() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         // The maximal number of messages that can fit in the write buffer
         let expected_consumed_messages = (WRITE_BUF_SIZE - OVERHEAD_SIZE) / 8;
@@ -752,7 +881,7 @@ mod tests {
 
     #[test]
     fn test_write_batch_zero() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - OVERHEAD_SIZE - 1);
 
         let mut outgoing = PayloadBatch::new();
@@ -768,7 +897,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_zero_size() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -789,7 +918,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_hdr_wait() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let response = channel.read();
 
@@ -798,7 +927,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_payload_wait() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -819,7 +948,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_payload_size() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -840,7 +969,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_sequence() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         let mut stream = channel.read_buffer.write_slice();
 
@@ -863,7 +992,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_key_mismatch() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -879,7 +1008,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_sequence_mismatch() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -900,7 +1029,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_version_mismatch() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -918,7 +1047,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_protocol_mismatch() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -936,7 +1065,7 @@ mod tests {
 
     #[test]
     fn test_read_frame_err_crypto_category_mismatch() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_control(ControlFrame::Keepalive(123)).unwrap();
 
@@ -956,7 +1085,7 @@ mod tests {
 
     #[test]
     fn test_write_frame_wait() {
-        let mut channel = Channel::new(VERSION, PROTOCOL);
+        let mut channel = Channel::new(VERSION, PROTOCOL, None);
 
         channel.write_buffer.move_tail(WRITE_BUF_SIZE - HEADER_SIZE);
 

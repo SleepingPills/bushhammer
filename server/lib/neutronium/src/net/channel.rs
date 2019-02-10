@@ -543,6 +543,14 @@ impl Channel {
     pub fn read_connection_token(&mut self, session_key: &SessionKey) -> Result<UserId, NetworkError> {
         let token = ConnectionToken::read(self.read_buffer.read_slice(), session_key)?;
 
+        logging::debug!(self.log, "read in connection token";
+                        "context" => "read_connection_token",
+                        "channel_id" => self.id,
+                        "user_id" => token.data.user_id,
+                        "expiry" => token.expires,
+                        "protocol" => ?token.protocol,
+                        "verson" => ?token.version);
+
         if token.expires < timestamp_secs() {
             return Err(NetworkError::Fatal(ErrorType::Expired));
         }
@@ -560,6 +568,11 @@ impl Channel {
 
         self.read_buffer.move_head(ConnectionToken::SIZE);
         self.state = ChannelState::Connected(token.data.user_id);
+
+        logging::trace!(self.log, "validated connection token";
+                        "context" => "read_connection_token",
+                        "channel_id" => self.id,
+                        "user_id" => token.data.user_id);
 
         Ok(token.data.user_id)
     }

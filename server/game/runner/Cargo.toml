@@ -3,11 +3,13 @@ name = "gamerunner"
 version = "0.1.0"
 authors = ["SleepingPills <tom.farnbauer@gmail.com>"]
 edition = "2018"
+build = "build.rs"
 
 [dependencies]
-chrono = "*"
+clap = "*"
 serde = "*"
-serde_json = "*"
 serde_derive = "*"
-neutronium = { path = "../../lib/neutronium" }
 byteorder = "*"
+flux = { path = "../../lib/flux" }
+gamecore = { path = "../core" }
+neutronium = { path = "../../lib/neutronium" }

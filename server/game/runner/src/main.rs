@@ -1,6 +1,8 @@
 use clap::{App, Arg};
 use flux::logging;
 use gamecore::config::GameConfig;
+use gamecore::init_sys::init_world;
+use neutronium::prelude::World;
 
 fn main() {
     let matches = App::new("Game Server")
@@ -15,28 +17,23 @@ fn main() {
         .get_matches();
 
     // Initialize logging
-    let logger = logging::init();
+    let log = logging::init();
 
     let config_file_path = matches.value_of("CONFIG_FILE").unwrap();
-    logging::debug!(logger, "reading configuration file path";
-                    "context" => "main",
-                    "config_file_path" => config_file_path);
+    logging::info!(log, "reading configuration file path";
+                   "context" => "main",
+                   "config_file_path" => config_file_path);
 
+    logging::info!(log, "parsing configuration");
     let config = GameConfig::load(config_file_path);
+    logging::info!(log, "parsed configuration"; "config" => config);
 
-    /*
-    TODO
-    - Create config structs
-    - Deserialize config structs
-    - Create replicator system with endpoint inside
-    - Create world instance
-    - Register replicator system
+    let mut world = World::new(config.game.fps);
 
-    research_technology tech_genome_mapping
-    research_technology tech_frontier_health
-    research_technology galactic_administration
-    influence 200
+    logging::info!(log, "initializing world instance");
+    init_world(&mut world, &log);
+    logging::info!(log, "world instance initialized");
 
-    if you dont want to wait three months you can just fire the event bioexpanded.1
-    */
+    logging::info!(log, "starting game loop");
+    world.run();
 }

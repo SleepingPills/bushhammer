@@ -8,3 +8,5 @@ edition = "2018"
 serde = "*"
 serde_derive = "*"
 serdeconv = "*"
+flux = { path = "../../lib/flux" }
+neutronium = { path = "../../lib/neutronium" }

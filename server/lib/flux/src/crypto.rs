@@ -1,6 +1,6 @@
 use byteorder::{LittleEndian, WriteBytesExt};
-use libsodium_sys;
 use ctor::ctor;
+use libsodium_sys;
 
 pub const MAC_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_ABYTES as usize;
 pub const KEY_SIZE: usize = libsodium_sys::crypto_aead_chacha20poly1305_IETF_KEYBYTES as usize;

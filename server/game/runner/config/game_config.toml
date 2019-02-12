@@ -1,0 +1,7 @@
+[server]
+address = "localhost:28008"
+token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+max_clients = 256
+
+[game]
+fps = 20

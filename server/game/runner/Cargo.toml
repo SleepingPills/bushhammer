@@ -8,6 +8,7 @@ build = "build.rs"
 [dependencies]
 clap = "*"
 serde = "*"
+serdeconv = "*"
 serde_derive = "*"
 byteorder = "*"
 flux = { path = "../../lib/flux" }

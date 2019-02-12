@@ -1,13 +1,37 @@
 /// Shared infrastructure pertaining to the Server Session, that is an authenticated game server connected
 /// to the master server.
 pub mod server {
-    use serde_derive::{Serialize, Deserialize};
+    use crate::encoding::base64;
+    use serde::{de, Deserialize, Deserializer};
+    use serde_derive::{Deserialize, Serialize};
     use std::ops::{Deref, DerefMut};
 
     const SESSION_KEY_SIZE: usize = 32;
 
     #[derive(Serialize, Deserialize)]
-    pub struct SessionKey([u8; SESSION_KEY_SIZE]);
+    pub struct SessionKey(
+        #[serde(
+            serialize_with = "base64::serialize",
+            deserialize_with = "deserialize_b64_key"
+        )]
+        [u8; SESSION_KEY_SIZE],
+    );
+
+    #[inline]
+    fn deserialize_b64_key<'de, D>(deserializer: D) -> Result<[u8; SESSION_KEY_SIZE], D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let s = <&str>::deserialize(deserializer)?;
+        let decoded_raw = base64::decode(s).map_err(de::Error::custom)?;
+        let mut decoded = [0u8; SESSION_KEY_SIZE];
+
+        for (i, &byte) in decoded_raw.iter().enumerate() {
+            decoded[i] = byte;
+        }
+
+        Ok(decoded)
+    }
 
     impl SessionKey {
         pub const SIZE: usize = SESSION_KEY_SIZE;

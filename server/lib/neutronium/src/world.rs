@@ -29,14 +29,9 @@ pub struct World {
     messages: Bus,
 }
 
-impl World {
-    #[inline]
-    pub fn entities(&mut self) -> &mut TransactionContext {
-        if !self.finalized {
-            panic!("World must be finalized before adding entities")
-        }
-
-        &mut self.transactions
+impl Default for World {
+    fn default() -> Self {
+        World::new(20)
     }
 }
 
@@ -44,11 +39,11 @@ impl World {
     /// Creates a `World` instance initialized with default parameters:
     /// FPS: 20
     #[inline]
-    pub fn default() -> Self {
+    pub fn new(fps: u64) -> Self {
         let counter = Arc::new(ATOMIC_USIZE_INIT);
 
         let world = World {
-            frame_delta_time: time::Duration::from_millis(50),
+            frame_delta_time: time::Duration::from_millis(1000 / fps),
             entity_counter: counter.clone(),
             state: GameState::new(),
             system_transactions: Vec::new(),
@@ -121,6 +116,15 @@ impl World {
                 thread::sleep(timeout);
             }
         }
+    }
+
+    #[inline]
+    pub fn entities(&mut self) -> &mut TransactionContext {
+        if !self.finalized {
+            panic!("World must be finalized before adding entities")
+        }
+
+        &mut self.transactions
     }
 }
 

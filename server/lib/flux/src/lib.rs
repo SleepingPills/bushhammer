@@ -8,29 +8,32 @@ pub const CONNECTION_TOKEN_EXPIRY_SECS: u64 = 10;
 
 pub type UserId = u64;
 
-pub mod util;
+pub mod crypto;
 pub mod logging;
 pub mod session;
-pub mod crypto;
 pub mod time;
+pub mod util;
 
 pub mod encoding {
     pub mod base64 {
-        use serde::{Serializer, de, Deserialize, Deserializer};
+        pub use base64::{decode, encode};
+        use serde::{de, Deserialize, Deserializer, Serializer};
 
         #[inline]
         pub fn serialize<S>(bytes: &[u8], serializer: S) -> Result<S::Ok, S::Error>
-            where S: Serializer
+        where
+            S: Serializer,
         {
-            serializer.serialize_str(&base64::encode(bytes))
+            serializer.serialize_str(&encode(bytes))
         }
 
         #[inline]
         pub fn deserialize<'de, D>(deserializer: D) -> Result<Vec<u8>, D::Error>
-            where D: Deserializer<'de>
+        where
+            D: Deserializer<'de>,
         {
             let s = <&str>::deserialize(deserializer)?;
-            base64::decode(s).map_err(de::Error::custom)
+            decode(s).map_err(de::Error::custom)
         }
     }
 }

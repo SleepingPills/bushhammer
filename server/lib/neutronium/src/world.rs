@@ -6,6 +6,7 @@ use crate::messagebus::Bus;
 use crate::registry::Registry;
 use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
+use flux::logging;
 use hashbrown::HashMap;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
@@ -15,6 +16,8 @@ use std::time;
 pub struct World {
     // Global Settings
     frame_delta_time: time::Duration,
+    delta: f32,
+    timestamp: time::Instant,
 
     // Game State
     entity_counter: Arc<AtomicUsize>,
@@ -27,11 +30,14 @@ pub struct World {
 
     // Messaging
     messages: Bus,
+
+    // Logging
+    log: logging::Logger,
 }
 
 impl Default for World {
     fn default() -> Self {
-        World::new(20)
+        World::new(20, None)
     }
 }
 
@@ -39,17 +45,26 @@ impl World {
     /// Creates a `World` instance initialized with default parameters:
     /// FPS: 20
     #[inline]
-    pub fn new(fps: u64) -> Self {
+    pub fn new<'a, L: Into<Option<&'a logging::Logger>>>(fps: u64, log: L) -> Self {
+        let world_log = match log.into() {
+            Some(log) => log.new(logging::o!()),
+            _ => logging::Logger::root(logging::Discard, logging::o!()),
+        };
+
         let counter = Arc::new(ATOMIC_USIZE_INIT);
+        let frame_delta_time = time::Duration::from_millis(1000 / fps);
 
         let world = World {
-            frame_delta_time: time::Duration::from_millis(1000 / fps),
+            frame_delta_time,
+            delta: Self::duration_to_delta(frame_delta_time),
+            timestamp: time::Instant::now(),
             entity_counter: counter.clone(),
             state: GameState::new(),
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(counter),
             finalized: false,
             messages: Bus::new(),
+            log: world_log,
         };
 
         world
@@ -59,32 +74,49 @@ impl World {
     /// systems can no longer be added.
     pub fn build(&mut self) {
         self.finalized = true;
+        logging::info!(self.log, "initializing world"; "context" => "build");
 
-        for (_, mut system) in self.state.systems.iter_mut::<System>() {
+        for (id, mut system) in self.state.systems.iter_mut::<System>() {
+            logging::info!(self.log, "initializing system";
+                            "context" => "build",
+                            "system" => %id);
+
             system.init(&self.state.resources);
 
             // Create a copy of the main transaction context for each system so they can be run in parallel
             self.system_transactions
                 .push(TransactionContext::new(self.entity_counter.clone()));
         }
+
+        logging::info!(self.log, "world initialization finished"; "context" => "build");
     }
 
     /// Process all transactions in the queue.
+    #[inline]
     pub fn process_transactions(&mut self) {
+        logging::trace!(self.log, "processing main transactions"; "context" => "process_transactions");
         self.state.process_context(&mut self.transactions);
 
+        logging::trace!(self.log, "processing system transactions"; "context" => "process_transactions");
         for tx in self.system_transactions.iter_mut() {
             self.state.process_context(tx);
         }
+        logging::debug!(self.log, "transaction processing finished"; "context" => "process_transactions");
     }
 
     /// Process messages
+    #[inline]
     pub fn process_messages(&mut self) {
+        logging::trace!(self.log, "processing messages"; "context" => "process_messages");
         self.messages.clear();
 
-        for (_, mut system) in self.state.systems.iter_mut::<System>() {
+        for (id, mut system) in self.state.systems.iter_mut::<System>() {
+            logging::trace!(self.log, "processing system messages";
+                            "context" => "process_messages",
+                            "system" => %id);
             system.transfer_messages(&mut self.messages);
         }
+        logging::debug!(self.log, "message processing finished"; "context" => "process_messages");
     }
 
     /// Runs one game iteration
@@ -103,18 +135,30 @@ impl World {
     pub fn run(&mut self) {
         let mut proceed = true;
 
+        let mut prev_timestamp = time::Instant::now() - self.frame_delta_time;
+
         while proceed {
-            let before = time::Instant::now();
+            self.timestamp = time::Instant::now();
+            self.delta = Self::duration_to_delta(self.timestamp - prev_timestamp);
+
+            logging::trace!(self.log, "frame started";
+                            "context" => "run",
+                            "timestamp" => ?self.timestamp,
+                            "delta" => ?self.delta);
 
             proceed = self.run_once();
 
-            let elapsed = time::Instant::now().duration_since(before);
+            let elapsed = time::Instant::now().duration_since(self.timestamp);
+
+            logging::trace!(self.log, "frame finished"; "context" => "run","elapsed" => ?elapsed);
 
             if elapsed < self.frame_delta_time {
                 let timeout = self.frame_delta_time - elapsed;
-                println!("*** {:#?} ***", timeout);
+                logging::trace!(self.log, "frame timeout triggered"; "context" => "run", "timeout" => ?timeout);
                 thread::sleep(timeout);
             }
+
+            prev_timestamp = self.timestamp;
         }
     }
 
@@ -125,6 +169,11 @@ impl World {
         }
 
         &mut self.transactions
+    }
+
+    #[inline]
+    fn duration_to_delta(duration: time::Duration) -> f32 {
+        duration.as_float_secs() as f32
     }
 }
 
@@ -159,15 +208,25 @@ impl World {
     /// Process all currently registered systems.
     #[inline]
     pub fn process_systems(&mut self) {
+        logging::debug!(self.log, "executing systems"; "context" => "process_systems");
+
         for (id, mut system) in self.state.systems.iter_mut::<System>() {
+            logging::debug!(self.log, "system running";
+                            "context" => "process_systems",
+                            "system" => %id);
+
             unsafe {
                 system.run(
                     &self.state.entities,
                     self.get_system_transactions(id.indexer()),
                     &self.messages,
+                    self.delta,
+                    self.timestamp,
                 );
             }
         }
+
+        logging::debug!(self.log, "system execution finished"; "context" => "process_systems");
     }
 
     // TODO: Check the performance impact of drain/rebuild and switch if negligible

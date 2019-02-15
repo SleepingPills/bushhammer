@@ -8,7 +8,7 @@ edition = "2018"
 ctor = "*"
 base64 = "*"
 serde = "*"
-slog = { version = "*", features = ["nested-values"] }
+slog = { version = "*", features = ["nested-values", "max_level_trace"] }
 sloggers = "*"
 serdeconv = "*"
 byteorder = "*"

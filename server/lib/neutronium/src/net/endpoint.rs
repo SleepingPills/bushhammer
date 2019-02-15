@@ -58,7 +58,7 @@ impl Endpoint {
     /// can be decrypted.
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
-    pub fn new(address: &str, secret_key: SessionKey, log: logging::Logger) -> NetworkResult<Endpoint> {
+    pub fn new(address: &str, secret_key: SessionKey, log: &logging::Logger) -> NetworkResult<Endpoint> {
         let server_poll = mio::Poll::new()?;
         let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
 

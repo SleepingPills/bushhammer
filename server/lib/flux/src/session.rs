@@ -8,7 +8,7 @@ pub mod server {
 
     const SESSION_KEY_SIZE: usize = 32;
 
-    #[derive(Serialize, Deserialize)]
+    #[derive(Serialize, Deserialize, Clone)]
     pub struct SessionKey(
         #[serde(
             serialize_with = "base64::serialize",

@@ -6,6 +6,7 @@
 #![feature(const_raw_ptr_deref)]
 #![feature(box_into_raw_non_null)]
 #![feature(crate_visibility_modifier)]
+#![feature(duration_float)]
 
 #![allow(clippy::len_without_is_empty)]
 #![allow(clippy::new_without_default)]

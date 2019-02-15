@@ -8,6 +8,7 @@ use anymap::AnyMap;
 use hashbrown::HashMap;
 use indexmap::IndexMap;
 use std::marker::PhantomData;
+use std::time;
 
 // TODO: Add optional components. These will return Option<Component> and allow intersection queries.
 // To implement, the data_ptr() on a shard needs to return an Option, and then current queries
@@ -65,6 +66,8 @@ where
 {
     system_data: &'a mut SystemData<T>,
     entities: &'a HashMap<EntityId, ComponentCoords>,
+    pub delta: f32,
+    pub timestamp: time::Instant,
 }
 
 impl<'a, T> Context<'a, T>
@@ -168,6 +171,8 @@ pub trait System {
         entities: &HashMap<EntityId, ComponentCoords>,
         transactions: &mut TransactionContext,
         incoming: &Bus,
+        delta: f32,
+        timestamp: time::Instant,
     );
     fn init(&mut self, resources: &AnyMap);
     fn transfer_messages(&mut self, central_bus: &mut Bus);
@@ -186,11 +191,15 @@ where
         entities: &HashMap<EntityId, ComponentCoords>,
         transactions: &mut TransactionContext,
         incoming: &Bus,
+        delta: f32,
+        timestamp: time::Instant,
     ) {
         self.runstate.run(
             Context {
                 system_data: &mut self.data,
                 entities,
+                delta,
+                timestamp,
             },
             transactions,
             Router {
@@ -971,8 +980,8 @@ mod tests {
     use super::*;
     use crate::component::ComponentVec;
     use crate::component_init;
-    use crate::topic_init;
     use crate::identity::{ComponentClass, Topic};
+    use crate::topic_init;
     use serde_derive::{Deserialize, Serialize};
     use std::marker::PhantomData;
     use std::sync::atomic::ATOMIC_USIZE_INIT;
@@ -1006,12 +1015,7 @@ mod tests {
 
     topic_init!(Msg);
 
-    fn setup() -> (
-        ComponentClass,
-        ComponentClass,
-        ComponentClass,
-        ComponentClass,
-    ) {
+    fn setup() -> (ComponentClass, ComponentClass, ComponentClass, ComponentClass) {
         (
             CompA::get_class(),
             CompB::get_class(),
@@ -1186,7 +1190,7 @@ mod tests {
         messages.publish(Msg(1));
         messages.publish(Msg(2));
 
-        system.run(&entities, &mut transactions, &messages);
+        system.run(&entities, &mut transactions, &messages, 0.02, time::Instant::now());
 
         assert_eq!(system.runstate.collect_run.len(), 3);
         assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));

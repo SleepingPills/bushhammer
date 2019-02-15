@@ -88,12 +88,6 @@ pub struct Bus {
 impl Bus {
     #[inline]
     pub fn new() -> Bus {
-        unsafe {
-            let name_vec = Topic::get_name_vec();
-            println!("Constr: {:?}", name_vec);
-            println!("Constr: {}", MSG_QUEUE_TPL.len());
-        }
-
         Bus {
             topics: unsafe { MSG_QUEUE_TPL.clone() },
             activity: TopicBundle::empty(),

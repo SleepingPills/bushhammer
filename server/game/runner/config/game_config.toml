@@ -1,7 +1,8 @@
 [server]
-address = "localhost:28008"
+address = "127.0.0.1:28008"
 token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 max_clients = 256
+threads = 8
 
 [game]
-fps = 20
+fps = 4

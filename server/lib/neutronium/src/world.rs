@@ -60,7 +60,7 @@ impl World {
             delta: Self::duration_to_delta(frame_delta_time),
             timestamp: time::Instant::now(),
             entity_counter: counter.clone(),
-            state: GameState::new(),
+            state: GameState::new(&world_log),
             system_transactions: Vec::new(),
             transactions: TransactionContext::new(counter),
             finalized: false,
@@ -273,7 +273,7 @@ pub struct GameState {
 
 impl GameState {
     #[inline]
-    pub fn new(log: logging::Logger) -> GameState {
+    pub fn new(log: &logging::Logger) -> GameState {
         GameState {
             entities: HashMap::new(),
             systems: Registry::new(),
@@ -289,16 +289,19 @@ impl GameState {
         logging::trace!(self.log, "deleting entities"; "context" => "process_context");
         // Drain all deleted entities into the delete buffer
         for id in ctx.deleted.drain(..) {
-            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "id" -> id);
             if let Some(coords) = self.entities.remove(&id) {
+                logging::trace!(self.log, "deleting entity";
+                                "context" => "process_context",
+                                "id" => ?id,
+                                "shard_key" => ?coords.0,
+                                "loc" => coords.1);
                 self.process_remove(coords);
             }
         }
 
         logging::trace!(self.log, "adding entities"; "context" => "process_context");
         for (&key, shard) in ctx.added.iter_mut() {
-            shard.
-            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "id" -> id);
+            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "shard_key" => ?key);
             // Only process shards with actual data in them
             if !shard.entity_ids.is_empty() {
                 self.process_add_uniform(key, shard);
@@ -347,11 +350,20 @@ impl GameState {
 
         // Update the location of the swapped-in entity
         if let Some(swapped_id) = shard.remove(loc) {
+            logging::trace!(self.log, "swapping in entity";
+                                "context" => "process_remove",
+                                "id" => ?swapped_id,
+                                "shard_key" => ?shard_key,
+                                "loc" => loc);
             self.entities.insert(swapped_id, (shard_key, loc));
         }
 
         // Remove the shard from the systems if it got emptied out
         if shard.len() == 0 {
+            logging::trace!(self.log, "unregistering empty shard";
+                                "context" => "process_remove",
+                                "shard_key" => ?shard_key);
+
             self.systems
                 .iter_mut::<System>()
                 .for_each(|(_, mut sys)| sys.remove_shard(shard_key));

@@ -268,30 +268,37 @@ pub struct GameState {
     systems: Registry<SystemId>,
     resources: AnyMap,
     shards: HashMap<ShardKey, Shard>,
+    log: logging::Logger,
 }
 
 impl GameState {
     #[inline]
-    pub fn new() -> GameState {
+    pub fn new(log: logging::Logger) -> GameState {
         GameState {
             entities: HashMap::new(),
             systems: Registry::new(),
             resources: AnyMap::new(),
             shards: HashMap::new(),
+            log: log.new(logging::o!()),
         }
     }
 }
 
 impl GameState {
     fn process_context(&mut self, ctx: &mut TransactionContext) {
+        logging::trace!(self.log, "deleting entities"; "context" => "process_context");
         // Drain all deleted entities into the delete buffer
         for id in ctx.deleted.drain(..) {
+            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "id" -> id);
             if let Some(coords) = self.entities.remove(&id) {
                 self.process_remove(coords);
             }
         }
 
+        logging::trace!(self.log, "adding entities"; "context" => "process_context");
         for (&key, shard) in ctx.added.iter_mut() {
+            shard.
+            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "id" -> id);
             // Only process shards with actual data in them
             if !shard.entity_ids.is_empty() {
                 self.process_add_uniform(key, shard);

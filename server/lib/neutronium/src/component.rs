@@ -65,7 +65,7 @@ pub trait Component: DeserializeOwned + Debug {
 
     #[inline]
     fn get_type_name() -> &'static str {
-        unsafe { ComponentClass::get_name_vec()[Self::get_type_indexer()] }
+        Self::get_class().name()
     }
 }
 

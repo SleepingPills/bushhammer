@@ -38,13 +38,6 @@ macro_rules! custom_type_id {
             }
         }
 
-        impl fmt::Display for $name {
-            #[inline(always)]
-            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-                write!(f, "{}({:?})", stringify!($name), self.id)
-            }
-        }
-
         static mut $name_vec: Vec<&'static str> = Vec::new();
         static mut $id_vec: Vec<$name> = Vec::new();
     };
@@ -78,6 +71,18 @@ macro_rules! bitflag_type_id {
             #[inline]
             pub fn indexer(&self) -> usize {
                 self.id.trailing_zeros() as usize
+            }
+
+            #[inline]
+            pub fn name(&self) -> &'static str {
+                unsafe { Self::get_name_vec()[self.indexer()] }
+            }
+        }
+
+        impl fmt::Display for $name {
+            #[inline(always)]
+            fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+                write!(f, "{}({:?})", stringify!($name), self.id)
             }
         }
 
@@ -282,7 +287,6 @@ bitflag_type_id!(
     BundleKey
 );
 
-// TODO: Rename to Topic
 bitflag_type_id!(
     Topic,
     BitFlagId,

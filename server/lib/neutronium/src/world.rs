@@ -8,6 +8,7 @@ use crate::system::{RunSystem, System, SystemRuntime};
 use anymap::AnyMap;
 use flux::logging;
 use hashbrown::HashMap;
+use std::intrinsics::type_name;
 use std::sync::atomic::{AtomicUsize, ATOMIC_USIZE_INIT};
 use std::sync::Arc;
 use std::thread;
@@ -200,6 +201,10 @@ impl World {
         let runtime = self.create_runtime(system);
         let id = SystemId::new::<T>(self.state.systems.len());
 
+        logging::debug!(self.log, "registering system";
+                        "context" => "register_system",
+                        "id" => ?id);
+
         self.state.systems.register(id, runtime);
         self.state.systems.register_trait::<SystemRuntime<T>, System>(&id);
         id
@@ -248,6 +253,10 @@ impl World {
         if self.finalized {
             panic!("Can't add resource to finalized world")
         }
+
+        logging::debug!(self.log, "registering resource";
+                        "context" => "register_resource",
+                        "type" => unsafe { type_name::<T>() });
 
         let boxed = Box::new(resource);
         self.state.resources.insert(Box::into_raw_non_null(boxed));

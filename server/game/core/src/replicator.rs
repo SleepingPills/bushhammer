@@ -22,7 +22,7 @@ impl RunSystem for Replicator {
     type Data = ();
 
     fn run(&mut self, ctx: Context<Self::Data>, _tx: &mut TransactionContext, _msg: Router) {
-        logging::trace!(self.log, "running Replicator system", "context" => "run");
+        logging::trace!(self.log, "running Replicator system"; "context" => "run");
         /*
         TODO: Extend system with delta time measurement
 

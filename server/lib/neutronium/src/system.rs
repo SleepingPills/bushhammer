@@ -11,9 +11,9 @@ use std::marker::PhantomData;
 use std::time;
 
 // TODO: Add optional components. These will return Option<Component> and allow intersection queries.
-// To implement, the data_ptr() on a shard needs to return an Option, and then current queries
-// will unwrap it, but a special OptionalReadQuery will unwrap into either a regular reader or
-// None returning reader, depending on the presence of the component in a shard.
+//       To implement, the data_ptr() on a shard needs to return an Option, and then current queries
+//       will unwrap it, but a special OptionalReadQuery will unwrap into either a regular reader or
+//       None returning reader, depending on the presence of the component in a shard.
 
 pub trait RunSystem {
     type Data: DataDef;
@@ -1190,7 +1190,13 @@ mod tests {
         messages.publish(Msg(1));
         messages.publish(Msg(2));
 
-        system.run(&entities, &mut transactions, &messages, 0.02, time::Instant::now());
+        system.run(
+            &entities,
+            &mut transactions,
+            &messages,
+            0.02,
+            time::Instant::now(),
+        );
 
         assert_eq!(system.runstate.collect_run.len(), 3);
         assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));

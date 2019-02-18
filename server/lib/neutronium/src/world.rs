@@ -301,7 +301,6 @@ impl GameState {
 
         logging::trace!(self.log, "adding entities"; "context" => "process_context");
         for (&key, shard) in ctx.added.iter_mut() {
-            logging::trace!(self.log, "deleting entity"; "context" => "process_context", "shard_key" => ?key);
             // Only process shards with actual data in them
             if !shard.entity_ids.is_empty() {
                 self.process_add_uniform(key, shard);
@@ -312,13 +311,26 @@ impl GameState {
     fn process_add_uniform(&mut self, shard_key: ShardKey, shard_def: &mut ShardDef) {
         let entity_comp_cls = EntityId::get_class();
 
-        // Add the entity component id to the shard key
+        // Add the entity component class to the shard key
         let shard_key = shard_key + entity_comp_cls;
+
+        logging::trace!(self.log, "adding entities for shard";
+                            "context" => "process_add_uniform",
+                            "shard_key" => ?shard_key,
+                            "count" => shard_def.entity_ids.len(),
+                            "first_id" => ?shard_def.entity_ids.first(),
+                            "last_id" => ?shard_def.entity_ids.last());
 
         let systems = &self.systems;
 
+        let log = &self.log;
+
         // Get the shard (or add a new one)
         let shard = self.shards.entry(shard_key).or_insert_with(|| {
+            logging::trace!(log, "adding new shard";
+                            "context" => "process_add_uniform",
+                            "shard_key" => ?shard_key);
+
             let store: HashMap<_, _> = shard_def
                 .components
                 .keys()
@@ -330,6 +342,9 @@ impl GameState {
 
         // Notify systems in case the shard was empty before
         if shard.len() == 0 {
+            logging::trace!(log, "notifying systems of newly populated shard";
+                            "context" => "process_add_uniform",
+                            "shard_key" => ?shard_key);
             systems
                 .iter_mut::<System>()
                 .for_each(|(_, mut sys)| sys.add_shard(shard));

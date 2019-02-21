@@ -1,3 +1,14 @@
 type = "terminal"
 level = "trace"
-destination = "stderr"
+destination = "stdout"
+
+#type = "file"
+#format = "full"
+#source_location = "module_and_line"
+#timezone = "local"
+#level = "trace"
+#
+#path = "gamerunner_{timestamp}.log"
+
+#timestamp_template = "%Y%m%d_%H%M"
+#timestamp_template = "%Y%m%d"

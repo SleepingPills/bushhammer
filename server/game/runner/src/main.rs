@@ -1,7 +1,7 @@
 use clap::{App, Arg};
 use flux::logging;
 use gamecore::config::GameConfig;
-use gamecore::init_sys::init_world;
+use gamecore::systems::build_world;
 use neutronium::prelude::World;
 use std::env::current_dir;
 
@@ -39,7 +39,7 @@ fn main() {
     let mut world = World::new(config.game.fps, &log);
 
     logging::info!(log, "initializing world instance"; "context" => "main",);
-    init_world(&mut world, &config, &log);
+    build_world(&mut world, &config, &log);
     logging::info!(log, "world instance initialized"; "context" => "main",);
 
     logging::info!(log, "starting game loop"; "context" => "main",);

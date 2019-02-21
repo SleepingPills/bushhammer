@@ -19,6 +19,7 @@ pub trait RunSystem {
     type Data: DataDef;
 
     fn run(&mut self, ctx: Context<Self::Data>, tx: &mut TransactionContext, msg: Router);
+    fn init(&mut self) {}
 }
 
 pub trait DataDef {
@@ -212,6 +213,7 @@ where
     #[inline]
     fn init(&mut self, resources: &AnyMap) {
         self.data.init_resources(resources);
+        self.runstate.init();
     }
 
     fn transfer_messages(&mut self, central_bus: &mut Bus) {

@@ -59,21 +59,11 @@ impl Endpoint {
     /// Finally, the `version` should denote unique and incompatible transmission protocol versions.
     #[inline]
     pub fn new(address: &str, secret_key: SessionKey, log: &logging::Logger) -> NetworkResult<Endpoint> {
-        let server_poll = mio::Poll::new()?;
-        let server = TcpListener::bind(&address.parse::<SocketAddr>()?)?;
-
-        server_poll.register(
-            &server,
-            Self::SERVER_POLL_TOKEN,
-            mio::Ready::writable(),
-            mio::PollOpt::edge(),
-        )?;
-
         let now = time::Instant::now();
 
-        Ok(Endpoint {
-            server,
-            server_poll,
+        let endpoint = Endpoint {
+            server: TcpListener::bind(&address.parse::<SocketAddr>()?)?,
+            server_poll: mio::Poll::new()?,
             handshake_poll: mio::Poll::new()?,
             live_poll: mio::Poll::new()?,
             events: mio::Events::with_capacity(8192),
@@ -85,7 +75,21 @@ impl Endpoint {
             current_time: now,
             housekeeping_time: now,
             log: log.new(logging::o!()),
-        })
+        };
+
+        Ok(endpoint)
+    }
+
+    #[inline]
+    pub fn init(&self) {
+        self.server_poll
+            .register(
+                &self.server,
+                Self::SERVER_POLL_TOKEN,
+                mio::Ready::readable(),
+                mio::PollOpt::edge(),
+            )
+            .unwrap();
     }
 
     #[inline]
@@ -233,13 +237,14 @@ impl Endpoint {
         logging::trace!(log, "running listen poll"; "context" => "sync");
 
         // Run listen poll
+        // Some(Self::ZERO_TIME)
         self.server_poll
-            .poll(&mut self.events, Some(Self::ZERO_TIME))
+            .poll(&mut self.events, None)
             .expect("Listen poll failed");
 
         for event in &self.events {
             // Writeable readiness indicates *possible* incoming connection
-            if event.readiness().is_writable() {
+            if event.readiness().is_readable() {
                 // See if there is a connection to be accepted
                 match self.server.accept() {
                     Ok((stream, addr)) => {
@@ -287,6 +292,7 @@ impl Endpoint {
                 }
             }
         }
+        self.events.clear();
 
         logging::trace!(log, "running handshake poll"; "context" => "sync");
 
@@ -347,6 +353,7 @@ impl Endpoint {
                 }
             }
         }
+        self.events.clear();
 
         logging::trace!(log, "running live poll"; "context" => "sync");
 
@@ -401,6 +408,7 @@ impl Endpoint {
                 changes.push(ConnectionChange::Disconnected(channel_id));
             });
         }
+        self.events.clear();
 
         logging::trace!(log, "network sync finished";
                         "context" => "sync",

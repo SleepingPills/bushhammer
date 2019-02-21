@@ -1,8 +1,8 @@
 [server]
 address = "127.0.0.1:28008"
-token = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+token = "YVPAWAH7qDvyOPmU0W7OuYmQvnrNxu6K1GwFqITRMg8"
 max_clients = 256
 threads = 8
 
 [game]
-fps = 4
+fps = 1

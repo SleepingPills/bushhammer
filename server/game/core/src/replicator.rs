@@ -33,4 +33,9 @@ impl RunSystem for Replicator {
         */
         self.endpoint.sync(ctx.timestamp);
     }
+
+    fn init(&mut self) {
+        logging::info!(self.log, "initializing Replicator system"; "context" => "init");
+        self.endpoint.init();
+    }
 }

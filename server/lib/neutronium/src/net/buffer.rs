@@ -100,18 +100,12 @@ impl Buffer {
 
         while self.data.len() < self.size {
             unsafe {
-                // TODO: Augment this such that we return wouldblock in case no data has been read in yet
-                // otherwise we return readcount = 0
                 let read_count = reader.read(self.data.tail_head_slice()).or_else(|err| {
-                    match err.kind() {
-                        io::ErrorKind::WouldBlock => {
-                            if self.free_capacity() < orig_capacity {
-                                Ok(0)
-                            } else {
-                                Err(err)
-                            }
-                        },
-                        _ => Err(err)
+                    // Return zero read in case the operation would block but some data has already been read.
+                    if err.kind() == io::ErrorKind::WouldBlock && self.free_capacity() < orig_capacity {
+                        Ok(0)
+                    } else {
+                        Err(err)
                     }
                 })?;
 
@@ -202,8 +196,8 @@ mod tests {
 
         let result = buffer.ingress(&mut channel);
 
-        assert!(result.is_err());
-        assert_eq!(result.err().unwrap().kind(), io::ErrorKind::WouldBlock);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), mock_data.len());
         assert_eq!(buffer.data.len(), mock_data.len());
         assert_eq!(buffer.data.as_slice(), &mock_data[..]);
 

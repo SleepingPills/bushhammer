@@ -1141,6 +1141,7 @@ mod tests {
             collect_run: Vec<(EntityId, CompA, CompB)>,
             collect_foreach: Vec<(EntityId, CompA, CompB)>,
             collect_messages: Vec<Msg>,
+            initialized: bool,
             _p: PhantomData<&'a ()>,
         };
 
@@ -1167,12 +1168,17 @@ mod tests {
                 msg.publish(Msg(101));
                 msg.publish(Msg(102));
             }
+
+            fn init(&mut self) {
+                self.initialized = true;
+            }
         }
 
         let mut system = SystemRuntime::new(TestSystem {
             collect_run: Vec::new(),
             collect_foreach: Vec::new(),
             collect_messages: Vec::new(),
+            initialized: false,
             _p: PhantomData,
         });
 
@@ -1192,6 +1198,8 @@ mod tests {
         messages.publish(Msg(1));
         messages.publish(Msg(2));
 
+        system.init(&AnyMap::new());
+
         system.run(
             &entities,
             &mut transactions,
@@ -1200,6 +1208,7 @@ mod tests {
             time::Instant::now(),
         );
 
+        assert_eq!(system.runstate.initialized, true);
         assert_eq!(system.runstate.collect_run.len(), 3);
         assert_eq!(system.runstate.collect_run[0], (0.into(), CompA(0), CompB(0)));
         assert_eq!(system.runstate.collect_run[1], (1.into(), CompA(1), CompB(1)));

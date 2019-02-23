@@ -13,4 +13,4 @@ if __name__ == "__main__":
 
     conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     conn.connect(("127.0.0.1", 28008))
-    conn.send(b"123123123")
+    conn.send(b"123123123" * 100)

@@ -134,6 +134,10 @@ impl World {
     /// Runs the main game loop with frame rate limiting.
     #[inline]
     pub fn run(&mut self) {
+        if !self.finalized {
+            panic!("World must be built before starting the simulation");
+        }
+
         let mut proceed = true;
 
         let mut prev_timestamp = time::Instant::now() - self.frame_delta_time;
@@ -665,5 +669,37 @@ mod tests {
 
         assert_eq!(*system_messages1.borrow(), vec![Msg1(0), Msg1(1)]);
         assert_eq!(*system_messages2.borrow(), vec![Msg2(0), Msg2(1), Msg2(2)]);
+    }
+
+    #[test]
+    fn test_system_init() {
+        struct TestSystem1<'a> {
+            initialized: bool,
+            _p: PhantomData<&'a ()>,
+        }
+
+        impl<'a> RunSystem for TestSystem1<'a> {
+            type Data = ();
+
+            fn run(&mut self, _ctx: Context<Self::Data>, _tx: &mut TransactionContext, mut _msg: Router) {}
+
+            fn init(&mut self) {
+                self.initialized = true;
+            }
+        }
+
+        let mut world = World::default();
+
+        let id = world.register_system(TestSystem1 {
+            initialized: false,
+            _p: PhantomData,
+        });
+
+        world.build();
+
+        let mut system_runtime = world.state.systems.get::<SystemRuntime<TestSystem1>>(&id).write();
+        let system = system_runtime.get_system_mut();
+
+        assert_eq!(system.initialized, true);
     }
 }

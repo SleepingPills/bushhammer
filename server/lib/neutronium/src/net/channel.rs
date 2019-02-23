@@ -92,7 +92,7 @@ impl Channel {
         Channel {
             id: None,
             stream: None,
-            state: ChannelState::Handshake(now),
+            state: ChannelState::Disconnected,
             version,
             protocol,
             client_sequence: 0,
@@ -249,6 +249,11 @@ impl Channel {
             self.last_ingress = now;
         }
 
+        logging::debug!(self.log, "received data from network";
+                        "context" => "receive",
+                        "channel_id" => self.id,
+                        "bytes" => received);
+
         Ok(received)
     }
 
@@ -267,6 +272,11 @@ impl Channel {
         if sent > 0 {
             self.last_egress = now;
         }
+
+        logging::debug!(self.log, "sent data on the network";
+                        "context" => "send",
+                        "channel_id" => self.id,
+                        "bytes" => sent);
 
         Ok(sent)
     }

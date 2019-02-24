@@ -242,6 +242,7 @@ impl Endpoint {
             .expect("Listen poll failed");
 
         for event in &self.events {
+            logging::trace!(log, "listen server event"; "context" => "sync", "event" => ?event);
             // Writeable readiness indicates *possible* incoming connection
             if event.readiness().is_readable() {
                 // See if there is a connection to be accepted
@@ -263,8 +264,8 @@ impl Endpoint {
 
                         logging::info!(log, "incoming connection";
                                        "context" => "sync",
-                                       "address" => ?addr,
-                                       "channel_id" => id);
+                                       "channel_id" => id,
+                                       "address" => ?addr);
 
                         logging::debug!(log, "registering channel with handshake poll";
                                         "context" => "sync",

@@ -68,7 +68,7 @@ pub struct Channel {
     write_buffer: Buffer,
 
     // Payload buffer
-    payload: [u8; PAYLOAD_BUF_SIZE],
+    payload: Box<[u8; PAYLOAD_BUF_SIZE]>,
 
     // Log
     log: logging::Logger,
@@ -103,7 +103,7 @@ impl Channel {
             client_key: Self::random_key(),
             read_buffer: Buffer::new(READ_BUF_SIZE),
             write_buffer: Buffer::new(WRITE_BUF_SIZE),
-            payload: [0; PAYLOAD_BUF_SIZE],
+            payload: Box::new([0; PAYLOAD_BUF_SIZE]),
             log: channel_log,
         }
     }
@@ -452,7 +452,7 @@ impl Channel {
         batch: &mut PayloadBatch<P>,
         pinfo: PayloadInfo,
     ) -> NetworkResult<()> {
-        let mut cursor = Cursor::new(pinfo.select(&self.payload));
+        let mut cursor = Cursor::new(pinfo.select(&*self.payload));
 
         logging::trace!(self.log, "reading payload frame";
                         "context" => "read_payload",

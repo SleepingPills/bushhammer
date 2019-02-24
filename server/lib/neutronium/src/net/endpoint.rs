@@ -351,7 +351,6 @@ impl Endpoint {
                             channel.close(false);
                             live_set.remove(&channel_id);
                             free_set.push(channel_id);
-                            changes.push(ConnectionChange::Disconnected(channel_id));
                         } else {
                             logging::info!(log, "waiting to receive full handshake message";
                                            "context" => "sync",

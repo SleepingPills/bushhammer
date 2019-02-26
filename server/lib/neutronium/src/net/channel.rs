@@ -598,7 +598,7 @@ pub struct ConnectionToken {
 }
 
 impl ConnectionToken {
-    pub const SIZE: usize = 43 + PrivateData::SIZE + crypto::MAC_SIZE;
+    pub const SIZE: usize = 34 + PrivateData::SIZE + crypto::MAC_SIZE;
 
     /// Read in the connection token form the supplied stream and decrypt the private
     /// data using the secret key.

@@ -1,6 +1,6 @@
 [server]
 address = "127.0.0.1:28008"
-token = "YVPAWAH7qDvyOPmU0W7OuYmQvnrNxu6K1GwFqITRMg8"
+token = "GzLVVFmrgLtltSi11U/Dyv8F8QKbaskHd3NEJWkcrFc="
 max_clients = 256
 threads = 8
 

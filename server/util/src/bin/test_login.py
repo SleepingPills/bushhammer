@@ -8,7 +8,7 @@ from urllib.request import urlopen
 
 
 if __name__ == "__main__":
-    response = urlopen("http://localhost:8000/user/auth", b"ft4pq85ns15b6q57iue11zsd")
+    response = urlopen("http://localhost:8000/user/auth", b"sq99odqaeuhx9tfqlvnfcpsk")
     response = json.loads(response.read().decode("utf8"))
 
     pprint.pprint(response)

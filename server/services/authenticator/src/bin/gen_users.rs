@@ -50,7 +50,8 @@ fn main() {
         .parse()
         .expect("Key count must be a valid integer");
 
-    let mut user_data: HashMap<String, UserInfo> = serdeconv::from_toml_file(user_file_path).unwrap();
+    let mut user_data: HashMap<String, UserInfo> =
+        serdeconv::from_toml_file(user_file_path).unwrap_or_else(|_| HashMap::new());
     let mut rng = thread_rng();
     let mut keys = Vec::new();
 

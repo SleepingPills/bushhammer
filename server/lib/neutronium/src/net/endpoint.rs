@@ -26,8 +26,7 @@ pub struct Endpoint {
     server: TcpListener,
 
     server_poll: mio::Poll,
-    handshake_poll: mio::Poll,
-    live_poll: mio::Poll,
+    data_poll: mio::Poll,
     events: mio::Events,
 
     session_key: SessionKey,
@@ -64,8 +63,7 @@ impl Endpoint {
         let endpoint = Endpoint {
             server: TcpListener::bind(&address.parse::<SocketAddr>()?)?,
             server_poll: mio::Poll::new()?,
-            handshake_poll: mio::Poll::new()?,
-            live_poll: mio::Poll::new()?,
+            data_poll: mio::Poll::new()?,
             events: mio::Events::with_capacity(8192),
             session_key: secret_key,
             channels: Vec::new(),
@@ -243,7 +241,7 @@ impl Endpoint {
 
         for event in &self.events {
             logging::trace!(log, "listen server event"; "context" => "sync", "event" => ?event);
-            // Writeable readiness indicates *possible* incoming connection
+            // Readiness indicates *possible* incoming connection
             if event.readiness().is_readable() {
                 // See if there is a connection to be accepted
                 match self.server.accept() {
@@ -267,10 +265,6 @@ impl Endpoint {
                                        "channel_id" => id,
                                        "address" => ?addr);
 
-                        logging::debug!(log, "registering channel with handshake poll";
-                                        "context" => "sync",
-                                        "channel_id" => id);
-
                         // Open the channel
                         let channel = &mut channels[id];
                         channel.open(id, stream, self.current_time);
@@ -278,7 +272,7 @@ impl Endpoint {
                         // Register the channel on the handshake poll. Clients must deliver a valid
                         // handshake message before the connection is fully accepted.
                         channel
-                            .register(id, &self.handshake_poll)
+                            .register(id, &self.data_poll)
                             .expect("Stream registration failed");
                     }
                     Err(err) => {
@@ -294,126 +288,108 @@ impl Endpoint {
         logging::trace!(log, "running handshake poll"; "context" => "sync");
 
         // Run handshake poll
-        self.handshake_poll
+        self.data_poll
             .poll(&mut self.events, Some(Self::ZERO_TIME))
-            .expect("Handshake poll failed");
+            .expect("Data poll failed");
 
         let session_key = &self.session_key;
-        let handshake_poll = &self.handshake_poll;
-        let live_poll = &self.live_poll;
+        let data_poll = &self.data_poll;
 
         for event in &self.events {
             if event.readiness().is_readable() {
+                let readiness = event.readiness();
                 let channel_id: ChannelId = event.token().into();
                 let channel = &mut channels[channel_id];
+                let channel_state = channel.get_state();
 
-                logging::debug!(log, "reading handshake";
+                match channel_state {
+                    ChannelState::Handshake(_) => {
+                        logging::debug!(log, "reading handshake";
                                 "context" => "sync",
                                 "channel_id" => channel_id);
 
-                channel
-                    .receive(now)
-                    .and_then(|_| channel.read_connection_token(session_key))
-                    .and_then(|user_id| {
-                        logging::info!(log, "handshake accepted";
+                        channel
+                            .receive(now)
+                            .and_then(|_| channel.read_connection_token(session_key))
+                            .and_then(|user_id| {
+                                logging::info!(log, "handshake accepted";
                                        "context" => "sync",
                                        "channel_id" => channel_id,
                                        "user_id" => user_id);
 
-                        if channel
-                            .write_control(ControlFrame::ConnectionAccepted(user_id))
-                            .has_failed()
-                        {
-                            panic!("Failure writing connection accepted frame")
-                        }
+                                if channel
+                                    .write_control(ControlFrame::ConnectionAccepted(user_id))
+                                    .has_failed()
+                                {
+                                    panic!("Failure writing connection accepted frame")
+                                }
 
-                        logging::debug!(log, "moving channel to live poll";
+                                logging::debug!(log, "moving channel to live set";
                                         "context" => "sync",
                                         "channel_id" => channel_id);
-                        changes.push(ConnectionChange::Connected(user_id, channel_id));
-
-                        // The channel is now fully connected. Deregister from the handshake poll and
-                        // register on the live poll.
-                        channel
-                            .deregister(handshake_poll)
-                            .expect("Deregistration failed");
-                        channel
-                            .register(channel_id, live_poll)
-                            .expect("Registration failed");
-                        Ok(())
-                    })
-                    .unwrap_or_else(|err| {
-                        // Disconnect the channel in case there is an error
-                        if err != NetworkError::Wait {
-                            logging::error!(log, "disconnecting channel due to handshake read error";
+                                live_set.insert(channel_id);
+                                changes.push(ConnectionChange::Connected(user_id, channel_id));
+                                Ok(())
+                            })
+                            .unwrap_or_else(|err| {
+                                // Disconnect the channel in case there is an error
+                                if err != NetworkError::Wait {
+                                    logging::error!(log, "disconnecting channel due to handshake read error";
                                             "context" => "sync",
                                             "channel_id" => channel_id,
                                             "error" => ?err);
-                            channel.close(false);
-                            live_set.remove(&channel_id);
-                            free_set.push(channel_id);
-                        } else {
-                            logging::info!(log, "waiting to receive full handshake message";
+                                    channel.close(false);
+                                    live_set.remove(&channel_id);
+                                    free_set.push(channel_id);
+                                } else {
+                                    logging::info!(log, "waiting to receive full handshake message";
                                            "context" => "sync",
                                            "channel_id" => channel_id);
-                        }
-                    });
-            }
-        }
-        self.events.clear();
+                                }
+                            });
+                    }
+                    ChannelState::Connected(_) => {
+                        // Perform both receive and send operations, disconnecting the channel if there is a fatal error.
+                        Self::ready_op(readiness.is_readable(), || {
+                            let result = channel.receive(now);
 
-        logging::trace!(log, "running live poll"; "context" => "sync");
-
-        // Run connected poll
-        let live_poll = &self.live_poll;
-        live_poll
-            .poll(&mut self.events, Some(Self::ZERO_TIME))
-            .expect("Live poll failed");
-
-        for event in &self.events {
-            let readiness = event.readiness();
-            let channel_id: ChannelId = event.token().into();
-            let channel = &mut channels[channel_id];
-
-            logging::debug!(log, "live channel ready for send/receive";
-                            "context" => "sync",
-                            "channel_id" => channel_id);
-
-            // Perform both receive and send operations, disconnecting the channel if there is a fatal error.
-            Self::ready_op(readiness.is_readable(), || {
-                let result = channel.receive(now);
-
-                logging::debug!(log, "received data";
+                            logging::debug!(log, "received data";
                                 "context" => "sync",
                                 "channel_id" => channel_id,
                                 "result" => ?result);
 
-                result.map(|_| ())
-            })
-            .and_then(|_| {
-                Self::ready_op(readiness.is_writable(), || {
-                    let result = channel.send(now);
+                            result.map(|_| ())
+                        })
+                        .and_then(|_| {
+                            Self::ready_op(readiness.is_writable(), || {
+                                let result = channel.send(now);
 
-                    logging::debug!(log, "sent data";
+                                logging::debug!(log, "sent data";
                                     "context" => "sync",
                                     "channel_id" => channel_id,
                                     "result" => ?result);
 
-                    result.map(|_| ())
-                })
-            })
-            .unwrap_or_else(|err| {
-                logging::error!(log, "disconnecting live channel due to error";
+                                result.map(|_| ())
+                            })
+                        })
+                        .unwrap_or_else(|err| {
+                            logging::error!(log, "disconnecting live channel due to error";
                             "context" => "sync",
                             "channel_id" => channel_id,
                             "error" => ?err);
 
-                channel.deregister(live_poll).expect("Deregistration failed");
-                channel.close(true);
-                live_set.remove(&channel_id);
-                free_set.push(channel_id);
-                changes.push(ConnectionChange::Disconnected(channel_id));
-            });
+                            channel.deregister(data_poll).expect("Deregistration failed");
+                            channel.close(true);
+                            live_set.remove(&channel_id);
+                            free_set.push(channel_id);
+                            changes.push(ConnectionChange::Disconnected(channel_id));
+                        });
+                    }
+                    _ => {
+                        panic!("Disconnected channel on data poll");
+                    }
+                }
+            }
         }
         self.events.clear();
 
